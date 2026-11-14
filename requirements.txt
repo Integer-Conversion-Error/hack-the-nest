@@ -1,0 +1,6 @@
+QuantumRingsLib
+quantumrings-toolkit-qiskit
+qiskit
+matplotlib
+pylatexenc
+python-dotenv
