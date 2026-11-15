@@ -9,39 +9,110 @@
 <body>
 <header>
   <a class="brand" href="/">Fleet Lab</a>
-  <div class="mode-control">
-    <label for="mode" aria-hidden="true">Mode</label>
-    <select id="mode" aria-label="Run mode" disabled>
-      <option value="recorded" selected>Recorded backend run</option>
-      <option value="reference">Exact classical reference</option>
-      <option id="live-mode" value="live">Live backend</option>
-    </select>
+  <div class="header-actions">
+    <button class="secondary" id="run-history" type="button">Run history</button>
+    <div class="result-navigation" id="result-navigation" hidden>
+      <div class="mode-control">
+        <label for="mode" aria-hidden="true">Mode</label>
+        <select id="mode" aria-label="Run mode" disabled>
+          <option value="recorded" selected>Recorded backend run</option>
+          <option value="reference">Exact classical reference</option>
+          <option id="live-mode" value="live">Live backend</option>
+        </select>
+      </div>
+      <button class="secondary" id="new-problem" type="button">New problem</button>
+    </div>
   </div>
 </header>
 <main>
-  <h1>EV fleet dispatch</h1>
+  <section class="run-entry" id="prompt-screen" aria-labelledby="problem-heading">
+    <h1 id="problem-heading" tabindex="-1">Your problem</h1>
+    <p class="entry-intro">Describe the fleet dispatch problem you want to optimize.</p>
+    <form class="panel composer" id="prompt-form" novalidate>
+      <label class="sr-only" for="problem-prompt">Your problem</label>
+      <textarea id="problem-prompt" required maxlength="10000" placeholder="Include depot and delivery locations, vehicle limits, and what you want to minimize." disabled></textarea>
+      <p class="hint composer-note" id="composer-note" role="status">Connecting to the backend…</p>
+      <p class="request-error" id="composer-error" role="alert" hidden></p>
+      <div class="composer-actions">
+        <button class="primary" id="generate" type="submit" disabled>Run pipeline</button>
+        <div class="sample-picker">
+          <label class="sr-only" for="sample-prompt">Sample prompt</label>
+          <select id="sample-prompt" disabled></select>
+          <button class="text-button" id="load-example" type="button" disabled>Load sample</button>
+        </div>
+      </div>
+    </form>
+    <div class="preview-actions">
+      <button class="text-button" id="failed-pipeline-progress" type="button" aria-controls="progress-screen" hidden>View pipeline progress</button>
+      <button class="text-button" id="recorded-example" type="button" disabled>View recorded run</button>
+    </div>
+  </section>
+
+  <section class="run-entry" id="progress-screen" aria-labelledby="progress-heading" hidden>
+    <div class="progress-heading">
+      <h1 id="progress-heading" tabindex="-1">Pipeline progress</h1>
+      <button class="secondary" id="progress-return" type="button" hidden>Back to results</button>
+    </div>
+    <div class="panel progress-panel">
+      <div class="progress-actions">
+        <p id="pipeline-status" class="pipeline-status" role="status" aria-atomic="true">Submitting your problem…</p>
+        <button class="text-button" id="pipeline-detail-toggle" type="button" aria-controls="pipeline-visits" hidden>Hide all steps</button>
+      </div>
+      <ol id="pipeline-stages" class="pipeline-stages" role="list" aria-label="Pipeline stages"></ol>
+      <ol id="pipeline-visits" class="pipeline-visits" role="list" aria-label="Pipeline stage history" hidden></ol>
+    </div>
+  </section>
+
+  <section class="history-screen" id="history-screen" aria-labelledby="history-heading" hidden>
+    <div class="history-toolbar">
+      <h1 id="history-heading" tabindex="-1">Run history</h1>
+      <button class="secondary" id="history-new-problem" type="button">New problem</button>
+    </div>
+    <p class="hint" id="history-status" role="status" hidden></p>
+    <p class="request-error" id="history-error" role="alert" hidden></p>
+    <div class="history-layout">
+      <ul class="panel history-list" id="history-list" role="list" aria-label="Saved runs" hidden></ul>
+      <section class="panel history-details" id="history-details" aria-labelledby="history-detail-heading" hidden>
+        <div class="history-toolbar">
+          <div>
+            <h2 id="history-detail-heading" tabindex="-1"></h2>
+            <p class="hint history-identity" id="history-identity"></p>
+          </div>
+          <button class="primary" id="history-open" type="button" hidden>Open results</button>
+        </div>
+        <details class="history-section" open>
+          <summary>Original prompt</summary>
+          <pre class="history-prompt" id="history-prompt" tabindex="0"></pre>
+        </details>
+        <section class="history-section" id="history-artifact-section" aria-labelledby="history-artifact-heading" hidden>
+          <h3 id="history-artifact-heading">Saved artifacts</h3>
+          <ul class="history-artifacts" id="history-artifacts" role="list"></ul>
+        </section>
+      </section>
+    </div>
+  </section>
+
+  <section id="results-screen" aria-labelledby="results-heading" hidden>
+  <div class="results-title">
+    <h1 id="results-heading" tabindex="-1">EV fleet dispatch</h1>
+    <button class="secondary" id="result-pipeline-progress" type="button" aria-controls="progress-screen" hidden>Pipeline progress</button>
+  </div>
   <div class="workspace">
     <aside class="sidebar" aria-label="Scenario controls">
       <section class="panel input-panel">
         <div class="settings-block" id="settings" hidden>
           <div id="variables"></div>
           <p id="applied-settings" class="hint" hidden></p>
+          <p id="saved-run-note" class="hint" hidden>Configure the native planning backend to recalculate this run.</p>
           <button class="secondary" id="rerun" type="button" disabled>Load recorded result</button>
         </div>
-        <div id="run-status">
-          <p id="status" role="status">Connecting…</p>
-          <p id="error" role="alert" hidden></p>
-        </div>
-        <div class="run-action" id="run-action" hidden>
-          <button class="primary" id="generate" type="submit" form="prompt-form" disabled>Load recorded example</button>
+        <div id="run-status" hidden>
+          <p id="status" role="status" hidden></p>
+          <p class="request-error" id="error" role="alert" hidden></p>
         </div>
         <details class="prompt-details" id="original-prompt">
           <summary>Original prompt</summary>
-          <form id="prompt-form" novalidate>
-            <label class="sr-only" for="prompt">Original prompt</label>
-            <textarea id="prompt" required maxlength="10000" placeholder="What would you like to optimize?"></textarea>
-            <button class="text-button" id="load-example" type="button" hidden disabled>Load example</button>
-          </form>
+          <p class="original-prompt-text" id="prompt"></p>
         </details>
       </section>
     </aside>
@@ -133,9 +204,11 @@
       </footer>
     </div>
   </div>
+  </section>
 </main>
 <script src="fleet.js"></script>
 <script src="live-updates.js"></script>
+<script src="pipeline-progress.js"></script>
 <script src="scenario-controls.js"></script>
 <script src="fleet-map.js"></script>
 <script src="app.js"></script>

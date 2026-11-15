@@ -1,19 +1,20 @@
 const $ = id => document.getElementById(id);
 const chargeControlId = 'van_2_initial_charge_pct';
-const colors = ['#185f55', '#315b8f', '#8a4d27', '#75527c'];
+const pendingRunKey = 'fleet-lab-pending-pipeline';
+const colors = ['#185f55', '#315b8f', '#8a4d27', '#75527c', '#a42b46', '#6c650d'];
 const provenanceLabels = {
   classical_reference: 'Exact reference',
   live: 'Live run',
   recorded: 'Recorded backend run',
 };
+const historyStatuses = { verified: 'Verified', saved: 'Saved', incomplete: 'Unfinished' };
+const historyDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 const runModes = {
   recorded: {
-    action: 'Load recorded example',
     pending: 'Loading the recorded result…',
   },
   reference: {
-    action: 'Load exact reference',
     pending: 'Loading the exact reference…',
   },
   live: {
@@ -25,16 +26,21 @@ const runModes = {
     pending: 'Running solver…',
   },
   planner: {
-    action: 'Plan and run',
-    pending: 'Planning and running solver…',
+    action: 'Run pipeline',
   },
 };
 
 let inspected = null;
 let result = null, sim = null, busy = false, initialized = false;
 let backendConfigured = false, localBackendConfigured = false, pipelineBackendConfigured = false;
+let savedRunRecalculationConfigured = false;
 let playing = false, minute = 0, last = null, selectedVan = null;
-let examplePrompt = '', liveExamplePrompt = '', livePrompt = '';
+let examplePrompt = '', liveExamplePrompt = '';
+let samplePrompts = new Map();
+let screen = 'prompt';
+let pipelineSnapshot = null, pipelineReturnScreen = null;
+let historyRequest = 0;
+let selectedRun = null, selectedRunButton = null;
 let controlPanel = null;
 let vanCards = [];
 const mapCanvas = $('fleet-map');
@@ -52,6 +58,21 @@ const eventLabels = { drive: 'Driving', wait: 'Waiting', charge: 'Charging', del
 
 function writeText(element, text) {
   if (element.textContent !== text) element.textContent = text;
+}
+
+function showScreen(next) {
+  if (screen === next) return;
+  screen = next;
+  for (const name of ['prompt', 'progress', 'history', 'results']) $(name + '-screen').hidden = name !== next;
+  $('result-navigation').hidden = next !== 'results';
+  $('run-history').hidden = next === 'history' || next === 'progress';
+  $({prompt: 'problem-heading', progress: 'progress-heading', history: 'history-heading',
+    results: 'results-heading'}[next]).focus();
+}
+
+function composerError(message) {
+  writeText($('composer-error'), message);
+  $('composer-error').hidden = !message;
 }
 
 function error(message) {
@@ -80,39 +101,50 @@ function usesLocalSolver() {
 }
 
 function usesNativePlanner() {
-  return pipelineBackendConfigured && $('mode').value === 'live';
+  return $('mode').value === 'live' && (pipelineBackendConfigured ||
+    (result?.workspace_origin === 'local' && savedRunRecalculationConfigured));
 }
 
-function runLabels() {
-  if (usesLocalSolver()) return runModes.local;
-  if (usesNativePlanner()) return runModes.planner;
-  return runModes[$('mode').value];
+function liveLabels() {
+  if (localBackendConfigured) return runModes.local;
+  if (pipelineBackendConfigured) return runModes.planner;
+  return runModes.live;
 }
 
 function usesImmediateApply() {
   return (usesLocalSolver() || usesNativePlanner()) && Boolean(controlPanel?.automatic);
 }
 
+function isSavedResult(view) {
+  return view?.mode === 'live' && view.workspace_origin === 'local' && view.source?.file === 'handoff.json';
+}
+
 function updateButtons() {
   const selectedMode = $('mode').value;
-  const isLive = selectedMode === 'live';
-  const localLive = usesLocalSolver();
   const immediate = usesImmediateApply();
-  const canRun = !isLive || backendConfigured;
-  const canEditPrompt = isLive && !localLive;
   const hasCurrentResult = result?.mode === selectedMode;
-  const canApply = hasCurrentResult && result.variables.length > 0;
+  const savedWithoutPlanner = result?.workspace_origin === 'local' && !savedRunRecalculationConfigured;
+  const canApply = hasCurrentResult && result.variables.length > 0 && !savedWithoutPlanner;
   const draft = canApply ? controlPanel.values() : null;
   const changes = draft ? Object.keys(draft).filter(id => result.effective_values[id] !== draft[id]) : [];
   const hasChanges = changes.length > 0;
 
-  $('generate').disabled = !initialized || busy || !canRun;
-  $('run-action').hidden = !initialized || !canRun || busy || (hasCurrentResult && !canEditPrompt);
-  $('load-example').hidden = !canEditPrompt;
-  $('load-example').disabled = !initialized || busy;
-  $('mode').disabled = !initialized || busy;
-  $('prompt').readOnly = !canEditPrompt || busy;
+  const prompt = $('problem-prompt');
+  const picker = $('sample-prompt');
+  const disabled = !initialized || busy;
+  $('generate').disabled = disabled || !backendConfigured || (localBackendConfigured && prompt.value !== liveExamplePrompt);
+  picker.disabled = disabled || !samplePrompts.size;
+  $('load-example').disabled = picker.disabled || !samplePrompts.has(picker.value);
+  $('recorded-example').disabled = disabled;
+  $('failed-pipeline-progress').disabled = disabled;
+  $('result-pipeline-progress').disabled = disabled;
+  $('run-history').disabled = busy;
+  $('new-problem').disabled = disabled;
+  $('mode').disabled = disabled;
+  prompt.disabled = disabled || !backendConfigured;
+  prompt.readOnly = localBackendConfigured;
   $('applied-settings').hidden = !canApply || (draft !== null && !hasChanges);
+  $('saved-run-note').hidden = !savedWithoutPlanner || !result.variables.length;
   $('rerun').disabled = busy || !hasChanges;
   $('rerun').hidden = !canApply || (immediate && (busy || !hasChanges || $('error').hidden));
   $('rerun').textContent = immediate ? 'Retry solver'
@@ -129,13 +161,16 @@ function controlChanged(committedRange) {
 }
 
 async function request(path, data) {
-  const response = await fetch(path, {
+  const response = await fetch(path, data === undefined ? undefined : {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw Object.assign(Error(body?.error || 'Request failed.'), { status: response.status });
+  }
   const body = await response.json();
-  if (!response.ok) throw Error(body.error || 'Request failed.');
   return body;
 }
 
@@ -166,6 +201,9 @@ function acceptResult(data, payload) {
     !ScenarioControls.isValidValue(control, data.effective_values[control.id]))) {
     throw Error('The service returned invalid approved control values.');
   }
+  if (payload.prompt && data.problem?.original_prompt !== payload.prompt) {
+    throw Error('The verified result does not match the submitted prompt.');
+  }
   if (payload.view_id && (payload.view_id !== result.view_id || data.run_id !== result.run_id || data.plan_id !== result.plan_id ||
       data.attempt_id === result.attempt_id || data.view_id === result.view_id ||
       Object.entries(payload.variables).some(([id, value]) => data.effective_values?.[id] !== value))) {
@@ -179,43 +217,177 @@ const updater = createLatestUpdater({
     busy = value;
     updateButtons();
   },
-  onResult: (data, payload) => {
-    acceptResult(data, payload);
-    const previous = result;
-    render(data, {preserve: !!payload.view_id});
-    result = data;
-    renderChanges(data.evaluation, payload.view_id ? previous?.evaluation : null);
-    setStatus('');
-  },
+  onResult: showResult,
   onError: e => {
-    error(e.message);
-    setStatus(result ? 'Showing the last result' : '');
-    if (!sim) $('frame-status').textContent = 'No verified schedule yet';
+    if (screen === 'results' && result) {
+      $('mode').value = result.mode;
+      error(e.message);
+      setStatus('Showing the last result');
+    } else {
+      showScreen('prompt');
+      composerError(e.message);
+    }
   }
 });
+
+function showResult(data, payload) {
+  acceptResult(data, payload);
+  const previous = result;
+  $('mode').value = data.mode;
+  $('results-heading').textContent = data.problem?.title || 'EV fleet dispatch';
+  $('prompt').textContent = data.problem?.original_prompt || '';
+  $('result-pipeline-progress').hidden = !(pipelineSnapshot?.status === 'completed' &&
+    pipelineSnapshot.history?.length && pipelineSnapshot.result?.plan_id === data.plan_id);
+  if (!payload.view_id) $('original-prompt').open = false;
+  showScreen('results');
+  render(data, {preserve: !!payload.view_id});
+  result = data;
+  renderChanges(data.evaluation, payload.view_id ? previous?.evaluation : null);
+  setStatus('');
+}
 
 function queueRun(payload, status) {
   $('error').hidden = true;
   setStatus(status);
-  if (!sim) $('frame-status').textContent = status;
+  if (screen !== 'results') {
+    composerError('');
+    showProgress(payload.mode === 'live' ? 'Running solver' : 'Loading result', status);
+  }
   updater.schedule(payload, payload);
 }
 
-function initialRun() {
-  const mode = $('mode').value;
-  const prompt = mode === 'live' ? $('prompt').value : examplePrompt;
-  if (!prompt.trim()) {
-    $('original-prompt').open = true;
-    $('prompt').reportValidity();
-    return;
+const stageRows = PipelineProgress.stages.map(stage => {
+  const row = node('li');
+  const state = node('span', 'Pending', 'stage-state');
+  row.append(node('span', stage.label), state);
+  $('pipeline-stages').append(row);
+  return { row, state };
+});
+const pipelineHistory = PipelineProgress.createHistoryView(
+  $('pipeline-visits'), $('pipeline-detail-toggle'), node, writeText);
+
+function showProgress(title, status, native = false) {
+  $('progress-heading').textContent = title;
+  $('progress-return').hidden = true;
+  $('pipeline-stages').hidden = !native;
+  $('pipeline-visits').hidden = true;
+  $('pipeline-detail-toggle').hidden = true;
+  if (native) {
+    pipelineHistory.reset();
+    updatePipelineProgress();
   }
-  if ($('generate').disabled) return;
-  queueRun({mode, prompt}, runLabels().pending);
+  writeText($('pipeline-status'), status);
+  showScreen('progress');
+}
+
+function updatePipelineProgress(snapshot) {
+  const stages = PipelineProgress.stages;
+  const index = stages.findIndex(stage => stage.id === snapshot?.stage);
+  const attempt = snapshot?.attempt > 1 ? ' · Attempt ' + snapshot.attempt : '';
+  const history = snapshot?.history ?? [];
+  $('pipeline-stages').hidden = Boolean(history.length);
+  pipelineHistory.render(history);
+  if (!history.length) {
+    for (const [i, { row, state }] of stageRows.entries()) {
+      row.setAttribute('data-state', i < index ? 'complete' : i === index ? 'running' : 'pending');
+      row.setAttribute('aria-current', i === index ? 'step' : 'false');
+      writeText(state, i < index ? 'Complete' : i === index ? 'In progress' + attempt : 'Pending');
+    }
+  }
+  const activity = stages[index]?.activity;
+  const status = snapshot?.status === 'completed' ? 'Pipeline complete.'
+    : snapshot?.status === 'failed' ? snapshot.error || 'The pipeline could not produce a verified result.'
+    : (history.length ? activity?.replace(/…$/, attempt + '…') : activity) || 'Waiting for the pipeline to start…';
+  writeText($('pipeline-status'), status);
+}
+
+function openPipelineProgress() {
+  if (busy || !pipelineSnapshot?.history?.length) return;
+  setPlaying(false);
+  pipelineReturnScreen = screen;
+  $('progress-heading').textContent = 'Pipeline progress';
+  const back = $('progress-return');
+  writeText(back, screen === 'results' ? 'Back to results' : 'Back to problem');
+  back.hidden = false;
+  updatePipelineProgress(pipelineSnapshot);
+  showScreen('progress');
+}
+
+$('failed-pipeline-progress').onclick = openPipelineProgress;
+$('result-pipeline-progress').onclick = openPipelineProgress;
+$('progress-return').onclick = () => {
+  const previous = pipelineReturnScreen;
+  if (!previous) return;
+  pipelineReturnScreen = null;
+  showScreen(previous);
+  $(previous === 'results' ? 'result-pipeline-progress' : 'failed-pipeline-progress').focus();
+};
+
+function pendingRun() {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(pendingRunKey));
+    if (typeof stored?.id === 'string' && typeof stored.prompt === 'string') return stored;
+  } catch {
+    // The current run still works when browser storage is unavailable.
+  }
+  return null;
+}
+
+function savePendingRun(run) {
+  try {
+    if (run) window.sessionStorage.setItem(pendingRunKey, JSON.stringify(run));
+    else window.sessionStorage.removeItem(pendingRunKey);
+  } catch {
+    // Storage only affects resuming after a reload.
+  }
+}
+
+async function startPipeline(prompt, id) {
+  busy = true;
+  pipelineSnapshot = null;
+  $('failed-pipeline-progress').hidden = true;
+  composerError('');
+  $('error').hidden = true;
+  showProgress('Pipeline progress', id ? 'Reconnecting to your run…' : 'Submitting your problem…', true);
+  updateButtons();
+  try {
+    const snapshot = await PipelineProgress.follow({
+      request, prompt, id,
+      onSnapshot(job) {
+        if (!id) {
+          id = job.id;
+          savePendingRun({ id, prompt });
+        }
+        pipelineSnapshot = job;
+        updatePipelineProgress(job);
+      },
+      onDisconnect: () => writeText($('pipeline-status'), 'Connection interrupted. Reconnecting to your run…'),
+    });
+    if (snapshot.status === 'failed') throw Error(snapshot.error || 'The pipeline could not produce a verified result.');
+    showResult(snapshot.result, { mode: 'live', prompt });
+  } catch (e) {
+    $('failed-pipeline-progress').hidden = !pipelineSnapshot?.history?.length;
+    showScreen('prompt');
+    composerError(e.status === 404 ? 'This pipeline run is no longer available. Submit your problem to run again.' : e.message);
+  } finally {
+    savePendingRun(null);
+    busy = false;
+    updateButtons();
+  }
 }
 
 $('prompt-form').onsubmit = event => {
   event.preventDefault();
-  initialRun();
+  if ($('generate').disabled) return;
+  const field = $('problem-prompt');
+  const prompt = field.value;
+  if (!prompt.trim()) {
+    field.setCustomValidity('Enter a problem to run the pipeline.');
+    field.reportValidity();
+    return;
+  }
+  if (pipelineBackendConfigured) startPipeline(prompt);
+  else queueRun({mode: 'live', prompt}, liveLabels().pending);
 };
 
 function submitControlChanges() {
@@ -227,20 +399,149 @@ function submitControlChanges() {
 }
 $('rerun').onclick = submitControlChanges;
 
-function updateMode() {
-  const mode = $('mode').value;
-  $('prompt').value = mode === 'live' ? livePrompt : examplePrompt;
-  $('generate').textContent = runLabels().action;
+function returnToProblem() {
+  if (busy) return;
+  setPlaying(false);
+  composerError('');
+  showScreen('prompt');
   updateButtons();
+  if (!$('problem-prompt').disabled) $('problem-prompt').focus();
 }
 
+$('new-problem').onclick = returnToProblem;
+$('history-new-problem').onclick = returnToProblem;
 $('mode').onchange = () => {
-  if (!$('prompt').readOnly) livePrompt = $('prompt').value;
-  $('error').hidden = true;
-  setStatus('');
-  updateMode();
+  const mode = $('mode').value;
+  if (mode === result?.mode) return;
+  if (mode === 'live') returnToProblem();
+  else queueRun({mode, prompt: examplePrompt}, runModes[mode].pending);
 };
-$('load-example').onclick = () => { $('prompt').value = liveExamplePrompt; };
+$('problem-prompt').oninput = () => {
+  $('problem-prompt').setCustomValidity('');
+  composerError('');
+};
+$('sample-prompt').onchange = updateButtons;
+$('load-example').onclick = () => {
+  if ($('load-example').disabled) return;
+  $('problem-prompt').value = samplePrompts.get($('sample-prompt').value).prompt;
+  $('problem-prompt').oninput();
+  updateButtons();
+  if (!$('problem-prompt').disabled) $('problem-prompt').focus();
+};
+$('recorded-example').onclick = () => queueRun({mode: 'recorded', prompt: examplePrompt}, runModes.recorded.pending);
+
+const workspaceUrl = id => '/api/workspaces/' + encodeURIComponent(id);
+
+function historyMessage(status, error = '') {
+  for (const [id, text] of [['history-status', status], ['history-error', error]]) {
+    writeText($(id), text);
+    $(id).hidden = !text;
+  }
+}
+
+function isHistoryRequest(serial) {
+  return screen === 'history' && serial === historyRequest;
+}
+
+function runDate(value) {
+  const date = typeof value === 'string' ? new Date(value) : null;
+  return date && Number.isFinite(date.valueOf()) ? historyDate.format(date) : '';
+}
+
+async function showHistory() {
+  if (busy) return;
+  const serial = ++historyRequest;
+  setPlaying(false);
+  showScreen('history');
+  $('history-list').hidden = true;
+  $('history-details').hidden = true;
+  selectedRun = selectedRunButton = null;
+  historyMessage('Loading saved runs…');
+  try {
+    const { workspaces } = await request('/api/workspaces');
+    if (!isHistoryRequest(serial)) return;
+    if (!Array.isArray(workspaces)) throw Error('The server returned an invalid run history.');
+    const rows = workspaces.map(workspace => {
+      const row = node('li');
+      const button = node('button', undefined, 'history-item');
+      button.type = 'button';
+      button.setAttribute('aria-controls', 'history-details');
+      const date = runDate(workspace.created_at);
+      const status = node('span', historyStatuses[workspace.status] || 'Saved', 'history-badge');
+      status.setAttribute('data-status', workspace.status);
+      button.append(node('strong', workspace.title), status,
+        node('span', date || workspace.id, 'history-item-meta'));
+      button.onclick = () => selectSavedRun(workspace.id, button);
+      row.append(button);
+      return row;
+    });
+    $('history-list').replaceChildren(...rows);
+    $('history-list').hidden = !rows.length;
+    historyMessage(rows.length ? '' : 'No saved runs yet.');
+  } catch (error) {
+    if (isHistoryRequest(serial)) historyMessage('', error.message);
+  }
+}
+
+async function selectSavedRun(id, button) {
+  const serial = ++historyRequest;
+  selectedRunButton?.setAttribute('aria-current', 'false');
+  selectedRunButton = button;
+  button.setAttribute('aria-current', 'true');
+  selectedRun = null;
+  $('history-details').hidden = true;
+  historyMessage('Loading run details…');
+  try {
+    const run = await request(workspaceUrl(id));
+    if (!isHistoryRequest(serial)) return;
+    if (run.id !== id || typeof run.prompt !== 'string' || !Array.isArray(run.artifacts)) {
+      throw Error('The server returned invalid run details.');
+    }
+    selectedRun = run;
+    $('history-detail-heading').textContent = run.title;
+    $('history-identity').textContent = [runDate(run.created_at), run.id].filter(Boolean).join(' · ');
+    $('history-prompt').textContent = run.prompt;
+    $('history-open').hidden = !run.can_open;
+    $('history-open').disabled = false;
+    $('history-artifact-section').hidden = !run.artifacts.length;
+    $('history-artifacts').replaceChildren(...run.artifacts.map(artifact => {
+      const item = node('li');
+      const link = node('a', artifact.label);
+      link.href = workspaceUrl(id) + '/artifacts/' + encodeURIComponent(artifact.key);
+      link.download = artifact.filename;
+      item.append(link);
+      return item;
+    }));
+    $('history-details').hidden = false;
+    historyMessage('');
+    $('history-detail-heading').focus();
+  } catch (error) {
+    if (isHistoryRequest(serial)) historyMessage('', error.message);
+  }
+}
+
+async function openSavedResult() {
+  const run = selectedRun;
+  const serial = historyRequest;
+  if (!run?.can_open || $('history-open').disabled || screen !== 'history') return;
+  $('history-open').disabled = true;
+  historyMessage('Opening saved results…');
+  try {
+    const data = await request(workspaceUrl(run.id) + '/open', {});
+    if (!isHistoryRequest(serial)) return;
+    if (data?.plan_id !== run.id) throw Error('The result does not match the selected run.');
+    $('error').hidden = true;
+    showResult(data, { mode: 'live', prompt: run.prompt });
+    updateButtons();
+  } catch (error) {
+    if (isHistoryRequest(serial)) historyMessage('', error.message);
+  } finally {
+    if (isHistoryRequest(serial)) $('history-open').disabled = false;
+  }
+}
+
+$('run-history').onclick = showHistory;
+$('history-open').onclick = openSavedResult;
 
 function render(data, {preserve = false} = {}) {
   const saved = {minute, playing, selectedVan};
@@ -254,9 +555,10 @@ function render(data, {preserve = false} = {}) {
     'quantum-rings': 'Quantum Rings',
     'numpy-statevector': 'Local simulator',
   }[data.quantum?.engine];
-  $('run-badge').textContent = data.provenance === 'live' && engineLabel
-    ? 'Live · ' + engineLabel
-    : provenanceLabels[data.provenance];
+  let badge = provenanceLabels[data.provenance];
+  if (isSavedResult(data)) badge = 'Saved run';
+  else if (data.provenance === 'live' && engineLabel) badge = 'Live · ' + engineLabel;
+  $('run-badge').textContent = badge;
   controls(data.variables || [], data.effective_values || {});
 
   $('circuits').replaceChildren();
@@ -363,18 +665,20 @@ function buildTimeline() {
   function addRow(label, events, target, color) {
     const row = node('div', undefined, 'timeline-row');
     const track = node('div', undefined, 'timeline-track');
+    if (color) row.style.setProperty('--row-color', color);
     row.append(node('span', label), track);
     for (const event of events) {
       const start = Math.max(0, event.start_min);
       const end = Math.min(sim.duration_min, event.end_min);
       if (end < start) continue;
-      const block = node('button', undefined, 'event-block ' + event.type);
+      const block = node('button', undefined, 'event-block ' + event.type + (event.van ? ' reservation' : ''));
       const range = clock(start) + '–' + clock(end);
       block.type = 'button';
       block.style.left = start / sim.duration_min * 100 + '%';
       block.style.width = (end - start) / sim.duration_min * 100 + '%';
       block.style.setProperty('--van', color || event.color);
-      block.title = [label, eventLabels[event.type], range, event.charger_id || event.delivery_id].filter(Boolean).join(' · ');
+      block.title = [label, event.van, eventLabels[event.type], range,
+        target.kind === 'van' ? event.charger_id || event.delivery_id : ''].filter(Boolean).join(' · ');
       block.setAttribute('aria-label', block.title);
       block.onclick = () => {
         setInspection(target);
@@ -542,7 +846,26 @@ mapCanvas.onkeydown = event => {
 };
 $('export').onclick=()=>{if(!result)return;const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'})),a=node('a');a.href=url;a.download=`ev-dispatch-${result.run_id}-${result.attempt_id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('feedback').onclick=async()=>{if(!result)return;const feedback=prompt('Feedback is saved for this server session. What should change?');if(!feedback)return;try{await request('/api/feedback',{view_id:result.view_id,feedback});setStatus('Feedback saved locally');}catch(e){error(e.message);}};
+
+function populateSamples(catalog) {
+  const samples = (Array.isArray(catalog) ? catalog : []).filter(sample =>
+    typeof sample?.id === 'string' && sample.id && typeof sample.label === 'string' && sample.label &&
+    typeof sample.prompt === 'string' && sample.prompt.trim() &&
+    (!localBackendConfigured || sample.prompt === liveExamplePrompt));
+  if (!samples.length) samples.push({ id: 'ev-charge-range', label: 'EV fleet dispatch', prompt: liveExamplePrompt });
+  samplePrompts = new Map(samples.map(sample => [sample.id, sample]));
+  const picker = $('sample-prompt');
+  picker.replaceChildren(...Array.from(samplePrompts.values(), sample => {
+    const option = node('option', sample.label);
+    option.value = sample.id;
+    return option;
+  }));
+  picker.value = samples.find(sample => sample.prompt === liveExamplePrompt)?.id ?? samples[0].id;
+}
+
 async function init() {
+  const stored = pendingRun();
+  if (stored) $('problem-prompt').value = stored.prompt;
   try {
     const [config, example] = await Promise.all(
       ['/api/config', '/api/example'].map(async path => {
@@ -553,19 +876,23 @@ async function init() {
     );
     examplePrompt = example.prompt;
     liveExamplePrompt = example.live_prompt || examplePrompt;
-    livePrompt = liveExamplePrompt;
     localBackendConfigured = Boolean(config.local_backend_configured);
     pipelineBackendConfigured = Boolean(config.pipeline_backend_configured);
+    savedRunRecalculationConfigured = Boolean(config.saved_run_recalculation_configured ?? config.pipeline_backend_configured);
     backendConfigured = localBackendConfigured || pipelineBackendConfigured || Boolean(config.backend_configured);
+    populateSamples(example.samples);
     $('live-mode').disabled = !backendConfigured;
-    if (localBackendConfigured) $('mode').value = 'live';
+    $('generate').textContent = liveLabels().action;
+    const note = $('composer-note');
+    note.textContent = localBackendConfigured ? 'Load the EV sample to run the built-in solver.'
+      : backendConfigured ? '' : 'Start a live backend to run a custom problem.';
+    note.hidden = !note.textContent;
     initialized = true;
-    updateMode();
-    initialRun();
-  } catch (e) {
-    error('Unable to load the local service. Start the dashboard server and refresh.');
-    setStatus('');
-    $('frame-status').textContent = 'Waiting for the dashboard service';
+    updateButtons();
+    if (stored) startPipeline(stored.prompt, stored.id);
+  } catch {
+    $('composer-note').hidden = true;
+    composerError('Unable to load the local service. Start the dashboard server and refresh.');
   }
 }
 

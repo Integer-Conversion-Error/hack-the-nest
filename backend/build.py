@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 from backend import files
 from backend.plan import PLAN_JSON, load_plan
 from backend.problem_statement import ENV_FILE, PROBLEM_JSON, load_problem_statement
+from backend.progress import ProgressCallback, progress_step, report
 from backend.prompt_loader import PromptError, load_prompt
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -70,6 +71,15 @@ TOOLS: dict[str, tuple[str, dict, Callable | None]] = {
         _schema({"summary": {"type": "string", "description": "What each file does and anything left out."}}),
         None,
     ),
+}
+
+TOOL_LABELS = {
+    "list_files": "List workspace files",
+    "read_file": "Read a workspace file",
+    "create_file": "Create a solver file",
+    "update_file": "Update a solver file",
+    "delete_file": "Delete a solver file",
+    "finish": "Check that the solver files are ready",
 }
 
 
@@ -137,7 +147,9 @@ def unfinished_issues(workspace: Workspace) -> list[str]:
     return issues
 
 
-def generate(client, model: str, system: str, contents, **config_fields):
+def generate(
+    client, model: str, system: str, contents, *, on_progress: ProgressCallback | None = None, **config_fields,
+):
     """One Gemini request, retried on temporary service errors."""
     from google.genai import errors, types
 
@@ -147,8 +159,17 @@ def generate(client, model: str, system: str, contents, **config_fields):
             return client.models.generate_content(model=model, contents=contents, config=config)
         except errors.APIError as error:
             if error.code not in RETRYABLE_CODES or attempt == REQUEST_ATTEMPTS:
+                report(
+                    on_progress, "Gemini request stopped", status="failed",
+                    detail=f"The service returned HTTP {error.code} on request {attempt}.",
+                )
                 raise BuildError(f"Gemini request failed (HTTP {error.code}): {error.message}") from error
-            time.sleep(2**attempt)
+            delay = 2**attempt
+            report(
+                on_progress, "Retry the Gemini request",
+                detail=f"HTTP {error.code}. Waiting {delay} seconds before request {attempt + 1} of {REQUEST_ATTEMPTS}.",
+            )
+            time.sleep(delay)
 
 
 def run_build(
@@ -159,22 +180,27 @@ def run_build(
     client=None,
     max_turns: int = DEFAULT_MAX_TURNS,
     on_event: Callable[[str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> BuildResult:
     """Have the agent write the solver files for the workspace's approved plan.
 
     feedback: issues from a later check (plan comparison or Test) when Build is being redone.
               Existing files are kept so the agent can fix them.
     on_event: called with a one-line description of each tool call, for progress output.
+    on_progress: structured updates for each agent turn and file operation.
     """
     from google.genai import types
 
-    for required, step in ((PROBLEM_JSON, "Init"), (PLAN_JSON, "Plan")):
-        if not workspace.resolve(required).is_file():
-            raise BuildError(f"Run {step} first to create {required} for workspace {workspace.id}.")
-    problem = load_problem_statement(workspace)
-    planning = load_plan(workspace)
+    with progress_step(on_progress, "Load the problem and approved plan"):
+        for required, stage in ((PROBLEM_JSON, "Init"), (PLAN_JSON, "Plan")):
+            if not workspace.resolve(required).is_file():
+                raise BuildError(f"Run {stage} first to create {required} for workspace {workspace.id}.")
+        problem = load_problem_statement(workspace)
+        planning = load_plan(workspace)
 
-    shutil.copyfile(TEMPLATES / RUNTIME_HELPER, workspace.resolve(RUNTIME_HELPER))
+    with progress_step(on_progress, "Copy the Quantum Rings runtime") as step:
+        shutil.copyfile(TEMPLATES / RUNTIME_HELPER, workspace.resolve(RUNTIME_HELPER))
+        step.completed(RUNTIME_HELPER)
 
     # Prompts are read from prompts.md now, before Gemini is called.
     system = load_prompt("build.system", contract=build_contract(planning, workspace))
@@ -202,25 +228,41 @@ def run_build(
     contents = [types.Content(role="user", parts=[types.Part(text=message)])]
     summary = None
     for turn in range(1, max_turns + 1):
-        response = generate(client, model, system, contents, tools=tools, tool_config=tool_config)
-        calls = response.function_calls or []
+        with progress_step(on_progress, f"Build agent turn {turn}") as step:
+            response = generate(
+                client, model, system, contents, on_progress=on_progress, tools=tools, tool_config=tool_config,
+            )
+            calls = response.function_calls or []
+            detail = f"Requested file operations: {len(calls)}." if calls else "No file operations returned."
+            step.completed(detail)
         if not calls:
             contents.append(types.Content(role="user", parts=[types.Part(text=load_prompt("build.nudge"))]))
+            report(on_progress, "Ask the build agent to continue")
             continue
         contents.append(response.candidates[0].content)  # keep the model's turn exactly as sent
 
         replies = []
         for call in calls:
             args = dict(call.args or {})
-            if call.name == "finish":
-                issues = unfinished_issues(workspace)
-                if issues:
-                    result = {"error": load_prompt("build.unfinished", issues="\n".join(f"- {i}" for i in issues))}
+            with progress_step(on_progress, TOOL_LABELS.get(call.name, "Handle a solver file request")) as step:
+                if call.name == "finish":
+                    issues = unfinished_issues(workspace)
+                    if issues:
+                        result = {"error": load_prompt("build.unfinished", issues="\n".join(f"- {i}" for i in issues))}
+                        step.failed("\n".join(issues))
+                    else:
+                        summary = str(args.get("summary", "")).strip() or "(no summary given)"
+                        result = {"accepted": True}
                 else:
-                    summary = str(args.get("summary", "")).strip() or "(no summary given)"
-                    result = {"accepted": True}
-            else:
-                result = _call_tool(workspace, call.name, args)
+                    result = _call_tool(workspace, call.name, args)
+                    if "error" in result:
+                        step.failed("The workspace rejected the requested operation.")
+                    elif result.get("syntax_error"):
+                        step.failed(f"Syntax error in {result['path']} at {result['syntax_error']}.")
+                    elif call.name == "list_files":
+                        step.completed(f"Files found: {len(result['files'])}.")
+                    else:
+                        step.completed(result.get("path"))
             if on_event:
                 status = f"refused: {result['error']}" if "error" in result else "ok"
                 if result.get("syntax_error"):
@@ -232,11 +274,13 @@ def run_build(
         contents.append(types.Content(role="user", parts=replies))
 
         if summary is not None:
-            written = [f["path"] for f in files.list_files(workspace)["files"] if not f["read_only"]]
-            result = BuildResult(model=model, turns=turn, summary=summary, files=written, feedback=feedback)
-            workspace.resolve(BUILD_JSON).write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            with progress_step(on_progress, "Save the solver build record"):
+                written = [f["path"] for f in files.list_files(workspace)["files"] if not f["read_only"]]
+                result = BuildResult(model=model, turns=turn, summary=summary, files=written, feedback=feedback)
+                workspace.resolve(BUILD_JSON).write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
             return result
 
+    report(on_progress, "Build turn limit reached", status="failed", detail=f"Used all {max_turns} build turns.")
     raise BuildError(f"The agent did not finish within {max_turns} turns.")
 
 

@@ -30,6 +30,7 @@ from backend.plan import (
     save_plan,
 )
 from backend.problem_statement import ENV_FILE, PROBLEM_JSON, load_problem_statement
+from backend.progress import ProgressCallback, progress_step, report
 from backend.prompt_loader import PromptError, load_prompt
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -151,6 +152,7 @@ def run_planning(
     model: str | None = None,
     client=None,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    on_progress: ProgressCallback | None = None,
 ) -> PlanningResult:
     """Read Init's problem statement and save the first approved solver plan."""
     if not 0 <= max_retries <= DEFAULT_MAX_RETRIES:
@@ -195,55 +197,80 @@ def run_planning(
     prompt = workspace.prompt
     with session as gemini:
         for attempt in range(1, max_retries + 2):
+            retry_delay = 0
             try:
                 context_json = json.dumps(context, ensure_ascii=False)
                 if research is None:
-                    research = _research(gemini, model, problem_json, context_json)
+                    with progress_step(on_progress, "Research solver approaches") as step:
+                        research = _research(gemini, model, problem_json, context_json)
+                        if research.sources:
+                            step.completed(f"Found {len(research.sources)} research sources.")
+                        else:
+                            step.completed("No grounded sources were found. Continuing with the problem statement.")
                 prompt_values = {
                     "prompt": prompt,
                     "problem": problem_json,
                     "research": research.model_dump_json(indent=2),
                     "context": context_json,
                 }
-                draft = _structured(
-                    gemini, model, PlanDraft,
-                    load_prompt("planning.draft.system", max_qubits=max_qubits, worker_seconds=worker_seconds),
-                    load_prompt("planning.draft.user", **prompt_values),
-                )
-                if draft.status == "needs_clarification":
-                    raise ClarificationRequired(draft.questions)
-                if draft.status == "unsupported":
-                    raise PlanningError(draft.reason or "Gemini could not propose a solver for this request.")
+                with progress_step(on_progress, f"Draft a solver plan (attempt {attempt})") as step:
+                    draft = _structured(
+                        gemini, model, PlanDraft,
+                        load_prompt("planning.draft.system", max_qubits=max_qubits, worker_seconds=worker_seconds),
+                        load_prompt("planning.draft.user", **prompt_values),
+                    )
+                    if draft.status == "needs_clarification":
+                        step.failed("The draft identified questions about the request.")
+                        raise ClarificationRequired(draft.questions)
+                    if draft.status == "unsupported":
+                        step.failed(draft.reason or "The model could not propose a solver.")
+                        raise PlanningError(draft.reason or "Gemini could not propose a solver for this request.")
 
-                plan = draft.plan
-                if plan is None:
-                    raise PlanningError("Gemini did not include a plan in its ready response.")
-                signature = plan.model_dump_json()
-                if signature in rejected_plans:
-                    raise PlanningError("Gemini repeated a rejected plan without progress. " + " ".join(issues))
+                    plan = draft.plan
+                    if plan is None:
+                        raise PlanningError("Gemini did not include a plan in its ready response.")
+                    signature = plan.model_dump_json()
+                    if signature in rejected_plans:
+                        step.failed("The planner repeated an already rejected plan.")
+                        raise PlanningError("Gemini repeated a rejected plan without progress. " + " ".join(issues))
+                    step.completed(plan.selected.name)
 
                 context["previous_draft"] = plan.model_dump(mode="json")
-                issues = _limit_issues(plan, max_qubits, worker_seconds)
+                with progress_step(on_progress, f"Check plan resource limits (attempt {attempt})") as step:
+                    issues = _limit_issues(plan, max_qubits, worker_seconds)
+                    if issues:
+                        step.failed("\n".join(issues))
+                    else:
+                        step.completed(f"Within the {max_qubits}-qubit and {worker_seconds}-second limits.")
                 if not issues:
-                    review = _structured(
-                        gemini, model, PlanReview,
-                        load_prompt("planning.review.system", max_qubits=max_qubits, worker_seconds=worker_seconds),
-                        load_prompt("planning.review.user", **prompt_values, draft=signature),
-                    )
-                    if review.verdict == "approve":
-                        if workspace.prompt != prompt or load_problem_statement(workspace) != problem:
-                            raise PlanningError("Init inputs changed during planning. Run Plan again for the current problem.")
-                        result = PlanningResult(
-                            problem_title=problem.title,
-                            model=model,
-                            plan=plan,
-                            research=research,
-                            attempts=attempt,
-                            max_qubits=max_qubits,
-                            worker_seconds=worker_seconds,
-                            review=review,
+                    with progress_step(on_progress, f"Review the solver plan (attempt {attempt})") as step:
+                        review = _structured(
+                            gemini, model, PlanReview,
+                            load_prompt("planning.review.system", max_qubits=max_qubits, worker_seconds=worker_seconds),
+                            load_prompt("planning.review.user", **prompt_values, draft=signature),
                         )
-                        save_plan(workspace, result)
+                        if review.verdict == "approve":
+                            step.completed("Plan approved.")
+                        else:
+                            review_detail = review.reason or "\n".join(review.issues or review.questions)
+                            step.failed(review_detail or "The review did not approve this draft.")
+                    if review.verdict == "approve":
+                        with progress_step(on_progress, "Save the approved plan") as step:
+                            if workspace.prompt != prompt or load_problem_statement(workspace) != problem:
+                                step.failed("The prompt or problem statement changed during planning.")
+                                raise PlanningError("Init inputs changed during planning. Run Plan again for the current problem.")
+                            result = PlanningResult(
+                                problem_title=problem.title,
+                                model=model,
+                                plan=plan,
+                                research=research,
+                                attempts=attempt,
+                                max_qubits=max_qubits,
+                                worker_seconds=worker_seconds,
+                                review=review,
+                            )
+                            save_plan(workspace, result)
+                            step.completed(f"{len(plan.controls)} adjustable settings.")
                         return result
                     if review.verdict == "needs_clarification":
                         raise ClarificationRequired(review.questions)
@@ -258,9 +285,12 @@ def run_planning(
                 issues = [f"{'.'.join(map(str, item['loc'])) or 'response'}: {item['msg']}" for item in details[:5]]
             except _RetryableRequestError as error:
                 issues = [str(error)]
-                if attempt <= max_retries:
-                    time.sleep(2 ** min(attempt - 1, 2))
+                retry_delay = 2 ** min(attempt - 1, 2)
             context["review_issues"] = issues
+            if attempt <= max_retries:
+                report(on_progress, f"Retry planning (attempt {attempt + 1})", detail="\n".join(issues))
+                if retry_delay:
+                    time.sleep(retry_delay)
 
     raise PlanningError(f"No plan was approved after {max_retries + 1} attempts. " + " ".join(issues))
 

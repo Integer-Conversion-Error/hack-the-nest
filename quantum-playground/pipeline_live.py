@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import copytree, ignore_patterns
@@ -95,7 +96,10 @@ def project_result(artifact, output, prompt, identity):
     }
 
 
-def pipeline_handoff(prompt, values, previous, attempt_id):
+def pipeline_handoff(
+    prompt, values, previous, attempt_id, *,
+    on_stage: Callable[[str], None] | None = None, on_progress=None,
+):
     """Plan a new dispatch, or run and verify fresh values in a copy of the approved workspace."""
     try:
         from pydantic import ValidationError
@@ -114,8 +118,23 @@ def pipeline_handoff(prompt, values, previous, attempt_id):
 
     try:
         if previous is None:
+            initial_stage = True
+
+            def stage_entered(stage):
+                nonlocal initial_stage
+                # Workspace creation and the first prompt parse are one Init attempt.
+                if on_stage is not None and (not initial_stage or stage != "init"):
+                    on_stage(stage)
+                initial_stage = False
+
+            if on_progress is not None:
+                if on_stage is not None:
+                    on_stage("init")
+                on_progress("Prepare the dispatch workspace", status="running")
             with planner_session() as client:
                 workspace = init_workspace(prompt, name="fleet", scene_type="ev_fleet")
+                if on_progress is not None:
+                    on_progress("Prepare the dispatch workspace", status="completed")
                 identity = {"run_id": str(uuid4()), "plan_id": workspace.id, "attempt_id": attempt_id}
 
                 def validate_results(output, overrides):
@@ -131,7 +150,10 @@ def pipeline_handoff(prompt, values, previous, attempt_id):
                     handoff = project_result(draft, output, prompt, identity)
                     normalize_handoff(handoff, "live", prompt, expected_values=expected)
 
-                artifact = run_pipeline(workspace, client=client, validate_results=validate_results)
+                artifact = run_pipeline(
+                    workspace, client=client, on_stage=stage_entered if on_progress is not None else on_stage,
+                    on_progress=on_progress, validate_results=validate_results,
+                )
             if artifact["decision"] != "GO":
                 raise UnverifiedResult("The pipeline did not approve the fleet plan.")
             return project_result(artifact, artifact["results"], prompt, identity)
@@ -139,7 +161,7 @@ def pipeline_handoff(prompt, values, previous, attempt_id):
         workspace = open_workspace(previous["plan_id"])
         identity = {"run_id": previous["run_id"], "plan_id": workspace.id, "attempt_id": attempt_id}
         artifact = json.loads(workspace.resolve(HANDOFF_JSON).read_text(encoding="utf-8"))
-        if (workspace.meta.get("scene_type") != "ev_fleet" or artifact.get("decision") != "GO"
+        if (workspace.meta.get("scene_type") not in (None, "ev_fleet") or artifact.get("decision") != "GO"
                 or artifact.get("workspace_id") != workspace.id):
             raise UnverifiedResult("The approved fleet plan is unavailable. Start a new dispatch.")
         with TemporaryDirectory(dir=workspace.path.parent, prefix=f"{workspace.id}-attempt-") as directory:

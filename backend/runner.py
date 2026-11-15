@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from backend.build import ENTRY_POINT, RUNTIME_HELPER
 from backend.plan import PLAN_JSON, load_plan
+from backend.progress import ProgressCallback, progress_step, report
 from backend.prompt_loader import load_prompt
 from backend.workspace import Workspace
 
@@ -131,6 +132,7 @@ def run_solver(
     timeout: int | None = None,
     *,
     validate_results: Callable[[dict, dict], None] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> RunOutcome:
     """Run the workspace's main.py and evaluate the build result. Never raises for a failed run."""
     controls = dict(controls or {})
@@ -145,6 +147,8 @@ def run_solver(
         else:
             arguments.extend([f"--{key}", argument])
     command = "python " + " ".join(arguments)
+    label = "Run solver with default settings" if not controls else "Run solver with alternate settings"
+    settings = ", ".join(f"{key} = {value}" for key, value in controls.items())
 
     results_path = workspace.resolve(RESULTS_JSON)
     diagram_path = workspace.resolve(CIRCUIT_DIAGRAM)
@@ -152,55 +156,68 @@ def run_solver(
     diagram_path.unlink(missing_ok=True)
 
     if not workspace.resolve(ENTRY_POINT).is_file():
+        report(on_progress, label, status="failed", detail=f"{ENTRY_POINT} does not exist.")
         return RunOutcome(
             command=command, controls=controls, exit_code=None, timed_out=False, seconds=0.0,
             stdout_tail="", stderr_tail="", results=None, issues=[f"{ENTRY_POINT} does not exist."],
         )
 
     environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
-    started = time.monotonic()
     issues = []
-    try:
-        finished = subprocess.run(
-            [sys.executable, *arguments],
-            cwd=workspace.path, env=environment, timeout=timeout,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-        )
-        exit_code, timed_out = finished.returncode, False
-        stdout, stderr = finished.stdout, finished.stderr
-    except subprocess.TimeoutExpired as expired:
-        exit_code, timed_out = None, True
-        stdout, stderr = expired.stdout, expired.stderr
-        issues.append(f"The run did not finish within the {timeout}-second limit and was stopped.")
-    seconds = round(time.monotonic() - started, 2)
+    with progress_step(on_progress, label, detail=settings or None) as step:
+        started = time.monotonic()
+        try:
+            finished = subprocess.run(
+                [sys.executable, *arguments],
+                cwd=workspace.path, env=environment, timeout=timeout,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+            )
+            exit_code, timed_out = finished.returncode, False
+            stdout, stderr = finished.stdout, finished.stderr
+        except subprocess.TimeoutExpired as expired:
+            exit_code, timed_out = None, True
+            stdout, stderr = expired.stdout, expired.stderr
+            issues.append(f"The run did not finish within the {timeout}-second limit and was stopped.")
+        seconds = round(time.monotonic() - started, 2)
 
-    if exit_code not in (0, None):
-        issues.append(f"The program exited with code {exit_code}.")
+        if exit_code not in (0, None):
+            issues.append(f"The program exited with code {exit_code}.")
+        if issues:
+            step.failed("\n".join(filter(None, (settings, *issues))))
+        else:
+            step.completed("\n".join(filter(None, (settings, f"Finished in {seconds:g} seconds."))))
 
     results = None
-    if results_path.is_file():
-        try:
-            results = json.loads(results_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            issues.append(f"{RESULTS_JSON} is not valid JSON: {error}")
-        else:
-            if isinstance(results, dict):
-                diagram_missing = _diagram_required(workspace) and not (
-                    diagram_path.is_file() and isinstance(results.get("quantum"), dict)
-                    and results["quantum"].get("circuit_diagram")
-                )
-                issues += _result_issues(results, controls, max_qubits, diagram_missing)
+    if results_path.is_file() or not timed_out:
+        with progress_step(on_progress, "Check solver output") as step:
+            before_check = len(issues)
+            if results_path.is_file():
+                try:
+                    results = json.loads(results_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                    issues.append(f"{RESULTS_JSON} is not valid JSON: {error}")
+                else:
+                    if isinstance(results, dict):
+                        diagram_missing = _diagram_required(workspace) and not (
+                            diagram_path.is_file() and isinstance(results.get("quantum"), dict)
+                            and results["quantum"].get("circuit_diagram")
+                        )
+                        issues += _result_issues(results, controls, max_qubits, diagram_missing)
+                    else:
+                        issues.append(f"{RESULTS_JSON} must contain a JSON object.")
+                        results = None
             else:
-                issues.append(f"{RESULTS_JSON} must contain a JSON object.")
-                results = None
-    elif not timed_out:
-        issues.append(f"The program did not write {RESULTS_JSON}.")
+                issues.append(f"The program did not write {RESULTS_JSON}.")
+            if len(issues) > before_check:
+                step.failed("\n".join(issues[before_check:]))
 
     if not issues and results is not None and validate_results is not None:
-        try:
-            validate_results(results, controls)
-        except ValueError as error:
-            issues.append(str(error))
+        with progress_step(on_progress, "Check the dashboard result") as step:
+            try:
+                validate_results(results, controls)
+            except ValueError as error:
+                issues.append(str(error))
+                step.failed(str(error))
 
     return RunOutcome(
         command=command, controls=controls, exit_code=exit_code, timed_out=timed_out, seconds=seconds,

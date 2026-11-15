@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from backend.build import DEFAULT_MODEL, BuildError, gemini_client, generate, source_files
 from backend.problem_statement import load_problem_statement
+from backend.progress import ProgressCallback
 from backend.prompt_loader import load_prompt
 from backend.runner import RunOutcome
 from backend.workspace import Workspace
@@ -93,7 +94,12 @@ def describe_runs(runs: list[RunOutcome]) -> str:
 
 
 def evaluate_semantics(
-    workspace: Workspace, runs: list[RunOutcome], *, model: str | None = None, client=None
+    workspace: Workspace,
+    runs: list[RunOutcome],
+    *,
+    model: str | None = None,
+    client=None,
+    on_progress: ProgressCallback | None = None,
 ) -> SemanticReview:
     """Decide whether the implementation and its results solve the stated problem."""
     problem = load_problem_statement(workspace)
@@ -112,6 +118,7 @@ def evaluate_semantics(
             runs=describe_runs(runs),
             files=listing,
         ),
+        on_progress=on_progress,
         response_mime_type="application/json",
         response_json_schema=_ModelReview.model_json_schema(),
     )

@@ -28,6 +28,7 @@ from backend.build import DEFAULT_MODEL, BuildError, build_contract, gemini_clie
 from backend.build_review import compare_with_plan
 from backend.plan import load_plan, render_markdown
 from backend.problem_statement import ENV_FILE, load_problem_statement
+from backend.progress import ProgressCallback, progress_step
 from backend.prompt_loader import PromptError, load_prompt
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -78,9 +79,13 @@ class FinalDecision(BaseModel):
         return "\n".join(f"- {issue}" for issue in failed.issues) if failed else ""
 
 
-def _judge(client, model: str, name: str, returns_to: Stage, system: str, message: str) -> FinalCheck:
+def _judge(
+    client, model: str, name: str, returns_to: Stage, system: str, message: str,
+    on_progress: ProgressCallback | None,
+) -> FinalCheck:
     response = generate(
         client, model, system, message,
+        on_progress=on_progress,
         response_mime_type="application/json",
         response_json_schema=_ModelCheck.model_json_schema(),
     )
@@ -97,7 +102,9 @@ def _judge(client, model: str, name: str, returns_to: Stage, system: str, messag
     )
 
 
-def check_problem_against_prompt(workspace: Workspace, client, model: str) -> FinalCheck:
+def check_problem_against_prompt(
+    workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
+) -> FinalCheck:
     return _judge(
         client, model, "Problem statement against the original prompt", "init",
         load_prompt("final.problem.system"),
@@ -106,10 +113,13 @@ def check_problem_against_prompt(workspace: Workspace, client, model: str) -> Fi
             prompt=workspace.prompt,
             problem=load_problem_statement(workspace).model_dump_json(indent=2),
         ),
+        on_progress,
     )
 
 
-def check_plan_against_problem(workspace: Workspace, client, model: str) -> FinalCheck:
+def check_plan_against_problem(
+    workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
+) -> FinalCheck:
     planning = load_plan(workspace)
     return _judge(
         client, model, "Plan against the problem statement", "plan",
@@ -119,11 +129,14 @@ def check_plan_against_problem(workspace: Workspace, client, model: str) -> Fina
             problem=load_problem_statement(workspace).model_dump_json(indent=2),
             plan=render_markdown(planning),
         ),
+        on_progress,
     )
 
 
-def check_implementation_against_plan(workspace: Workspace, client, model: str) -> FinalCheck:
-    review = compare_with_plan(workspace, model=model, client=client)  # the same check Build uses
+def check_implementation_against_plan(
+    workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
+) -> FinalCheck:
+    review = compare_with_plan(workspace, model=model, client=client, on_progress=on_progress)
     return FinalCheck(
         name="Implementation against the plan",
         returns_to="build",
@@ -133,20 +146,35 @@ def check_implementation_against_plan(workspace: Workspace, client, model: str) 
     )
 
 
-CHECKS = (check_problem_against_prompt, check_plan_against_problem, check_implementation_against_plan)
+CHECKS = (
+    ("Check the problem statement against the prompt", check_problem_against_prompt),
+    ("Check the plan against the problem statement", check_plan_against_problem),
+    ("Check the implementation against the plan", check_implementation_against_plan),
+)
 
 
-def run_final_checks(workspace: Workspace, *, model: str | None = None, client=None) -> FinalDecision:
+def run_final_checks(
+    workspace: Workspace, *, model: str | None = None, client=None, on_progress: ProgressCallback | None = None,
+) -> FinalDecision:
     """Run the three checks in order, stop at the first failure, and save the decision."""
     model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
     client = client or gemini_client()
 
+    def run_check(label, check):
+        with progress_step(on_progress, label) as step:
+            result = check(workspace, client, model, on_progress=on_progress)
+            if result.passed:
+                step.completed(result.summary)
+            else:
+                step.failed("\n".join([result.summary, *result.issues]))
+            return result
+
     checks = []
-    for check in CHECKS:
-        result = check(workspace, client, model)
+    for label, check in CHECKS:
+        result = run_check(label, check)
         if not result.passed:
             # A judge can flip on a borderline point. Send work back only if it fails twice.
-            confirmation = check(workspace, client, model)
+            confirmation = run_check(f"{label} (confirmation)", check)
             if confirmation.passed:
                 result = confirmation
         checks.append(result)
@@ -154,7 +182,8 @@ def run_final_checks(workspace: Workspace, *, model: str | None = None, client=N
             break
     failed = None if checks[-1].passed else checks[-1].returns_to
     decision = FinalDecision(decision="NO_GO" if failed else "GO", failed_stage=failed, checks=checks, model=model)
-    workspace.resolve(FINAL_JSON).write_text(decision.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    with progress_step(on_progress, "Save the verification decision"):
+        workspace.resolve(FINAL_JSON).write_text(decision.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return decision
 
 

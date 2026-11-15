@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ev_reference import PROMPT, reference_handoff
-from fleet_handoff import InvalidHandoff, applied_values, normalize_controls, normalize_handoff
+from fleet_handoff import InvalidHandoff, applied_values, normalize_controls, normalize_handoff, validate_replay
 
 
 def definition(key, kind, default, **constraints):
@@ -98,6 +98,35 @@ class PipelineControlsTests(unittest.TestCase):
         rerun["controls"] = [{**self.rate, "maximum": 1.25}, self.toggle, self.pick]
         with self.assertRaisesRegex(InvalidHandoff, "Approved controls changed"):
             normalize_handoff(rerun, "live", PROMPT, previous, expected_values=expected)
+
+    def test_replay_accepts_six_vans_on_a_twelve_by_twelve_grid(self):
+        simulation = {
+            "kind": "ev_fleet", "grid": {"width": 12, "height": 12, "block_km": 0.5},
+            "depot": [0, 0], "start_hour": 8, "duration_min": 120,
+            "battery_capacity_kwh": 20, "reserve_pct": 15,
+            "chargers": [], "deliveries": [], "vans": [],
+        }
+        for number in range(1, 7):
+            delivery_id = f"D{number}"
+            destination = [number, 0]
+            battery = 10 - 0.15 * number
+            simulation["deliveries"].append({"id": delivery_id, "position": destination, "deadline_min": 60})
+            simulation["vans"].append({
+                "id": f"V{number}", "initial_battery_kwh": 10, "delivery_ids": [delivery_id],
+                "events": [
+                    {"type": "drive", "start_min": 0, "end_min": number, "position": [0, 0],
+                     "path": [[x, 0] for x in range(number + 1)],
+                     "battery_start_kwh": 10, "battery_end_kwh": battery},
+                    {"type": "deliver", "start_min": number, "end_min": number + 5,
+                     "position": destination, "delivery_id": delivery_id,
+                     "battery_start_kwh": battery, "battery_end_kwh": battery},
+                ],
+            })
+
+        self.assertEqual(validate_replay(simulation), 6)
+        simulation["vans"].append({"id": "V7", "initial_battery_kwh": 10, "delivery_ids": [], "events": []})
+        with self.assertRaisesRegex(InvalidHandoff, "one to six vans"):
+            validate_replay(simulation)
 
 
 if __name__ == "__main__":
