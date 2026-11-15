@@ -317,7 +317,7 @@ function updateInspector(){
   }else if(inspected.kind==='charger'){
     const reservations=sim.vans.flatMap(v=>v.events.filter(e=>e.type==='charge'&&e.charger_id===inspected.id).map(e=>({van:v.id,...e})));
     const active=reservations.find(e=>e.start_min<=minute&&minute<e.end_min);
-    panel.textContent=`${inspected.id} | ${active?`Charging ${active.van} until ${clock(active.end_min)}`:'Available at this time'} | Reservations: ${reservations.map(e=>`${e.van} ${clock(e.start_min)}-${clock(e.end_min)}`).join('; ')||'none'}`;
+    panel.textContent=`${inspected.id} | ${active?`Charging ${active.van} until ${clock(active.end_min)}`:'No charging scheduled at this time'} | Reservations: ${reservations.map(e=>`${e.van} ${clock(e.start_min)}-${clock(e.end_min)}`).join('; ')||'none'}`;
   }else{
     const delivery=sim.deliveries.find(d=>d.id===inspected.id);if(!delivery){panel.hidden=true;return;}
     const van=sim.vans.find(v=>v.events.some(e=>e.delivery_id===delivery.id));

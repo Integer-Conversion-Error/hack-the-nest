@@ -203,7 +203,7 @@ async function main() {
     });
   };
   click('charger');
-  assert.match(get('pygame-inspector').textContent, /Reservations/);
+  assert.equal(get('pygame-inspector').textContent, 'C1 | No charging scheduled at this time | Reservations: none');
   click('play');
   assert.equal(vm.runInContext('playing', context), true);
   click('scrub');
