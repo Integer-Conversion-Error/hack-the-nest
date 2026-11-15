@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 
 from pydantic import BaseModel
 
@@ -108,7 +109,13 @@ def _result_issues(results: dict, controls: dict, max_qubits: int) -> list[str]:
     return issues
 
 
-def run_solver(workspace: Workspace, controls: dict | None = None, timeout: int | None = None) -> RunOutcome:
+def run_solver(
+    workspace: Workspace,
+    controls: dict | None = None,
+    timeout: int | None = None,
+    *,
+    validate_results: Callable[[dict, dict], None] | None = None,
+) -> RunOutcome:
     """Run the workspace's main.py and evaluate the build result. Never raises for a failed run."""
     controls = dict(controls or {})
     max_qubits, time_limit = limits(workspace)
@@ -116,7 +123,11 @@ def run_solver(workspace: Workspace, controls: dict | None = None, timeout: int 
 
     arguments = [ENTRY_POINT]
     for key, value in controls.items():
-        arguments += [f"--{key}", str(value)]
+        argument = str(value)
+        if argument.startswith("-"):
+            arguments.append(f"--{key}={argument}")
+        else:
+            arguments.extend([f"--{key}", argument])
     command = "python " + " ".join(arguments)
 
     results_path = workspace.resolve(RESULTS_JSON)
@@ -162,6 +173,12 @@ def run_solver(workspace: Workspace, controls: dict | None = None, timeout: int 
                 results = None
     elif not timed_out:
         issues.append(f"The program did not write {RESULTS_JSON}.")
+
+    if not issues and results is not None and validate_results is not None:
+        try:
+            validate_results(results, controls)
+        except ValueError as error:
+            issues.append(str(error))
 
     return RunOutcome(
         command=command, controls=controls, exit_code=exit_code, timed_out=timed_out, seconds=seconds,

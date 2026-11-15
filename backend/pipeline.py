@@ -105,10 +105,12 @@ def run_pipeline(
     client=None,
     max_final_rounds: int = DEFAULT_MAX_FINAL_ROUNDS,
     on_event: Callable[[str], None] | None = None,
+    validate_results: Callable[[dict, dict], None] | None = None,
 ) -> dict:
     """Take a workspace from wherever it is to a GO handoff. Returns the handoff.
 
     answers: the user's replies to planning's clarifying questions, if any.
+    validate_results: an optional check of the result and requested overrides, raising ValueError on failure.
     Raises NoGo, PipelineError, or the stage's own error when a stage cannot finish.
     """
     say = on_event or (lambda message: None)
@@ -124,7 +126,7 @@ def run_pipeline(
 
     def test() -> None:
         say("##### Test")
-        run_test_phase(workspace, client=client, on_event=on_event)
+        run_test_phase(workspace, client=client, on_event=on_event, validate_results=validate_results)
 
     # --- Forward pass, skipping stages whose output already exists
     if not workspace.resolve(PROBLEM_JSON).is_file():

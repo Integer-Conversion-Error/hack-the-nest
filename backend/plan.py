@@ -29,6 +29,8 @@ class PlanControl(BaseModel):
     minimum: NumericValue | None = None
     maximum: NumericValue | None = None
     step: NumericValue | None = None
+    unit: str | None = None
+    group: str | None = None
     rerun_mode: Literal["bind", "rebuild", "resample"]
 
     @model_validator(mode="after")
@@ -37,6 +39,8 @@ class PlanControl(BaseModel):
             raise ValueError("Control key must use lowercase letters, digits, and underscores.")
         if not self.label.strip():
             raise ValueError("Control label is required.")
+        if self.group is not None:
+            self.group = self.group.strip() or None
 
         bounds = (self.minimum, self.maximum, self.step)
         has_bounds = any(value is not None for value in bounds)
@@ -50,6 +54,7 @@ class PlanControl(BaseModel):
         if self.allowed_values is not None:
             if has_bounds or not self.allowed_values or self.default not in self.allowed_values:
                 raise ValueError("Specify nonempty allowed values containing the default, or a numeric range.")
+            self.allowed_values = list(dict.fromkeys(self.allowed_values))
             return self
 
         if self.type == "boolean":
@@ -251,7 +256,12 @@ def render_markdown(result: PlanningResult) -> str:
             if control.step is not None:
                 choices += f" in steps of {control.step}"
         default = json.dumps(control.default, ensure_ascii=False)
-        lines.append(f"- **{control.label}** (`{control.key}`) {choices}, default {default}, `{control.rerun_mode}` on change.")
+        unit = f" ({control.unit})" if control.unit else ""
+        group = f" · {control.group}" if control.group else ""
+        lines.append(
+            f"- **{control.label}**{unit}{group} (`{control.key}`) {choices}, default {default}, "
+            f"`{control.rerun_mode}` on change."
+        )
     if not plan.controls:
         lines.append("This plan has a fixed set of inputs.")
     lines.extend(["", "## Research", "", f"**Status** {result.research.status}", "", result.research.summary, ""])

@@ -20,6 +20,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 WORKSPACES_ROOT = Path(__file__).resolve().parent.parent / "workspaces"
 
@@ -67,6 +68,8 @@ def init_workspace(
     root: Path = WORKSPACES_ROOT,
     max_qubits: int = DEFAULT_MAX_QUBITS,
     run_timeout_seconds: int = DEFAULT_RUN_TIMEOUT_SECONDS,
+    *,
+    scene_type: Literal["ev_fleet"] | None = None,
 ) -> Workspace:
     """Create a fresh workspace holding the user's prompt and return it."""
     if not prompt.strip():
@@ -88,6 +91,8 @@ def init_workspace(
             "run_timeout_seconds": run_timeout_seconds,
         },
     }
+    if scene_type is not None:
+        meta["scene_type"] = scene_type
     (path / META_FILE).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return Workspace(id=workspace_id, path=path)
 

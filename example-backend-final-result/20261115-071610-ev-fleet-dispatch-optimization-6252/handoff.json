@@ -1,0 +1,615 @@
+{
+  "workspace_id": "20261115-071610-ev-fleet-dispatch-optimization-6252",
+  "decision": "GO",
+  "problem": {
+    "title": "EV Fleet Dispatch and Charging Schedule Optimization",
+    "summary": "Determine the lowest-cost route and charging schedules for two electric delivery vans operating on a 6x6 grid with one depot, one single-plug charger, and two customer deliveries. Feasible route and charging candidate options are evaluated classically, and QAOA selects the optimal combination of options under charger exclusivity and delivery deadlines. The schedule optimizes driving distance, energy costs, waiting time at the charger, and tardiness penalties.",
+    "objective_sense": "minimize",
+    "expected_output": [
+      "Selected schedule option for each van",
+      "Reported actual quantum circuit width and execution details",
+      "Validation comparison against exact classical enumeration",
+      "Animation of the selected schedule showing travel, waiting, charging, delivery, and return phases",
+      "Display of battery levels, charger bookings, any delivery delay, and the total cost",
+      "Interactive UI control for toggling Van 2 starting battery charge (35% vs 20%)"
+    ]
+  },
+  "method": {
+    "name": "Post-Filtered One-Hot Penalty QAOA (QuantumRingsLib)",
+    "method": "Gate-based QAOA over a pruned one-hot QUBO mapped to a normalized diagonal Ising Hamiltonian with transverse-field X-mixers, constructing numeric circuits per evaluation and executing synchronously on the Quantum Rings scarlet_quantum_rings CPU simulator under classical COBYLA optimization.",
+    "encoding": "Pruned one-hot binary encoding x_{i,k} in {0,1} with one qubit per feasible option (q0: Van1_Slot1, q1: Van1_Slot2, q2: Van2_Direct, q3: Van2_Slot1, q4: Van2_Slot2 at 35% SoC; q0..q3 omitting Van2_Direct at 20% SoC). Bitstring positions are mapped to qubit indices using a startup 2-qubit endianness smoke test (qc.x(0); qc.measure_all()).",
+    "classical_steps": [
+      "Compute shortest Manhattan routes and 1-minute-per-block trajectories on the 6x6 grid between Depot (2,2), Charger (2,1), Van 1 delivery (0,0), and Van 2 delivery (5,0).",
+      "Given van_2_initial_charge_pct (35% or 20%) and fixed Van 1 starting charge (20%), simulate Direct, Slot 1 pre-delivery, and Slot 2 pre-delivery modes per van departing at 8:00 AM; prune candidates violating the 3.0 kWh SoC floor or 10:00 AM return deadline (leaving 5 feasible options at 35% SoC and 4 feasible options at 20% SoC).",
+      "Calculate exact unpenalized dollar costs c_a for each feasible option from distance ($0.30/km), energy added ($0.20/kWh), charger wait ($25/hr), and delivery tardiness ($60/hr).",
+      "Construct the n-qubit QUBO (n=5 at 35% SoC, n=4 at 20% SoC) summing linear option costs, per-van one-hot penalties P_onehot * (sum_k x_{i,k} - 1)^2, and slot-conflict penalties P_conflict * (x_{1,s} * x_{2,s}) with P_onehot = P_conflict = 150.0, strictly exceeding the maximum single-option cost ($66.0833) and maximum feasible schedule cost ($80.3667).",
+      "Map x_a = (1 - Z_a) / 2 to obtain Ising coefficients (const, h_a, J_{ab}), verify exact QUBO-to-Ising equivalence across all 2^n <= 32 states, and normalize circuit Hamiltonian angles by scale S = max(|h_a|, |J_{ab}|) so variational angles gamma remain O(1) without phase wrapping.",
+      "Run classical COBYLA over p=2 QAOA layers to minimize expected Ising energy, decode final measurement probabilities via counts[b] / sum(counts.values()), filter out bitstrings violating one-hot or charger exclusivity, and select the lowest-cost valid schedule using original unpenalized dollar costs."
+    ],
+    "quantum_steps": [
+      "Allocate n decision qubits (5 at 35% SoC, 4 at 20% SoC) and 0 auxiliary qubits on QuantumRingsLib.QuantumCircuit and apply Hadamard gates h(q) to prepare uniform superposition.",
+      "For each QAOA layer l in 1..p, build the cost unitary exp(-i * (gamma_l / S) * H_C) directly with concrete float angles using rz(2 * (gamma_l / S) * h_a, a) and explicit cx(a, b) -> rz(2 * (gamma_l / S) * J_{ab}, b) -> cx(a, b) interactions.",
+      "Apply the transverse-field mixer unitary using rx(2 * beta_l, q) on every decision qubit.",
+      "Call measure_all() and execute backend.run(qc, shots=2048, mode='sync') on provider.get_backend('scarlet_quantum_rings'), converting result.get_counts() to empirical probabilities by normalizing against sum(counts.values()) (or using result.get_memory())."
+    ],
+    "qubits": 5
+  },
+  "controls": [
+    {
+      "key": "van_2_initial_charge_pct",
+      "label": "Van 2 Starting Charge (%)",
+      "type": "integer",
+      "default": 35,
+      "allowed_values": [
+        35,
+        20
+      ],
+      "minimum": null,
+      "maximum": null,
+      "step": null,
+      "rerun_mode": "rebuild"
+    }
+  ],
+  "rerun_command": "python main.py --<control key> <value>",
+  "results": {
+    "status": "ok",
+    "error": null,
+    "controls": {
+      "van_2_initial_charge_pct": 35
+    },
+    "objective": {
+      "value": 15.783333,
+      "unit": "USD",
+      "direction": "minimize"
+    },
+    "solution": {
+      "selected_options": [
+        "Van1_Slot1",
+        "Van2_Direct"
+      ],
+      "vans": [
+        {
+          "qubit_index": 0,
+          "option_id": "Van1_Slot1",
+          "van_id": 1,
+          "van_name": "Van 1",
+          "mode": "Slot 1",
+          "charger_slot": 1,
+          "feasible": true,
+          "initial_soc_kwh": 4.0,
+          "initial_soc_pct": 20.0,
+          "total_distance_km": 4.0,
+          "energy_charged_kwh": 5.0,
+          "wait_minutes": 29.0,
+          "late_minutes": 0.0,
+          "delivery_completion_min": 68.0,
+          "delivery_completion_time": "09:08",
+          "depot_return_min": 72.0,
+          "depot_return_time": "09:12",
+          "min_soc_kwh": 3.85,
+          "min_soc_pct": 19.25,
+          "final_soc_kwh": 7.8,
+          "final_soc_pct": 39.0,
+          "driving_cost": 1.2,
+          "electricity_cost": 1.0,
+          "waiting_cost": 12.083333,
+          "late_penalty": 0.0,
+          "total_cost": 14.283333,
+          "legs": [
+            {
+              "leg_type": "drive",
+              "description": "Van 1 drives Depot -> Charger (2, 1)",
+              "start_coord": [
+                2,
+                2
+              ],
+              "end_coord": [
+                2,
+                1
+              ],
+              "path": [
+                [
+                  2,
+                  2
+                ],
+                [
+                  2,
+                  1
+                ]
+              ],
+              "start_min": 0.0,
+              "end_min": 1.0,
+              "start_time_str": "08:00",
+              "end_time_str": "08:01",
+              "distance_km": 0.5,
+              "energy_delta_kwh": -0.15,
+              "soc_start_kwh": 4.0,
+              "soc_end_kwh": 3.85
+            },
+            {
+              "leg_type": "wait",
+              "description": "Van 1 waits at Charger for Slot 1",
+              "start_coord": [
+                2,
+                1
+              ],
+              "end_coord": [
+                2,
+                1
+              ],
+              "path": [
+                [
+                  2,
+                  1
+                ]
+              ],
+              "start_min": 1.0,
+              "end_min": 30.0,
+              "start_time_str": "08:01",
+              "end_time_str": "08:30",
+              "distance_km": 0.0,
+              "energy_delta_kwh": 0.0,
+              "soc_start_kwh": 3.85,
+              "soc_end_kwh": 3.85
+            },
+            {
+              "leg_type": "charge",
+              "description": "Van 1 charges in Slot 1",
+              "start_coord": [
+                2,
+                1
+              ],
+              "end_coord": [
+                2,
+                1
+              ],
+              "path": [
+                [
+                  2,
+                  1
+                ]
+              ],
+              "start_min": 30.0,
+              "end_min": 60.0,
+              "start_time_str": "08:30",
+              "end_time_str": "09:00",
+              "distance_km": 0.0,
+              "energy_delta_kwh": 5.0,
+              "soc_start_kwh": 3.85,
+              "soc_end_kwh": 8.85
+            },
+            {
+              "leg_type": "drive",
+              "description": "Van 1 drives Charger -> Delivery (0, 0)",
+              "start_coord": [
+                2,
+                1
+              ],
+              "end_coord": [
+                0,
+                0
+              ],
+              "path": [
+                [
+                  2,
+                  1
+                ],
+                [
+                  1,
+                  1
+                ],
+                [
+                  0,
+                  1
+                ],
+                [
+                  0,
+                  0
+                ]
+              ],
+              "start_min": 60.0,
+              "end_min": 63.0,
+              "start_time_str": "09:00",
+              "end_time_str": "09:03",
+              "distance_km": 1.5,
+              "energy_delta_kwh": -0.44999999999999996,
+              "soc_start_kwh": 8.85,
+              "soc_end_kwh": 8.4
+            },
+            {
+              "leg_type": "deliver",
+              "description": "Van 1 completes delivery at (0, 0)",
+              "start_coord": [
+                0,
+                0
+              ],
+              "end_coord": [
+                0,
+                0
+              ],
+              "path": [
+                [
+                  0,
+                  0
+                ]
+              ],
+              "start_min": 63.0,
+              "end_min": 68.0,
+              "start_time_str": "09:03",
+              "end_time_str": "09:08",
+              "distance_km": 0.0,
+              "energy_delta_kwh": 0.0,
+              "soc_start_kwh": 8.4,
+              "soc_end_kwh": 8.4
+            },
+            {
+              "leg_type": "drive",
+              "description": "Van 1 returns Delivery -> Depot (2, 2)",
+              "start_coord": [
+                0,
+                0
+              ],
+              "end_coord": [
+                2,
+                2
+              ],
+              "path": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  1,
+                  0
+                ],
+                [
+                  2,
+                  0
+                ],
+                [
+                  2,
+                  1
+                ],
+                [
+                  2,
+                  2
+                ]
+              ],
+              "start_min": 68.0,
+              "end_min": 72.0,
+              "start_time_str": "09:08",
+              "end_time_str": "09:12",
+              "distance_km": 2.0,
+              "energy_delta_kwh": -0.6,
+              "soc_start_kwh": 8.4,
+              "soc_end_kwh": 7.800000000000001
+            }
+          ]
+        },
+        {
+          "qubit_index": 2,
+          "option_id": "Van2_Direct",
+          "van_id": 2,
+          "van_name": "Van 2",
+          "mode": "Direct",
+          "charger_slot": null,
+          "feasible": true,
+          "initial_soc_kwh": 7.0,
+          "initial_soc_pct": 35.0,
+          "total_distance_km": 5.0,
+          "energy_charged_kwh": 0.0,
+          "wait_minutes": 0.0,
+          "late_minutes": 0.0,
+          "delivery_completion_min": 10.0,
+          "delivery_completion_time": "08:10",
+          "depot_return_min": 15.0,
+          "depot_return_time": "08:15",
+          "min_soc_kwh": 5.5,
+          "min_soc_pct": 27.5,
+          "final_soc_kwh": 5.5,
+          "final_soc_pct": 27.5,
+          "driving_cost": 1.5,
+          "electricity_cost": 0.0,
+          "waiting_cost": 0.0,
+          "late_penalty": 0.0,
+          "total_cost": 1.5,
+          "legs": [
+            {
+              "leg_type": "drive",
+              "description": "Van 2 drives Depot -> Delivery (5, 0)",
+              "start_coord": [
+                2,
+                2
+              ],
+              "end_coord": [
+                5,
+                0
+              ],
+              "path": [
+                [
+                  2,
+                  2
+                ],
+                [
+                  3,
+                  2
+                ],
+                [
+                  4,
+                  2
+                ],
+                [
+                  5,
+                  2
+                ],
+                [
+                  5,
+                  1
+                ],
+                [
+                  5,
+                  0
+                ]
+              ],
+              "start_min": 0.0,
+              "end_min": 5.0,
+              "start_time_str": "08:00",
+              "end_time_str": "08:05",
+              "distance_km": 2.5,
+              "energy_delta_kwh": -0.75,
+              "soc_start_kwh": 7.0,
+              "soc_end_kwh": 6.25
+            },
+            {
+              "leg_type": "deliver",
+              "description": "Van 2 completes delivery at (5, 0)",
+              "start_coord": [
+                5,
+                0
+              ],
+              "end_coord": [
+                5,
+                0
+              ],
+              "path": [
+                [
+                  5,
+                  0
+                ]
+              ],
+              "start_min": 5.0,
+              "end_min": 10.0,
+              "start_time_str": "08:05",
+              "end_time_str": "08:10",
+              "distance_km": 0.0,
+              "energy_delta_kwh": 0.0,
+              "soc_start_kwh": 6.25,
+              "soc_end_kwh": 6.25
+            },
+            {
+              "leg_type": "drive",
+              "description": "Van 2 returns Delivery -> Depot (2, 2)",
+              "start_coord": [
+                5,
+                0
+              ],
+              "end_coord": [
+                2,
+                2
+              ],
+              "path": [
+                [
+                  5,
+                  0
+                ],
+                [
+                  4,
+                  0
+                ],
+                [
+                  3,
+                  0
+                ],
+                [
+                  2,
+                  0
+                ],
+                [
+                  2,
+                  1
+                ],
+                [
+                  2,
+                  2
+                ]
+              ],
+              "start_min": 10.0,
+              "end_min": 15.0,
+              "start_time_str": "08:10",
+              "end_time_str": "08:15",
+              "distance_km": 2.5,
+              "energy_delta_kwh": -0.75,
+              "soc_start_kwh": 6.25,
+              "soc_end_kwh": 5.5
+            }
+          ]
+        }
+      ],
+      "charger_bookings": {
+        "slot_1": "Van1_Slot1",
+        "slot_2": null
+      },
+      "cost_breakdown": {
+        "driving_cost": 2.7,
+        "electricity_cost": 1.0,
+        "waiting_cost": 12.083333,
+        "late_penalty": 0.0,
+        "total_cost": 15.783333
+      },
+      "pruned_infeasible_options": [
+        {
+          "option_id": "Van1_Direct",
+          "van_id": 1,
+          "mode": "Direct",
+          "reason": "Minimum SoC 2.800 kWh violates 3.000 kWh (15%) floor"
+        }
+      ],
+      "verification": {
+        "feasible": true,
+        "violations": [],
+        "independent_cost_breakdown": {
+          "driving_cost": 2.7,
+          "electricity_cost": 1.0,
+          "waiting_cost": 12.083333,
+          "late_penalty": 0.0,
+          "total_cost": 15.783333
+        },
+        "cost_discrepancy_usd": 0.0,
+        "optimality_gap_usd": 0.0,
+        "matches_classical_optimum": true,
+        "circuit_width": {
+          "total_qubits": 5,
+          "decision_qubits": 5,
+          "auxiliary_qubits": 0
+        },
+        "qubo_exhaustive_sweep": {
+          "states_evaluated": 32,
+          "min_qubo_energy": 15.783333,
+          "matches_reference_optimum": true,
+          "ground_state_count": 1
+        }
+      },
+      "animation_path": "dispatch_animation.html"
+    },
+    "animation_path": "dispatch_animation.html",
+    "reference": {
+      "method": "Exact classical enumeration over all candidate route-and-charging pairs",
+      "objective_value": 15.783333,
+      "unit": "USD",
+      "selected_options": [
+        "Van1_Slot1",
+        "Van2_Direct"
+      ],
+      "selected_modes": {
+        "van_1": "Slot 1",
+        "van_2": "Direct"
+      },
+      "cost_breakdown": {
+        "driving_cost": 2.7,
+        "electricity_cost": 1.0,
+        "waiting_cost": 12.083333,
+        "late_penalty": 0.0,
+        "total_cost": 15.783333
+      },
+      "feasible_pair_count": 4,
+      "all_feasible_pairs": [
+        {
+          "selected_options": [
+            "Van1_Slot1",
+            "Van2_Direct"
+          ],
+          "total_cost": 15.783333
+        },
+        {
+          "selected_options": [
+            "Van1_Slot2",
+            "Van2_Direct"
+          ],
+          "total_cost": 36.283333
+        },
+        {
+          "selected_options": [
+            "Van1_Slot2",
+            "Van2_Slot1"
+          ],
+          "total_cost": 58.366667
+        },
+        {
+          "selected_options": [
+            "Van1_Slot1",
+            "Van2_Slot2"
+          ],
+          "total_cost": 80.366667
+        }
+      ],
+      "matches_quantum_solution": true
+    },
+    "quantum": {
+      "method": "Post-Filtered One-Hot Penalty QAOA (QuantumRingsLib)",
+      "qubits": 5,
+      "decision_qubits": 5,
+      "auxiliary_qubits": 0,
+      "p_layers": 2,
+      "shots": 2048,
+      "circuit_runs": 34,
+      "counts": {
+        "00000": 145,
+        "00001": 288,
+        "00010": 207,
+        "00011": 4,
+        "00100": 138,
+        "00101": 310,
+        "00110": 257,
+        "00111": 9,
+        "01000": 125,
+        "01001": 42,
+        "01010": 203,
+        "01100": 1,
+        "01110": 5,
+        "01111": 1,
+        "10000": 79,
+        "10001": 163,
+        "10010": 24,
+        "10011": 3,
+        "10101": 1,
+        "10110": 4,
+        "10111": 1,
+        "11000": 5,
+        "11001": 7,
+        "11010": 11,
+        "11100": 4,
+        "11101": 5,
+        "11110": 5,
+        "11111": 1
+      },
+      "best_bitstring": "00101",
+      "best_bitstring_share": 0.151367,
+      "feasible_shot_share": 0.455566,
+      "raw_most_frequent_bitstring": "00101",
+      "raw_most_frequent_share": 0.151367,
+      "optimal_gammas": [
+        0.00241081,
+        0.00652048
+      ],
+      "optimal_betas": [
+        -0.54968896,
+        -0.30076543
+      ],
+      "optimal_ising_energy": 133.411377,
+      "endianness_check_passed": true,
+      "ising_equivalence_max_error": 2.2737367544323206e-13,
+      "qubit_mapping": {
+        "q0": "Van1_Slot1",
+        "q1": "Van1_Slot2",
+        "q2": "Van2_Direct",
+        "q3": "Van2_Slot1",
+        "q4": "Van2_Slot2"
+      }
+    },
+    "runtime_seconds": 11.607
+  },
+  "final_checks": [
+    {
+      "name": "Problem statement against the original prompt",
+      "summary": "The problem statement faithfully captures all grid geometry, vehicle and charger specifications, schedules, constraints, cost terms, and visualization/validation requirements from the original prompt. Every numerical parameter, coordinate, time window, and interactive control value matches without omission or contradiction."
+    },
+    {
+      "name": "Plan against the problem statement",
+      "summary": "The approved plan faithfully matches the problem statement in its objective terms, rates, units, hard constraints, given data, decision variables, and user control for Van 2's starting charge. Its QAOA formulation and independent verification against exact classical enumeration fit well within the qubit and runtime limits and produce all required schedule, battery, cost, and quantum execution outputs."
+    },
+    {
+      "name": "Implementation against the plan",
+      "summary": "The implementation faithfully realizes the approved Post-Filtered One-Hot Penalty QAOA plan across dispatch_model.py, qubo_ising.py, qaoa_qr_solver.py, verifier.py, animator.py, and main.py. All problem parameters, battery and time-window constraints, QUBO penalty bounds, Ising equivalence checks, scaled p=2 QAOA circuits, post-measurement feasibility filtering, independent classical verification, and interactive 6x6 grid animation are implemented as specified."
+    }
+  ]
+}

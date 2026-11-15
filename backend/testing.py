@@ -20,17 +20,19 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from collections.abc import Callable
+from fractions import Fraction
 
 from pydantic import BaseModel, ValidationError
 
 from backend.build import BuildError
 from backend.build_phase import BuildNotApproved, run_build_phase
-from backend.plan import PLAN_JSON, load_plan
+from backend.plan import PLAN_JSON, PlanControl, load_plan
 from backend.problem_statement import ENV_FILE
 from backend.prompt_loader import PromptError
-from backend.runner import RunOutcome, run_solver
+from backend.runner import RESULTS_JSON, RunOutcome, run_solver
 from backend.semantics import SemanticReview, evaluate_semantics
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -73,26 +75,72 @@ class TestNotPassed(BuildError):
         self.last_round = last_round
 
 
+def _alternate_value(control: PlanControl):
+    if control.allowed_values is not None:
+        return next((value for value in control.allowed_values if value != control.default), None)
+    if control.type == "boolean":
+        return not control.default
+
+    minimum, maximum = control.minimum, control.maximum
+    lower, upper = Fraction(str(minimum)), Fraction(str(maximum))
+    midpoint = (lower + upper) / 2
+    step = Fraction(str(control.step)) if control.step is not None else None
+    if step is None and control.type == "integer":
+        step = Fraction(1)
+
+    if step is None:
+        samples = (midpoint, (lower + midpoint) / 2, (midpoint + upper) / 2)
+    else:
+        center = lower + ((midpoint - lower) // step) * step
+        samples = (center, center + step, center - step)
+
+    for sample in samples:
+        if not lower < sample < upper:
+            continue
+        try:
+            candidate = int(sample) if sample.denominator == 1 else float(sample)
+        except OverflowError:
+            continue
+        if (
+            minimum < candidate < maximum and candidate != control.default
+            and (step is None or (Fraction(str(candidate)) - lower) % step == 0)
+        ):
+            return candidate
+
+    if minimum != control.default:
+        return minimum
+    if maximum != control.default and (step is None or (upper - lower) % step == 0):
+        return maximum
+    return None
+
+
 def control_variants(workspace: Workspace) -> list[dict]:
-    """Up to MAX_CONTROL_RUNS extra runs, each changing one plan control to another allowed value."""
+    """Test up to MAX_CONTROL_RUNS alternate values, preferring interior points for ranges."""
     if not workspace.resolve(PLAN_JSON).is_file():
         return []
     variants = []
     for control in load_plan(workspace).plan.controls:
-        others = [value for value in (control.allowed_values or []) if value != control.default]
-        if others:
-            variants.append({control.key: others[0]})
-    return variants[:MAX_CONTROL_RUNS]
+        alternate = _alternate_value(control)
+        if alternate is not None:
+            variants.append({control.key: alternate})
+            if len(variants) == MAX_CONTROL_RUNS:
+                break
+    return variants
 
 
 def test_once(
-    workspace: Workspace, *, model: str | None = None, client=None, on_event: Callable[[str], None] | None = None
+    workspace: Workspace,
+    *,
+    model: str | None = None,
+    client=None,
+    on_event: Callable[[str], None] | None = None,
+    validate_results: Callable[[dict, dict], None] | None = None,
 ) -> TestRound:
     """Steps 1 to 3 without going back to Build. Saves test.json and returns the round."""
     say = on_event or (lambda message: None)
 
     def run(controls: dict | None = None) -> RunOutcome:
-        outcome = run_solver(workspace, controls)
+        outcome = run_solver(workspace, controls, validate_results=validate_results)
         verdict = "passed" if outcome.passed else "FAILED: " + " ".join(outcome.issues)
         say(f"    {outcome.command} ({outcome.seconds} s): {verdict}")
         return outcome
@@ -102,7 +150,10 @@ def test_once(
     if runs[0].passed:
         runs += [run(variant) for variant in control_variants(workspace)]
         if len(runs) > 1 and all(r.passed for r in runs):
-            run()  # leave results.json holding the default-control run
+            # Keep the same default result that Test checked, without running the circuit again.
+            workspace.resolve(RESULTS_JSON).write_text(
+                json.dumps(runs[0].results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+            )
     round_ = TestRound(runs=runs)
 
     if all(r.passed for r in runs):
@@ -121,6 +172,7 @@ def run_test_phase(
     client=None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     on_event: Callable[[str], None] | None = None,
+    validate_results: Callable[[dict, dict], None] | None = None,
 ) -> TestPhaseResult:
     """Test the built solver, sending it back to Build with the issues until it passes.
 
@@ -134,7 +186,9 @@ def run_test_phase(
     previous_feedback = None
     for round_number in range(1, max_rounds + 1):
         say(f"=== Test round {round_number} of {max_rounds}")
-        round_ = test_once(workspace, model=model, client=client, on_event=on_event)
+        round_ = test_once(
+            workspace, model=model, client=client, on_event=on_event, validate_results=validate_results,
+        )
         if round_.passed:
             say("=== Test passed. Ready for Final Go/No-Go.")
             return TestPhaseResult(workspace_id=workspace.id, rounds=round_number, last_round=round_)
