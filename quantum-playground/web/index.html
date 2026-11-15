@@ -1,0 +1,33 @@
+﻿<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fleet Lab</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><a class="brand" href="/">◈ <span>FLEET LAB</span></a><div class="header-right"><span id="connection" class="connection">Connecting...</span><select id="mode" aria-label="Run mode"><option value="demo">Try the example</option><option value="live">Use Gemini</option></select></div></header>
+<main>
+<div class="intro"><div><h1>Your fleet, at a glance<span>.</span></h1><p>Describe the task. Adjust the settings. Explore the plan.</p></div></div>
+<div class="workspace">
+<aside class="sidebar">
+<section class="panel input-panel">
+<div class="panel-heading"><h2>Original prompt</h2><button class="text-button" id="load-example" type="button">Load example</button></div>
+<form id="prompt-form"><label class="sr-only" for="prompt">Original prompt</label><textarea id="prompt" required maxlength="10000" placeholder="What would you like to optimize?"></textarea><button class="primary" id="generate" type="submit" disabled>Build plan <span>↗</span></button></form>
+<div class="problem-block"><div class="small-heading"><h3 id="statement-label">Problem statement</h3><span class="tag" id="data-tag">EXAMPLE</span></div><h4 id="problem-title">EV Fleet Dispatch</h4><p id="statement">Plan deliveries and charging for the fleet.</p><p id="mode-note" class="hint">Example mode uses the sample map.</p></div>
+<div class="settings-block"><div class="small-heading"><h3>Adjust the plan</h3><button class="text-button" id="reset" type="button">Reset</button></div><div class="live-controls"><label><input type="checkbox" id="auto-update" checked> Update automatically</label><span id="update-state" role="status" aria-live="polite">Loading...</span></div>
+<div id="all-variables"><div id="variables"></div><details class="setting-details"><summary>Starting battery levels</summary><div id="battery-variables"></div></details><details class="setting-details"><summary>More settings</summary><div id="extra-variables"></div></details></div>
+<button class="secondary" id="rerun" disabled>Update plan</button></div>
+<details class="source-details"><summary>Prompt used for this plan</summary><p id="submitted-prompt">Your submitted prompt will appear here.</p></details>
+</section>
+</aside>
+<div class="main-column">
+<section class="panel results-panel">
+<div class="panel-heading"><h2>Fleet visualizer</h2><span class="tag" id="run-badge">EXAMPLE</span></div>
+<div class="visual-stage"><div id="pygame-view"><img id="pygame-frame" alt="Interactive fleet map" hidden><p id="frame-status">Loading map...</p></div></div>
+<div id="pygame-inspector" class="pygame-inspector" hidden role="status"></div>
+<div class="summary-strip"><div><span>Total cost</span><strong id="score">—</strong></div><div><span>Plan check</span><strong id="feasible">Not checked</strong></div><div><span>Delivered now</span><strong id="delivered">0 / 8</strong></div><p id="change-summary" aria-live="polite"></p></div>
+<div id="violations" class="violations" hidden></div>
+<details class="view-details"><summary>Playback & keyboard controls</summary><p id="pygame-help" hidden>Space: play/pause. Arrows: move through time. V/C/D: select a van, charger or delivery. Escape: clear.</p><div class="playback"><button class="secondary" id="play" disabled>Play</button><button class="text-button" id="restart" disabled>Restart</button><output id="clock">08:00</output><select id="speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="12">12×</option></select><input id="scrub" type="range" min="0" max="240" step="0.1" value="0" aria-label="Minutes after start" disabled><span class="hint">08:00</span><span class="hint end-time" id="end-time">12:00</span></div></details>
+</section>
+<section class="panel circuit-panel"><div class="panel-heading"><h2>Circuit drawings</h2><span class="tag" id="circuit-tag">WAITING</span></div><div id="circuits" class="circuits"><article class="circuit-placeholder"><span>01</span><p>Waiting for circuit drawing</p><code>qc.draw()</code></article><article class="circuit-placeholder"><span>02</span><p>Waiting for circuit drawing</p><code>qc.draw()</code></article><article class="circuit-placeholder"><span>03</span><p>Waiting for circuit drawing</p><code>qc.draw()</code></article></div></section>
+<details class="panel run-details"><summary>Results & technical details</summary><div class="detail-body"><div class="explanation"><h3>Plan notes</h3><p id="explanation">Run a plan to see the result.</p></div><h3>Vans</h3><div id="fleet" class="fleet"></div><h3>Schedule</h3><div id="timeline" class="timeline"></div><h3>Costs</h3><div id="costs" class="costs"></div><h3>Assumptions</h3><ul id="assumptions"></ul><h3>Quantum details</h3><p id="quantum-summary"></p><div id="histogram" class="histogram"></div><p id="agent-label">Example mode</p><ol id="events"></ol></div></details>
+</div>
+</div><div id="error" role="alert" hidden></div><footer><span id="status" role="status" aria-live="polite">Ready</span><div><button class="text-button" id="export" disabled>Download plan</button><button class="text-button" id="feedback" disabled>Feedback</button></div></footer>
+</main><script src="fleet.js"></script><script src="live-updates.js"></script><script src="pygame-input.js"></script><script src="app.js"></script></body></html>

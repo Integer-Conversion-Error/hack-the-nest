@@ -1,0 +1,23 @@
+process.chdir(require('node:path').resolve(__dirname, '..'));
+const assert=require('node:assert/strict');
+const {framePoint,hitAt,scrubMinute,resolutionFor}=require('../web/pygame-input.js');
+const rect={left:20,top:30,width:420,height:400};
+// 840x620 at half size occupies 420x310, vertically centered with 45px bars.
+assert.deepEqual(framePoint(rect,840,620,230,230),{x:420,y:310});
+assert.equal(framePoint(rect,840,620,230,40),null);
+assert.equal(framePoint({left:0,top:0,width:0,height:0},840,620,0,0),null);
+const first={kind:'delivery',rect:[0,0,30,30]},top={kind:'van',rect:[10,10,20,20]};
+assert.equal(hitAt({targets:[first,top]},{x:15,y:15}),top);
+assert.equal(hitAt({targets:[first,top]},{x:100,y:100}),null);
+const scrub={rect:[24,580,792,24]};
+assert.equal(scrubMinute(scrub,{x:420},240),120);
+assert.equal(scrubMinute(scrub,{x:-40},240),0);
+assert.equal(scrubMinute(scrub,{x:900},240),240);
+assert.equal(resolutionFor({width:840,height:620},1),1);
+assert.equal(resolutionFor({width:1000,height:800},1),2);
+assert.equal(resolutionFor({width:840,height:620},2),2);
+assert.equal(resolutionFor({width:1200,height:900},2),3);
+assert.equal(resolutionFor({width:2000,height:1500},4),3);
+assert.equal(resolutionFor({width:0,height:0},2),1);
+assert.deepEqual(framePoint(rect,840,620,230,230),{x:420,y:310});
+console.log('PASS: scaled input, letterbox rejection, topmost hit testing, and scrub clamping');
