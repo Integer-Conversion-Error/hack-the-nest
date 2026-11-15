@@ -1,0 +1,225 @@
+{
+  "problem_title": "EV Fleet Dispatch Optimization",
+  "model": "gemini-4-hydrogen",
+  "plan": {
+    "summary": "Hybrid classical-quantum EV fleet dispatch optimizer for 2 electric vans, 2 required deliveries, and 1 single-plug charger on a 6 x 6 street grid. Classical preprocessing computes shortest Manhattan grid paths, generates feasible route-and-charging options per van with exact timings and costs, and constructs a binary QUBO (up to 5 variables for Van 2 at 35% starting charge, 4 variables at 20%). Penalty-based QAOA on the Quantum Rings scarlet_quantum_rings simulator selects one option per van while penalizing overlapping charger bookings, followed by independent validation against exact classical enumeration, interactive recalculation for the Van 2 starting charge control (35% or 20%), and an animated 6 x 6 street-grid schedule.",
+    "objective": "Minimize total dispatch cost in USD ($), equal to the sum of driving cost ($0.30/km), electricity cost ($0.20/kWh delivered by the charger), waiting cost at the charger ($25/hour from charger arrival to slot start), and late delivery cost ($60/hour from package due time to delivery completion).",
+    "constraints": [
+      "Hard: Both vans depart the depot at (2,2) at 8:00 AM and must return to the depot at (2,2) no later than 10:00 AM.",
+      "Hard: Van 1 must deliver 1 package to (0,0) (due 9:30 AM) and Van 2 must deliver 1 package to (5,0) (due 9:00 AM), each spending 5 minutes on site for delivery.",
+      "Hard: Vans drive along shortest paths on the 6 x 6 Manhattan grid (500 m per block, two-way roads) at 30 km/h and consume 0.30 kWh/km from a 20 kWh battery, maintaining at least 15% charge (3.0 kWh) at every point along the route.",
+      "Hard: Each van may charge at most once before delivery at the single-plug charger at (2,1) in either slot 8:30-9:00 AM or 9:00-9:30 AM (reserving the full 30-minute slot for up to 5 kWh at 10 kW, capped by available battery capacity), or drive directly without charging if battery capacity allows.",
+      "Selection & Charger Exclusivity (enforced via classical option filtering plus QUBO quadratic penalties in QAOA and verified during validation): Exactly one feasible option must be selected for Van 1 and one for Van 2, and both vans cannot reserve the same charging slot."
+    ],
+    "assumptions": [
+      "Grid distances follow Manhattan shortest-path distances between adjacent intersections on the 6 x 6 grid (500 m = 0.5 km per block, 1 minute travel time and 0.15 kWh energy consumption per block at 30 km/h and 0.30 kWh/km).",
+      "When multiple shortest grid paths connect two intersections, any shortest path has identical distance, travel time, and energy usage and can be chosen deterministically for animation.",
+      "A van booking a charging slot must arrive at (2,1) at or before the slot start time (8:30 AM or 9:00 AM), incurs waiting cost ($25/hour) from arrival to slot start, remains plugged in for the full 30-minute reserved slot, and departs at slot end (9:00 AM or 9:30 AM).",
+      "Electricity cost ($0.20/kWh) applies only to actual energy delivered into the battery, capped at min(5.0 kWh, 20.0 kWh - arrival_SoC_kWh).",
+      "Delivery completion time is arrival time at the delivery intersection plus 5 minutes; late delivery cost ($60/hour) applies to max(0, completion_time - due_time).",
+      "The 15% (3.0 kWh) battery floor is enforced continuously along the route, including upon arrival at the charger before charging and upon return to the depot by 10:00 AM.",
+      "QUBO penalty weights for one-hot selection and charger-slot overlap are set strictly larger than the feasible cost spread so no infeasible bitstring can attain lower QUBO energy than any feasible schedule."
+    ],
+    "controls": [
+      {
+        "key": "van_2_initial_charge_pct",
+        "label": "Van 2 starting charge (%)",
+        "type": "integer",
+        "default": 35,
+        "allowed_values": [
+          35,
+          20
+        ],
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "rerun_mode": "rebuild"
+      }
+    ],
+    "solver_examples": [
+      {
+        "name": "Penalty-QUBO QAOA (QuantumRingsLib)",
+        "method": "Gate-based QAOA with transverse-field X-mixer solving an Ising Hamiltonian derived from a binary option-selection QUBO with one-hot and charger-overlap penalties, executed synchronously on Quantum Rings scarlet_quantum_rings via QuantumRingsLib.",
+        "classical_steps": [
+          "Compute shortest Manhattan grid paths, distances, travel times, and battery consumption between depot (2,2), charger (2,1), Van 1 delivery (0,0), and Van 2 delivery (5,0).",
+          "Generate feasible route-and-charging options per van (No-Charge, Slot 1: 8:30-9:00 AM, Slot 2: 9:00-9:30 AM) enforcing the 15% (3.0 kWh) minimum charge floor and 10:00 AM return deadline, yielding 2 options for Van 1 and 3 options for Van 2 at 35% starting charge (n = 5 variables) or 2 options for Van 2 at 20% starting charge (n = 4 variables).",
+          "Calculate exact option costs c_i in USD (driving + electricity + waiting + late delivery) and build the n x n QUBO with one-hot penalties per van and cross-van same-slot overlap penalties strictly exceeding the feasible cost spread.",
+          "Normalize QUBO weights to O(1) and map x_i = (1 - Z_i)/2 to Ising coefficients (h_i, J_ij, offset).",
+          "Run classical COBYLA / Nelder-Mead optimization over p-layer QAOA angles (gamma, beta) using multi-start linear-ramp initialization and expectation values computed from circuit shots.",
+          "Decode little-endian measurement bitstrings (x_k = bitstring[n - 1 - k]), independently validate schedule feasibility and total USD cost, compare against exact classical enumeration, and generate timeline keyframes for the 6 x 6 grid animation."
+        ],
+        "quantum_steps": [
+          "Allocate n decision qubits (n = 5 for Van 2 at 35%; n = 4 for Van 2 at 20%), 0 auxiliary qubits, and n classical measurement bits in a QuantumRingsLib QuantumCircuit.",
+          "Initialize uniform superposition |+>^n by applying Hadamard (h) gates to all n decision qubits.",
+          "For each QAOA layer l = 1..p (e.g., p = 2 or 3), apply cost unitary exp(-i * gamma_l * H_C) using rz(2 * gamma_l * h_i, i) and rzz(2 * gamma_l * J_ij, i, j) (or cx(i, j); rz(2 * gamma_l * J_ij, j); cx(i, j) fallback if symbolic rzz is unsupported), followed by mixer unitary rx(2 * beta_l, i) on each qubit.",
+          "Measure all n decision qubits into classical bits and execute synchronously via backend.run(bound_qc, shots=..., mode='sync') on scarlet_quantum_rings during parameter optimization and high-shot final sampling (2,048-4,096 shots)."
+        ],
+        "encoding": "One binary variable x_i in {0, 1} per feasible option mapped 1-to-1 to decision qubit q[i] (0 auxiliary qubits): n = 5 qubits when Van 2 starts at 35% (2 options for Van 1 + 3 options for Van 2) and n = 4 qubits when Van 2 starts at 20% (2 options for Van 1 + 2 options for Van 2). Measurement bitstrings use little-endian ordering where qubit k maps to bitstring[n - 1 - k]. Valid schedules satisfy sum_{i in V1} x_i = 1, sum_{j in V2} x_j = 1, and at most one selected option per charger slot.",
+        "qubits": {
+          "decision_qubits": 5,
+          "auxiliary_qubits": 0
+        },
+        "estimated_worker_seconds": 15,
+        "verification": [
+          "QUBO penalty audit: exhaustively evaluate all 2^n (<= 32) bitstrings classically to confirm the global minimum of the QUBO equals the exact minimum-cost feasible schedule.",
+          "Independent schedule validator: decode the top-sampled QAOA bitstring using little-endian bit order, verify one-hot selection per van and zero charger-slot overlap, and independently recompute leg-by-leg travel timestamps, battery SoC >= 15% (3.0 kWh) at every node, depot return <= 10:00 AM, delivery delays, and total USD cost breakdown.",
+          "Exact reference check: compare the QAOA-selected schedule, objective cost, and feasibility against exact classical enumeration over all |V1| x |V2| combinations (6 pairs at 35%, 4 pairs at 20%).",
+          "Edge cases verified: little-endian vs big-endian bitstring indexing; normalizing get_counts() by sum(counts.values()) to handle count vs percentage return conventions; dynamic circuit rebuild from 5 to 4 qubits when Van 2 starting charge changes from 35% to 20%; explicit reporting of validation failure alongside the exact reference if QAOA samples an infeasible bitstring."
+        ],
+        "reference_method": "Exact classical enumeration over all |V1| x |V2| feasible option pairs (6 combinations at 35% Van 2 starting charge; 4 combinations at 20%) and exhaustive evaluation of all 2^n (<= 32) bitstrings over the identical QUBO space, route kinematics, battery checks, and USD cost model. Brute-force bitstring enumeration scales as O(2^n) and is instantaneous for n <= 5, though it would become intractable for larger fleets.",
+        "build_steps": [
+          "grid_options.py: Implement build_feasible_options(van2_initial_charge_pct: int) -> tuple[list[Option], dict] to compute shortest Manhattan paths on the 6 x 6 grid, filter route-and-charging options per van against the 15% battery floor and 10:00 AM depot return, and calculate exact driving, electricity, waiting, and late-delivery costs.",
+          "qubo_ising.py: Implement build_qubo_and_ising(options: list[Option]) -> IsingProblem to construct the n x n QUBO with linear option costs, per-van one-hot penalties, and cross-van same-slot penalties strictly above the feasible cost spread, normalize coefficients, and convert to Ising (h, J, offset).",
+          "qaoa_circuit.py: Implement build_qaoa_circuit(ising: IsingProblem, p: int) -> tuple[QuantumCircuit, ParameterVector, ParameterVector] using QuantumRingsLib (QuantumCircuit, QuantumRegister, ClassicalRegister, ParameterVector, h, rz, rzz or cx-rz-cx fallback, rx, measure) and report exact circuit width (decision_qubits = n, auxiliary_qubits = 0).",
+          "qr_solver.py: Implement solve_with_qaoa(ising: IsingProblem, p: int = 2, shots: int = 2048, seed: int = 42) -> QaoaResult using QuantumRingsProvider and provider.get_backend('scarlet_quantum_rings'), scipy.optimize.minimize(method='COBYLA'), qc.assign_parameters(..., inplace=False), backend.run(..., shots=shots, mode='sync'), normalized get_counts(), and little-endian bitstring decoding.",
+          "validator.py: Implement enumerate_exact_reference(options: list[Option], ising: IsingProblem) and validate_schedule(bitstring: str, options: list[Option], reference: ReferenceResult) -> ValidationReport to verify all 2^n QUBO energies, check constraints, recompute segment timings/SoC/costs independently, and compare against exact enumeration.",
+          "app_ui.py: Wire the van_2_initial_charge_pct control ([35, 20], default 35) with rebuild recalculation, display reported circuit width (decision and auxiliary qubits), QAOA vs exact reference results, and validation status, and render the 6 x 6 grid animation showing travel, waiting, charging, delivery, depot return, battery levels, charger bookings, delays, and total cost."
+        ]
+      }
+    ],
+    "selected_solver": "Penalty-QUBO QAOA (QuantumRingsLib)"
+  },
+  "research": {
+    "status": "grounded",
+    "summary": "### 1. Gate-Based Method & SDK Target (Quantum Rings)\n\nThe problem specifies **QAOA** (Quantum Approximate Optimization Algorithm) executed on the **Quantum Rings** simulator (`scarlet_quantum_rings` for CPU-only execution, which supports up to 200 qubits with an active license). Quantum Rings supports two Python execution paths:\n\n1. **Core SDK (`QuantumRingsLib`) — recommended for lightweight direct control:**\n   - Acquires the simulator via `QuantumRingsProvider` and `provider.get_backend(\"scarlet_quantum_rings\")`.\n   - Builds circuits with `QuantumCircuit`, `QuantumRegister`, `ClassicalRegister`, and symbolic `Parameter` / `ParameterVector` objects, binding values with `qc.assign_parameters(values, inplace=False)`.\n   - Executes synchronously via `backend.run(qc, shots=..., mode=\"sync\")` (avoiding empty `get_counts()` dictionaries from early reads on async jobs).\n2. **Qiskit Toolkit (`quantumrings-toolkit-qiskit`):**\n   - Uses `QrRuntimeService` / `QrBackendV2` along with Qiskit V2 primitives (`QrSamplerV2`, `QrEstimatorV2`, or `QrStatevectorEstimator`) and `SparsePauliOp` observables.\n   - Useful if leveraging Qiskit's transpiler (`generate_preset_pass_manager`) and `SparsePauliOp` expectation-value evaluation directly.\n\n**Alternative design consideration (XY-mixer QAOA):**\nStandard penalty-based QUBO-QAOA uses the transverse-field mixer $H_M = \\sum_i X_i$ starting from $|+\\rangle^{\\otimes n}$. An alternative from the Quantum Alternating Operator Ansatz literature initializes each van's one-hot register in a Dicke/W-state and evolves under partial $XY$ mixers ($X_i X_j + Y_i Y_j$) to preserve Hamming weight 1 per van without one-hot penalty terms. However, retaining the user-specified penalty-based QUBO-QAOA is preferred here because:\n- The problem explicitly requests penalty terms for both selection counts and charger overlaps;\n- The charger-overlap constraint couples options *across* vans, so a penalty term is still required unless an even more complex controlled-null-swap mixer is compiled;\n- With $n \\le 5$ qubits, standard X-mixer QAOA avoids W-state preparation and multi-qubit controlled swap decompositions while keeping circuit depth minimal.\n\n---\n\n### 2. Hybrid Split & Problem Encoding\n\n#### Classical Preprocessing Boundary\nBefore constructing the quantum circuit, classical preprocessing deterministically computes:\n- **Shortest grid paths & kinematics:** On the $6 \\times 6$ Manhattan grid ($500\\text{ m/block} = 0.5\\text{ km/block}$ at $30\\text{ km/h} = 0.5\\text{ km/min}$), each adjacent block takes exactly $1\\text{ min}$ and consumes $0.5 \\times 0.30 = 0.15\\text{ kWh}$ ($0.75\\%$ of the $20\\text{ kWh}$ battery).\n- **Feasible route-and-charging options per van:** Checking the $\\ge 15\\%$ ($3.0\\text{ kWh}$) battery floor along the entire route and the `10:00 AM` depot return deadline yields exact candidate sets:\n  - **Van 1** (starts at `20%` = $4.0\\text{ kWh}$, delivery `(0,0)` due `9:30 AM`): A direct round trip `(2,2) -> (0,0) -> (2,2)` requires $8\\text{ blocks} = 4.0\\text{ km} \\implies 1.20\\text{ kWh}$, leaving $2.80\\text{ kWh}$ ($14\\% < 15\\%$), which is **infeasible**. Charging at `(2,1)` before delivery gives **2 feasible options** (Slot 1: `8:30–9:00 AM`; Slot 2: `9:00–9:30 AM`).\n  - **Van 2** (delivery `(5,0)` due `9:00 AM`): A direct round trip requires $10\\text{ blocks} = 5.0\\text{ km} \\implies 1.50\\text{ kWh}$.\n    - At **`35%` starting charge** ($7.0\\text{ kWh}$), direct travel ends at $5.50\\text{ kWh}$ ($27.5\\% \\ge 15\\%$), yielding **3 feasible options** (No-Charge, Slot 1, Slot 2) $\\implies$ **$n = 5$ binary variables** total.\n    - At **`20%` starting charge** ($4.0\\text{ kWh}$), direct travel ends at $2.50\\text{ kWh}$ ($12.5\\% < 15\\%$, **infeasible**), yielding **2 feasible options** (Slot 1, Slot 2) $\\implies$ **$n = 4$ binary variables** total.\n- **Exact option costs $c_i$:** Sum of driving cost ($0.30/km), electricity cost ($0.20/kWh added, capped at $\\min(5\\text{ kWh}, 20\\text{ kWh} - \\text{SoC}_{\\text{arrival}})$), waiting cost at `(2,1)` ($25/hr until slot start), and late delivery cost ($60/hr from due time to delivery arrival + 5 min service).\n\n#### QUBO to Ising Encoding\nLet $V_1, V_2$ partition the $n \\le 5$ feasible option indices by van, and let $S_1, S_2$ denote the option indices reserving Slot 1 and Slot 2:\n$$\\min_{x \\in \\{0,1\\}^n} E(x) = \\sum_{i=0}^{n-1} c_i x_i + P_{\\text{onehot}} \\left[ \\left(\\sum_{i \\in V_1} x_i - 1\\right)^2 + \\left(\\sum_{j \\in V_2} x_j - 1\\right)^2 \\right] + P_{\\text{overlap}} \\left( \\sum_{\\substack{i \\in V_1 \\cap S_1 \\\\ j \\in V_2 \\cap S_1}} x_i x_j + \\sum_{\\substack{i \\in V_1 \\cap S_2 \\\\ j \\in V_2 \\cap S_2}} x_i x_j \\right)$$\n\n- **Penalty calibration:** Following standard QUBO penalty bounds, set $P_{\\text{onehot}}$ and $P_{\\text{overlap}}$ strictly above the feasible cost spread ($\\max_{\\text{feas}} E - \\min_{\\text{feas}} E$, or $> \\max_{\\text{feas}} E$) so no infeasible bitstring can have lower energy than any feasible schedule. Normalize the resulting QUBO/Ising coefficients by a positive scale factor (e.g., $\\max |J_{ij}|$ or energy scale) so QAOA angles $(\\gamma, \\beta)$ remain $\\mathcal{O}(1)$ without rapid $2\\pi$ phase wrapping during classical optimization.\n- **Pauli-Z mapping:** Substituting $x_i = (1 - Z_i)/2$ maps $E(x)$ (up to a constant offset) to the diagonal Ising cost Hamiltonian $H_C = \\sum_i h_i Z_i + \\sum_{i<j} J_{ij} Z_i Z_j$.\n\n---\n\n### 3. Circuit Width, Gate Structure & SDK Feasibility\n\n- **Circuit width:** **$n = 5$ qubits** (for Van 2 at 35%) or **$n = 4$ qubits** (for Van 2 at 20%), with **0 auxiliary qubits** ($n$ classical bits for measurement). This is well within Quantum Rings' 200-qubit simulator ceiling.\n- **Gate set & circuit depth:** Quantum Rings natively supports `h`, `rx`, `rz`, `cx`, and `rzz` on `QuantumCircuit`:\n  - Initial layer: `qc.h(i)` for $i \\in \\{0, \\dots, n-1\\}$.\n  - Each QAOA layer $k = 1, \\dots, p$:\n    - Cost unitary $e^{-i \\gamma_k H_C}$: `qc.rz(2 * gamma_k * h_i, i)` for each $i$, and `qc.rzz(2 * gamma_k * J_ij, i, j)` (or `cx(i, j); rz(2 * gamma_k * J_ij, j); cx(i, j)`) for each nonzero coupling $J_{ij}$.\n    - Mixer unitary $e^{-i \\beta_k \\sum_i X_i}$: `qc.rx(2 * beta_k, i)` for each $i$.\n  - With $n=5$, only 6 couplings $(i,j)$ are nonzero (1 within $V_1$, 3 within $V_2$, 2 same-slot cross-van couplings); with $n=4$, only 4 couplings are nonzero. Even at $p=3$, total 2-qubit gates are $\\le 18$ `rzz` ($\\le 36$ `cx`), giving negligible simulation runtime.\n- **Classical optimizer loop:** A derivative-free `scipy.optimize` optimizer (`COBYLA` or `Nelder-Mead` with multi-start / linear-ramp angle initialization) minimizes $\\langle H_C \\rangle$ estimated from shot sampling, followed by high-shot sampling (e.g., 2,000–4,096 shots, well below `QrBackendV2`'s 10,000-shot in-memory limit).\n\n#### SDK Implementation Pitfalls to Handle Explicitly\n1. **Little-endian bitstring order:** Quantum Rings follows little-endian register ordering where qubit `q[0]` corresponds to the rightmost character of a measurement bitstring (as seen in `Simon's Algorithm` where `i[numberofqubits // 2:]` slices `q[0..n-1]`). Decoding bitstrings to `x[0..n-1]` must index `bitstring[n - 1 - k]` for qubit `k`.\n2. **`get_counts()` value scaling:** The `Measurement` and `Result` docs state `get_counts()` returns occurrence percentages, whereas the `Quick Start` snippet displays shot counts (`{'00': ~500, '11': ~500}` for `shots=1000`). Always normalize by `sum(counts.values())` when computing expectation values and probabilities.\n3. **Sync execution:** Pass `mode=\"sync\"` to `backend.run(...)` (or use `job_monitor(job)`) so `job.result()` is never read prematurely.\n\n---\n\n### 4. Exact Classical Reference & Independent Verification\n\nBecause $n \\le 5$, the entire Hilbert space has at most $2^5 = 32$ bitstrings, and the valid Cartesian option space $|V_1| \\times |V_2|$ has at most $2 \\times 3 = 6$ schedules (at 35%) or $2 \\times 2 = 4$ schedules (at 20%). Exact classical enumeration over all $2^n$ bitstrings and all $|V_1| \\times |V_2|$ pairs is instantaneous and provides a rigorous reference:\n- **QUBO penalty audit:** Verify classically across all $2^n$ states that the global minimum of the QUBO matches the exact minimum-cost feasible schedule (confirming $P_{\\text{onehot}}$ and $P_{\\text{overlap}}$ are large enough).\n- **Independent schedule validator:** Given the top-sampled QAOA bitstring (and full shot distribution), decode `x` using the verified qubit-to-option mapping and independently check:\n  1. Exactly one option chosen for Van 1 and one for Van 2;\n  2. No shared charger slot between Van 1 and Van 2;\n  3. Recomputed travel times, delivery completion vs. due times, `10:00 AM` depot return, battery SoC $\\ge 15\\%$ at every waypoint, and exact dollar cost compared against the classical optimum.\n- **Infeasible outcome handling:** If the highest-probability QAOA bitstring violates a soft constraint, report the validation failure explicitly alongside the feasible-subspace projection / exact classical reference rather than silently masking it.\n\n---\n\n### 5. Claims Still Unverified (To Verify During Implementation)\n\n- **Symbolic `rzz` support in installed `QuantumRingsLib`:** Documentation lists `rzz` in Supported Gates and `Parameter` support on `rz`/`rx`/`u`/`mcp`; whether `qc.rzz(param, i, j)` accepts symbolic `Parameter` objects directly or requires decomposing to `cx-rz-cx` must be verified against the installed `QuantumRingsLib` version.\n- **`get_counts()` numeric type (counts vs. percentages):** Needs a quick smoke test on the installed SDK version due to the documentation discrepancy noted above, though normalizing by `sum(counts.values())` protects against both.\n- **Empirical QAOA convergence & depth $p$:** Optimal depth ($p \\in \\{1, 2, 3\\}$), QUBO scaling factor, shot count, and ground-state sampling probability for both the 35% (5-qubit) and 20% (4-qubit) cases must be measured on the live Quantum Rings run.\n- **Environment credentials:** Presence of a valid Quantum Rings API token/account (`QR_TOKEN` / `QR_ACCOUNT` or saved local config) in the runtime environment.",
+    "sources": [
+      {
+        "title": "arxiv.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF0iF8OvTQ4G_sFb2IUqT03YVjWv02ojrqn7SyfH_25JocdbIltXvX3B4bmLsOdvCtDBBnDqUgCnyZ3e4_Cmflvwr2ufVfYEDZenesMW_CF8oPwARk="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHP0M1bT2kd4foBBwBzas1Emdy_j6s4l79Rb9pPrdgGGEU3PL5N-UnaemEy0v0vchjR3ewQXMB-RcUsYw_ehWlUCs95Ld6i7_6iTxpnSkIpEDGJVsdGyF98wkGu1fCynpx2DTlsJcm7bCg1"
+      },
+      {
+        "title": "github.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGRNOQmaTPIVYre69fdzG6cGoC0W0MhHj0b7AFwIsODP130kdz8ljfTiIgB156pYwEzYDr5Kze1nEuvgENSQwzUV7gAHnBvt7jSGqL6Yu3R9-N_32OuCyhqhzOguTOsDYSo9t7UjZRuUevk7RYQ2FYe24lOdd28x_fUe6oNEw=="
+      },
+      {
+        "title": "github.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH4pM5OgTTgFaOLUItfN5Z9M2Iq4eyr6IiPSM-CaWO1jNQM9JajUW-mVWHKamAEA039DpB1oP7SR4wk8Z98LRrFCk6-VcVVPeoyTM27w0nHgwy24PyhFeaUklbeZNDwGhWhzd_l37l4yKA="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEG2RFBs7Hl8aSmRPzmgO7jFitM-pV4FV88Dfgxa8rGKvOq8DUR7ccIsVuiFpf2iuuujMts5mxYfja4L4rK3U7miDmPw1pJ2wApyBTQ1kvScnJFes_0gsC_O-Ap2P15OEPdlGWkIbqM-6lly9SDGSQJTgN-9n_1GpCURZXD"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGd0Ba1NAUOrw6MWFV7c-i8fDmsmRood5V2Q0jfC9SCgfXXICzQ2jPgYTFjU27htQs_XMc1u1abQbUXEUTMC76sBprpDlwdlrn__AQE1QFOFQK9hSLbI4UsB0kDTVVKHn694yN8dkOPOUphUshU"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFSENPnxpAIJ3HA1T1GQoHQkUDooNm0FcV5lFoY3fMcwz00cHSw2MVr-o-fAigeXoZWS-zee-RWS-C9NAyuN9U3EPio8UTCq5i2l2Qn5iwZhLKt1_-PY9GhwWjurniwReRfAgCT8h7Pc4KRQpw="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrDHxjG6CHb2UxEJHI6VpSrGjSg6pzFQb9PCFNP_6N5z86fa7vwzAbjTDDM4a_NamGOYdQN3Z_iH75wStUDzfR9tbKKPHO1sawXoVoleb1sm2c4JtsETmrUGaoEBLfdaJv9Zg77na3_GAa5w=="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1nw14ouNtXE0yHGHxWHyJXwcv0ohqwl-Ut_geNYdwsUnwZrMm9BQhcxPTFvh5WuScvlcg28hL-8yYcJ4NzHt3gqjvquIXqry9BcolEcCSgYfdNw8Q4yj10cmRdSYtWg=="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFjGEaVNvwKuYdCrU0qu_t8DHgf3ZYHn7BMWZCXCWLN73gdRn7zi3WTcATSdnEfiZaZWsXlzQEl2R4maTrZ7XGS3J8SlB_oYdvzEm9tJN5u3Exx7KrQVVYUeMA2GFlqnKzXQQ7MJJwJdyWZr_kw"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF70rGJPNxk4mFl4ToUMwJ-sRl7LKu430zo1Jo3aV5pS_j1BkxhcLXvE8ETe9e0q0UjQJFzJnDox7HU6jY-2lMiwF_Uk_VwU__nsI9d6vg_mAdxwBrfMvB-v3bUj7UFTWM5zNfhTqnRMQkxbsGw8J96VCb-"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6AbVTwvfGhwWSICDfNAnG1EL3eMNNK4nkxdoB-x537_5PRji2w3tkwOCs6Tyo0ZBl2bvOJwQDpV7e4yCnYmsVnlJYLl8HNIwRIhBYugmEaJlJGvb9PzIFHRmoRIZo1juwBCaDR3lNbGdnX6-WhD_5lpC5BYvBnXHZejQk"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG_C2tAi2zE20PBNDjAdiX7d_JFJQY1eQDLRp8xV3nzcaPuGIqVGl2kv63KgPTjLQAJ4Pdo_QcROiEeYqvdXa9ivfKeciR-HCA6Ev0Q6a51wxIQpk3qG9Sjrz6k9SC2QeFrozPi-kdsXqY3_15EBZAvWXmmAI-nXq0bMT3FPw=="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHBoDCg2kPnHmwrVDGj3oOyDzmndiZMHqE0YJhiUoKe4G1UCc-75erHN6X6DAvIW0d1Uy0e4S-QLnIzH-hzqcPQP9qflSPkhPyxYx46S5L8y83PgyRrfUaGXqwrIpqLNcPZTtyFzquLc8UTVT6X2fJ6WLBvbVozHOZFB1aq"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEEwSDdnTY4NXo4Jpnf4lykbNYqKFwQpEb__dfYhcDXrDZhYnHeTV8VWRUwKHyHb1PU7vjInw_ORG253sXNTdIBOBtueKEZwD7d03s7Hm_QWmVe5MwFefyrr0vuGLF1eQ=="
+      },
+      {
+        "title": "arxiv.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFJOUadGi_2ovMfJJpo9asShRvHNEDSbREzzL01029DNAfZobkqYULjxWrNeTW_UOX-jNBYX-r1fygK51zja15B8w42wjmiW-X-KGs5_-kh89C30_a4bFw="
+      },
+      {
+        "title": "mdpi.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGzcLKalQNm-FxBKZgWA9eXU2XyRbhn2QHfLObIzPhR2JK9Qg7is1ewMvSy3aLTVM-VbCUoDbEhbqw4JCyT9z8-70Bqa9qyWqqgeFwNEsZAlhLyDD2gJri4FfJQAg=="
+      },
+      {
+        "title": "arxiv.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF-TYCqbwlS6h-JOHM9x7Ri3lAzGvIAqdaG-zNJturpx7kEZgJuLpFYqx3OqFlVmzrHtchAWlQlpO1V1GUKSlPn9FjMkVS22zjJsqcUKygpYyJHccp-aFIpOw=="
+      },
+      {
+        "title": "computer.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGpHSFQhzgzydx610isOQ_s0S7R3IxOnoOx6wBFp3xtWr1l9KkdBe5xnUPKE8-J9rGAqSXqCMMrulc-K2Lorh3aDIdu-VB1ERQRDQTRlFsbpqLMCMcVJpXWZ6-XWPoRGzgAGcH9SvI0U9d-eXMmaIBwr7g5Eb3vsTuf0Tz9vPuuDff2yH527rQ="
+      },
+      {
+        "title": "aps.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFJ9_RiJXV_Tr72ob1evjxF47Y8lHOBt4bbvZoGoH0ZK2kAM9gEhLd2JdZQWxcKXRknK6EUq7XU-LR5yqg0G_FW_hAplQGlFFb0IAVSKe4tRFFTxseVZ42juHFjcHlnzcY="
+      },
+      {
+        "title": "arxiv.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFzyf-1jlg4xINAsnbNj1NpjzcVlzhCx5goc_UU4cae5azwLP2MNCB59VElcgQ7Rl-H7VVEuNU8fVbkM9V7bhVlxXNFfRpM0N-wiJg1-vMtIMF-r6PB"
+      },
+      {
+        "title": "arxiv.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEKnh89Ykkc5Rr9k12ya-HsO1Rle8yelLT5uxR6tlaQAWOJodlLO0M7NxnzTPuGCyJss2LCo-mXcSlV1eW-yQxU0i1rpLDIEP9eSmybLtSCv1uZiiWkig=="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGOq1-yFtpW6bB_-Xf3QOPzTRVKpB_SWIL3lDiqK9DVf2ndBDsl_lQwmjIASa7DlCPx0wq4EbRXP2JFBVbVWZbvj8e93CFDgjzwfw_qfXkR1Yfs2N_cVGGCBC5h7Spgr8HxKlI="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFGjToD3BV7VX5_MugTuBvjh6WNjRtcs05FUtSDz4FYyJ6uHJjEHUsI-aRFBl3GCtsOgwyW3jXyJFOQ3Jr_U6L3K082VJNRzBzqY9oBrtCaTdLaZmKOoy96zcAMB7aaE1zhEsPAUKSMu5efo0KPNy8mb1nGW8k="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG2aCYHA_0HSgLS64KTQB8hIVmw5m8BIW8cCmq5mGrJQuK6otcB7PGXqyPJRYQba-QL40rbY9siQ0hbnVr8dWobAtcjUAmjDCay8AL9QqC1NmBq79SudjIq98zHqwmvWNXcbZntg-ZjPhchxw0BO3fcE4lg2ZU="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGfSOWAlkhPScU_xXHVwMo-AxiAL31av4YJxK4tbMCbCgC-4DXfU5Btz3A3FguSGknm6eHmNpCAXKL6zyp3vLmaShe1pyCErO3q5pQ0i2DEuOnKpxqSib858eGP7HaWJ3mkc0fkgnFE"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGnknKm3tgxjOVMcbffslt01RVv7C0H3bmdpgbGRYSk1tbpPGI1kd7Fl_74X-_fVCeb5COxyWIZHNDQqJifuNHUfUmFFRXH1phFVHEaqnovxmsZKqhDZlEnXzGnJG8YFigv3EiXfhWxRoriwu0IrQ=="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEd0ldldfBsQA4tpAOLAczE5-2jQC11xal2cmXqzDm-N2I3NJfluhejm9Omuky98k-VPXD_FBfxq_OnCczcuZuCfCA66hpOW6kyPLOMLLQbuJ64G8oedm1KiZCbHgx4diWh3A=="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEnRob1QW6bNCRrIZoaVMkv9y_rJw9oAoKAHbsVX8j__fqqXr2hvkAAzoWG4Z4BzADm1rEHQsqANSTF5fGbw1BEHLfqQ0MhG14T-f6ObnZ7gpDmRhnwihGDfGdACMZQw5BMNzO_YJx44CxIi-E="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEnnNdczV0-2bd95XsMdt6YZJ1T2N77Z1e73un_6mCSRcw7Q5An8gFQLY59BC45Q6qJOUKGZBvm5OZdkUjA2ER5SJ88f4UqzuSx95Vwom57Perx5iSxGe2LnXRnURt2DE83"
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGNDjwPp-lKln3g9ifKvDL1Kj5IRiQNAP6Rc8Ws_e-EhcQ7ZPQ1cUaRK_c9AkrlpotGPqFoTkOr5nUw9RNq5F54oa1zKxcjSY1GpuyMTBsfG5BrTOMsMOegms-vBiEIxt3WK4puM9B_W_DQ9LLd8kY="
+      },
+      {
+        "title": "quantumrings.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGEilD0JCh2L0qqhvL-N_GuyjqZ5z6Fidf9C83d0ZLTJCAJvBAvvvGIdxUpmZ2fsUVaItGXy0F78z41MaOuJSM5PtyCyCnk90-iUIJHeaxd2sNY8c_LSCvV4qCGnmsHYWF35mHultA="
+      }
+    ]
+  },
+  "attempts": 2,
+  "max_qubits": 200,
+  "worker_seconds": 300,
+  "review": {
+    "verdict": "approve",
+    "issues": [],
+    "questions": [],
+    "reason": null
+  }
+}

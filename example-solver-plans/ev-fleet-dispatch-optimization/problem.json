@@ -1,0 +1,305 @@
+{
+  "is_optimization_problem": true,
+  "rejection_reason": null,
+  "title": "EV Fleet Dispatch Optimization",
+  "summary": "Find the lowest-cost charging and dispatch schedule for 2 electric vans completing 2 required deliveries on a 6 × 6 street grid with 1 single-plug charger and 2 charging slots. Classical preprocessing computes shortest grid paths and generates feasible route-and-charging options per van, while QAOA selects one option per van and penalizes overlapping charger bookings. The selected schedule is independently validated against exact classical enumeration, supports changing Van 2 starting charge between 35% and 20%, and is animated on the street grid with battery levels, charger bookings, delays, and total cost.",
+  "problem_class": "vehicle routing with charging scheduling",
+  "given_data": [
+    {
+      "name": "Number of electric vans",
+      "value": "2",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Number of deliveries",
+      "value": "2",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Number of chargers",
+      "value": "1",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Grid dimensions",
+      "value": "6 × 6",
+      "unit": "intersections",
+      "source": "stated"
+    },
+    {
+      "name": "Grid coordinate range",
+      "value": "(0,0) to (5,5)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Road connectivity",
+      "value": "two-way roads between adjacent intersections",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Block length",
+      "value": "500",
+      "unit": "m",
+      "source": "stated"
+    },
+    {
+      "name": "Depot coordinate",
+      "value": "(2,2)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger coordinate",
+      "value": "(2,1)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger plug count",
+      "value": "1",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 delivery count",
+      "value": "1",
+      "unit": "package",
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 delivery coordinate",
+      "value": "(0,0)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 delivery due time",
+      "value": "9:30 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 delivery count",
+      "value": "1",
+      "unit": "package",
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 delivery coordinate",
+      "value": "(5,0)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 delivery due time",
+      "value": "9:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Depot departure time for both vans",
+      "value": "8:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Depot return deadline for both vans",
+      "value": "10:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Driving speed",
+      "value": "30",
+      "unit": "km/h",
+      "source": "stated"
+    },
+    {
+      "name": "Delivery service time",
+      "value": "five",
+      "unit": "minutes",
+      "source": "stated"
+    },
+    {
+      "name": "Battery capacity per van",
+      "value": "20",
+      "unit": "kWh",
+      "source": "stated"
+    },
+    {
+      "name": "Battery energy consumption rate",
+      "value": "0.30",
+      "unit": "kWh/km",
+      "source": "stated"
+    },
+    {
+      "name": "Minimum battery charge level",
+      "value": "15",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 starting charge",
+      "value": "20",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 starting charge (initial setting)",
+      "value": "35",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 starting charge (interactive control values)",
+      "value": "35%, 20%",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Charger slot 1",
+      "value": "8:30–9:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger slot 2",
+      "value": "9:00–9:30 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger power",
+      "value": "10",
+      "unit": "kW",
+      "source": "stated"
+    },
+    {
+      "name": "Maximum energy added per slot",
+      "value": "5",
+      "unit": "kWh",
+      "source": "stated"
+    },
+    {
+      "name": "Driving cost rate",
+      "value": "$0.30",
+      "unit": "$/km",
+      "source": "stated"
+    },
+    {
+      "name": "Electricity cost rate",
+      "value": "$0.20",
+      "unit": "$/kWh",
+      "source": "stated"
+    },
+    {
+      "name": "Charger waiting cost rate",
+      "value": "$25",
+      "unit": "$/hour",
+      "source": "stated"
+    },
+    {
+      "name": "Late delivery cost rate",
+      "value": "$60",
+      "unit": "$/hour",
+      "source": "stated"
+    },
+    {
+      "name": "Maximum selection binary variables for supported inputs",
+      "value": "five",
+      "unit": "binary variables",
+      "source": "stated"
+    }
+  ],
+  "decision_variables": [
+    "Binary selection variables x_i in {0, 1}, one per feasible route-and-charging option generated across Van 1 and Van 2 (up to five selection variables for the supported inputs)"
+  ],
+  "objective_sense": "minimize",
+  "objective_terms": [
+    {
+      "name": "Driving cost",
+      "weight": "$0.30/km",
+      "description": "Total distance driven by both vans along their selected routes multiplied by $0.30/km."
+    },
+    {
+      "name": "Electricity cost",
+      "weight": "$0.20 per kWh",
+      "description": "Total electrical energy delivered by the charger to both vans, capped per slot at 5 kWh and available battery capacity, multiplied by $0.20 per kWh."
+    },
+    {
+      "name": "Waiting cost",
+      "weight": "$25/hour",
+      "description": "Time spent waiting by a van from arrival at the charger at (2,1) to the start of its reserved charging slot, multiplied by $25/hour."
+    },
+    {
+      "name": "Late delivery cost",
+      "weight": "$60/hour",
+      "description": "Duration from the package due time (9:30 AM for Van 1 at (0,0); 9:00 AM for Van 2 at (5,0)) to delivery completion, multiplied by $60/hour."
+    }
+  ],
+  "constraints": [
+    {
+      "description": "Both vans leave the depot at (2,2) at 8:00 AM and must return to the depot at (2,2) by 10:00 AM.",
+      "kind": "hard"
+    },
+    {
+      "description": "Both deliveries are required: Van 1 must deliver one package to (0,0) and Van 2 must deliver one package to (5,0), taking five minutes at each delivery.",
+      "kind": "hard"
+    },
+    {
+      "description": "Each van must maintain at least 15% of its 20 kWh battery capacity throughout its entire route.",
+      "kind": "hard"
+    },
+    {
+      "description": "Each van can charge at most once before delivery (using slot 8:30–9:00 AM or 9:00–9:30 AM) or drive directly without charging if its battery allows it, using shortest grid paths on the 6 × 6 grid with 500 m per block at 30 km/h.",
+      "kind": "hard"
+    },
+    {
+      "description": "Reserving a charging slot reserves the whole slot for one van; the 10 kW charger adds up to 5 kWh per slot, capped by available battery capacity.",
+      "kind": "hard"
+    },
+    {
+      "description": "Exactly one feasible route-and-charging option must be selected for Van 1 and one for Van 2 (enforced via QAOA penalty terms and verified during validation).",
+      "kind": "soft"
+    },
+    {
+      "description": "The single-plug charger at (2,1) can serve only one van per time slot; overlapping charger bookings between Van 1 and Van 2 are penalized in the QAOA objective and rejected in valid schedules.",
+      "kind": "soft"
+    }
+  ],
+  "quantum": {
+    "method": "QAOA",
+    "method_source": "stated",
+    "method_reason": "The user explicitly specified QAOA, which runs as a gate-based variational circuit on the Quantum Rings simulator and naturally encodes binary option-selection QUBO objectives with one-hot and charger-overlap penalties within a very small qubit count.",
+    "quantum_part": "Solve the discrete combinatorial selection of one feasible route-and-charging option per van using one binary variable per feasible option (up to five selection variables), incorporating route/charging/waiting/delay costs and penalty terms for invalid selection counts and overlapping charger bookings.",
+    "classical_part": "Compute shortest grid paths on the 6 × 6 street grid, generate feasible route-and-charging options per van (including no-charge options where feasible) with exact timings and costs, enumerate all option combinations classically as an exact reference, independently validate the QAOA-selected schedule and cost, handle recalculation when Van 2 starting charge changes between 35% and 20%, and animate the schedule.",
+    "qubit_estimate": null,
+    "qubit_budget": null
+  },
+  "expected_output": [
+    "Optimal or QAOA-selected feasible route and charging schedule for Van 1 and Van 2",
+    "Actual quantum circuit width reported, including any auxiliary qubits",
+    "Independent validation of the selected schedule and its cost against exact classical enumeration of the same feasible options",
+    "Interactive control for Van 2 starting charge with values 35% and 20% that recalculates feasible options and the charging schedule when applied",
+    "Animated street-grid visualization showing travel, waiting, charging, delivery, and return, along with battery levels, charger bookings, any delivery delay, and total cost"
+  ],
+  "assumptions": [
+    "Grid distances follow Manhattan (shortest edge-path) distance between adjacent intersections on the 6 × 6 grid, with each adjacent intersection step equal to 500 m (0.5 km).",
+    "Delivery completion time is the van's arrival time at the delivery coordinate plus the five-minute delivery service duration, and late delivery cost applies from the due time to delivery completion whenever completion is after the due time.",
+    "A van must arrive at the charger at (2,1) at or before the start of its reserved charging slot, waits if it arrives early, and remains plugged in for the full 30-minute reserved slot.",
+    "Electricity cost ($0.20 per kWh delivered) is billed on the actual kWh added to the battery (up to 5 kWh, capped by remaining space in the 20 kWh battery), and no waiting cost is incurred at the depot or delivery stops.",
+    "The minimum 15% battery charge requirement applies continuously along the route, including upon arrival at the charger prior to charging and upon return to the depot by 10:00 AM.",
+    "When multiple shortest grid paths connect two intersections, any shortest path has identical travel distance, travel time, and energy consumption and can be chosen arbitrarily for animation."
+  ],
+  "open_questions": [
+    "Must a van arrive at or before the start of a charging slot (8:30 AM or 9:00 AM) to book it, or could it arrive mid-slot? Default: require arrival at or before the slot start time because waiting is measured from arrival to slot start and the whole slot is reserved.",
+    "Does a van using a charging slot always depart at the end of the 30-minute slot (9:00 AM or 9:30 AM) even if its battery reaches 100% earlier? Default: yes, depart at the end of the reserved slot.",
+    "Are any auxiliary qubits needed in the QAOA circuit beyond the up to five binary option-selection qubits? Default: formulate the QUBO directly with Pauli Z and ZZ terms on the selection qubits so zero auxiliary qubits are required and circuit width equals the number of feasible option variables (at most 5, well below the 200-qubit simulator limit).",
+    "How should penalty weights in QAOA be chosen and how should an infeasible QAOA measurement outcome be handled if sampled? Default: set one-hot and charger-overlap penalty weights larger than the maximum feasible schedule cost spread, and report exact validation status alongside the exact classical reference."
+  ]
+}
