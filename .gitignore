@@ -1,3 +1,18 @@
-qr-env/
-__pycache__/
+# Secrets
 .env
+
+# Editor settings (contain local paths)
+.vscode/
+
+# Python virtual environments
+qr-env/
+qr-gpu/
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Per-request agent working directories
+workspaces/
