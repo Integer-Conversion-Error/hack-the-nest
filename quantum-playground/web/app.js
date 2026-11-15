@@ -271,9 +271,10 @@ function startVisualizer(){
     try{
       if(!result||!sim){$('frame-status').textContent='Build a plan to see the map.';return;}
       const resolution=PygameInput.resolutionFor($('pygame-view').getBoundingClientRect(),window.devicePixelRatio||1);
-      const key=`${viewId}:${minute.toFixed(2)}:${selectedVan||''}:${playing}:${$('speed').value}:${resolution}`;
+      const replayMinute = String(minute);
+      const key=`${viewId}:${replayMinute}:${selectedVan||''}:${playing}:${$('speed').value}:${resolution}`;
       if(key===lastKey)return;
-      const query=new URLSearchParams({view_id:viewId,minute:minute.toFixed(2),selected:selectedVan||'',playing:String(playing),speed:$('speed').value,resolution:String(resolution)});
+      const query=new URLSearchParams({view_id:viewId,minute:replayMinute,selected:selectedVan||'',playing:String(playing),speed:$('speed').value,resolution:String(resolution)});
       const response=await fetch('/api/pygame-frame?'+query);
       if(!response.ok){const message=(await response.json()).error||'Unable to render Pygame frame.';
         if(revision!==viewRevision||viewId!==result?.view_id)return;

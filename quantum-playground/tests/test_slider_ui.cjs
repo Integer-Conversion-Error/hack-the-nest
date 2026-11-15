@@ -192,7 +192,7 @@ async function main() {
   assert.equal(vm.runInContext('playing', context), false);
   assert.equal(get('error').hidden, true);
   assert.equal(get('rerun').disabled, true);
-  assert.equal(frames.at(-1).get('minute'), '60.00');
+  assert.equal(frames.at(-1).get('minute'), '60');
 
   const image = get('pygame-frame');
   const click = kind => {
@@ -220,6 +220,7 @@ async function main() {
   get('prompt-form').onsubmit({preventDefault() {}});
   assert.deepEqual(posts[4].payload, {mode: 'live', prompt: 'A new draft.\n'});
   const live = fixture(35, '3');
+  live.simulation.duration_min = 120.009;
   posts[4].respond(json({
     ...live, mode: 'live', provenance: 'recorded',
     circuits: [{title: 'Solver circuit', drawing: 'q0: --H--M--'}],
@@ -230,6 +231,12 @@ async function main() {
   assert.equal(get('circuits').children.length, 1);
   assert.equal(get('reference-score').textContent, '$15.78');
   assert.equal(get('gap-score').textContent, '$0.00');
+
+  await waitFor(() => frames.at(-1)?.get('view_id') === 'view-3' && !image.hidden, 'live Pygame frame');
+  image.onkeydown({key: 'End', preventDefault() {}});
+  const framesBeforeEnd = frames.length;
+  await waitFor(() => frames.length > framesBeforeEnd, 'end of the fractional replay');
+  assert.equal(frames.at(-1).get('minute'), '120.009');
   console.log('PASS: explicit recalculation, failed and mismatched results, replay controls, and provenance');
 }
 
