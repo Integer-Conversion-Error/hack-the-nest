@@ -1,6 +1,6 @@
 # Verified EV handoff
 
-The dashboard calls the backend host at `QUANTUM_BACKEND_URL`. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. The repository currently implements Init and Plan. The future backend HTTP handler should call the host and serialize the verified result after GO. See the [solver skill](../../agent-prompts/skills/backend/run-quantum-solver/SKILL.md) and [verification skill](../../agent-prompts/skills/backend/verify-and-handoff/SKILL.md).
+The dashboard calls the backend host at `QUANTUM_BACKEND_URL`. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. The `backend.pipeline` CLI runs the workflow and writes `handoff.json` in the workspace after GO. Its file uses `workspace_id`, `decision`, and `results`. The live HTTP adapter needs to translate that file into the versioned response below, including attempt identity and the timed EV schedule. See the [solver skill](../../agent-prompts/skills/backend/run-quantum-solver/SKILL.md) and [verification skill](../../agent-prompts/skills/backend/verify-and-handoff/SKILL.md).
 
 Set the URL in the dashboard server environment. For example, in PowerShell:
 
