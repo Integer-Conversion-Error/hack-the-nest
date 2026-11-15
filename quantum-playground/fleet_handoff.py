@@ -233,6 +233,16 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
 
     simulation = result.get("simulation")
     delivered_count = validate_replay(simulation)
+    van_2_charge = effective.get("van_2_initial_charge_pct")
+    if van_2_charge is not None:
+        van_2 = next((van for van in simulation["vans"] if van["id"] == "V2"), None)
+        expected_battery = simulation["battery_capacity_kwh"] * (van_2_charge / 100)
+        require(
+            van_2 is not None and 0 <= van_2_charge <= 100
+            and math.isclose(van_2["initial_battery_kwh"], expected_battery, abs_tol=1e-7),
+            "Van 2's starting battery does not match the applied charge.",
+        )
+
     evaluation = result.get("evaluation")
     require(
         isinstance(evaluation, dict) and evaluation.get("feasible") is True

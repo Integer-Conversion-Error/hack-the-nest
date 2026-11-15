@@ -252,5 +252,24 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(accepted["attempt_id"], retry_attempts[-1])
 
 
+    def test_recalculation_rejects_a_stale_schedule_with_matching_values(self):
+        initial = verified_handoff({})
+        stale = verified_handoff({}, initial["result"])
+        stale["result"]["effective_values"][CONTROL_ID] = 20
+        updated = verified_handoff({CONTROL_ID: 20}, initial["result"])
+        self.configure_backend(initial, stale, updated)
+        first = self.run_plan("live", prompt=PROMPT)
+        request = {"view_id": first["view_id"], "variables": {CONTROL_ID: 20}}
+
+        message = self.assert_run_error("live", 502, **request)
+        self.assertIn("starting battery does not match", message)
+        with patch("pygame_renderer.render_png", return_value=b"fixture png"):
+            self.assertEqual(self.read_frame(first["view_id"]), b"fixture png")
+
+        accepted = self.run_plan("live", **request)
+        self.assertEqual(accepted["effective_values"], {CONTROL_ID: 20})
+        self.assertEqual(accepted["simulation"]["vans"][1]["initial_battery_kwh"], 4)
+
+
 if __name__ == "__main__":
     unittest.main()
