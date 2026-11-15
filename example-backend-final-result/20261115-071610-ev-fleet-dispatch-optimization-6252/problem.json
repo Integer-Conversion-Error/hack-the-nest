@@ -1,0 +1,249 @@
+{
+  "is_optimization_problem": true,
+  "rejection_reason": null,
+  "title": "EV Fleet Dispatch and Charging Schedule Optimization",
+  "summary": "Determine the lowest-cost route and charging schedules for two electric delivery vans operating on a 6x6 grid with one depot, one single-plug charger, and two customer deliveries. Feasible route and charging candidate options are evaluated classically, and QAOA selects the optimal combination of options under charger exclusivity and delivery deadlines. The schedule optimizes driving distance, energy costs, waiting time at the charger, and tardiness penalties.",
+  "problem_class": "electric vehicle routing and charging scheduling",
+  "given_data": [
+    {
+      "name": "Grid dimensions",
+      "value": "6 x 6, from (0,0) to (5,5)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Block length",
+      "value": "500",
+      "unit": "m",
+      "source": "stated"
+    },
+    {
+      "name": "Depot location",
+      "value": "(2,2)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger location",
+      "value": "(2,1)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Number of charger plugs",
+      "value": "1",
+      "unit": "plugs",
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 delivery destination",
+      "value": "(0,0)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 delivery deadline",
+      "value": "9:30 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 delivery destination",
+      "value": "(5,0)",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 delivery deadline",
+      "value": "9:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Depot departure time",
+      "value": "8:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Depot return deadline",
+      "value": "10:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Driving speed",
+      "value": "30",
+      "unit": "km/h",
+      "source": "stated"
+    },
+    {
+      "name": "Delivery service duration",
+      "value": "5",
+      "unit": "minutes",
+      "source": "stated"
+    },
+    {
+      "name": "Van battery capacity",
+      "value": "20",
+      "unit": "kWh",
+      "source": "stated"
+    },
+    {
+      "name": "Energy consumption rate",
+      "value": "0.30",
+      "unit": "kWh/km",
+      "source": "stated"
+    },
+    {
+      "name": "Minimum allowable battery state of charge",
+      "value": "15",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Van 1 initial battery charge",
+      "value": "20",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 initial battery charge (default)",
+      "value": "35",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Van 2 alternative initial battery charge",
+      "value": "20",
+      "unit": "%",
+      "source": "stated"
+    },
+    {
+      "name": "Charger slot 1",
+      "value": "8:30–9:00 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger slot 2",
+      "value": "9:00–9:30 AM",
+      "unit": null,
+      "source": "stated"
+    },
+    {
+      "name": "Charger power rating",
+      "value": "10",
+      "unit": "kW",
+      "source": "stated"
+    },
+    {
+      "name": "Maximum energy delivered per slot",
+      "value": "5",
+      "unit": "kWh",
+      "source": "stated"
+    },
+    {
+      "name": "Driving cost rate",
+      "value": "0.30",
+      "unit": "$/km",
+      "source": "stated"
+    },
+    {
+      "name": "Electricity cost rate",
+      "value": "0.20",
+      "unit": "$/kWh",
+      "source": "stated"
+    },
+    {
+      "name": "Charger waiting cost rate",
+      "value": "25",
+      "unit": "$/hour",
+      "source": "stated"
+    },
+    {
+      "name": "Late delivery penalty rate",
+      "value": "60",
+      "unit": "$/hour",
+      "source": "stated"
+    }
+  ],
+  "decision_variables": [
+    "Binary choice x_{i,k} indicating whether van i selects candidate schedule option k (from feasible direct or pre-delivery charging options)."
+  ],
+  "objective_sense": "minimize",
+  "objective_terms": [
+    {
+      "name": "Driving cost",
+      "weight": "$0.30/km",
+      "description": "Total distance traveled multiplied by $0.30 per kilometer across all vans."
+    },
+    {
+      "name": "Electricity cost",
+      "weight": "$0.20/kWh",
+      "description": "Total energy drawn from the charger multiplied by $0.20 per kWh delivered."
+    },
+    {
+      "name": "Waiting cost",
+      "weight": "$25/hour",
+      "description": "Cost accrued while waiting at the charging station before a reserved slot starts."
+    },
+    {
+      "name": "Late delivery penalty",
+      "weight": "$60/hour",
+      "description": "Penalty accumulated per hour for deliveries completed after their respective deadlines."
+    }
+  ],
+  "constraints": [
+    {
+      "description": "Exactly one route/charging schedule option must be chosen for Van 1 and exactly one for Van 2.",
+      "kind": "hard"
+    },
+    {
+      "description": "No charger slot may be reserved by more than one van simultaneously (1 plug available).",
+      "kind": "hard"
+    },
+    {
+      "description": "Each van's battery state of charge must not drop below 15% (3.0 kWh) at any point along its route.",
+      "kind": "hard"
+    },
+    {
+      "description": "Both vans must depart the depot at exactly 8:00 AM and return to the depot by 10:00 AM.",
+      "kind": "hard"
+    },
+    {
+      "description": "Grid travel times between adjacent intersections (500 m) are computed at a constant speed of 30 km/h (1 minute per block).",
+      "kind": "hard"
+    },
+    {
+      "description": "Delivery at the customer stop requires exactly 5 minutes.",
+      "kind": "hard"
+    }
+  ],
+  "quantum": {
+    "method": "QAOA",
+    "method_reason": "The candidate schedule selection problem reduces to a discrete quadratic unconstrained binary optimization (QUBO) assignment problem with conflict penalties on shared charging slots, which maps directly to the QAOA Ising Hamiltonian.",
+    "quantum_part": "Selecting the optimal combination of candidate route and charging options across vans to minimize total combined costs while penalizing slot booking conflicts.",
+    "classical_part": "Path enumeration on the grid, battery depletion and charging feasibility checks, candidate option filtering, cost coefficient calculation, exact reference validation via classical enumeration, and animation generation.",
+    "qubit_estimate": 6,
+    "qubit_budget": null
+  },
+  "expected_output": [
+    "Selected schedule option for each van",
+    "Reported actual quantum circuit width and execution details",
+    "Validation comparison against exact classical enumeration",
+    "Animation of the selected schedule showing travel, waiting, charging, delivery, and return phases",
+    "Display of battery levels, charger bookings, any delivery delay, and the total cost",
+    "Interactive UI control for toggling Van 2 starting battery charge (35% vs 20%)"
+  ],
+  "assumptions": [
+    "Vehicles follow shortest Manhattan paths on the grid between waypoints.",
+    "Vans travel directly between Depot, Charger, Delivery, and return to Depot without unassigned detours.",
+    "A van arriving at the charger before its reserved slot begins must wait at (2,1) until the slot start time.",
+    "Delivery deadline delays are measured linearly from the due time to the moment delivery service is completed.",
+    "When a van charges, energy received is min(5 kWh, 20 kWh - current charge)."
+  ],
+  "open_questions": [
+    "If Van 2 arrives at the customer earlier than the deadline, is there any reward or idle penalty? (Default assumption: no reward or penalty for early delivery, cost is 0 for lateness)."
+  ]
+}

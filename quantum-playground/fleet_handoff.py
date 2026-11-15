@@ -201,7 +201,9 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
             "Recalculation must return a new attempt for the same run and plan.",
         )
     status, provenance = result.get("status"), result.get("provenance")
-    if mode == "live":
+    if mode == "recorded":
+        require(status == "verified" and provenance == "recorded", "Invalid backend recording provenance.")
+    elif mode == "live":
         if status != "verified":
             message = result.get("message")
             raise UnverifiedResult(message if is_text(message) else "The backend did not verify a result.")
@@ -265,7 +267,7 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
         and all(re.fullmatch(r"[01]+", bits) and type(count) is int and count >= 0 for bits, count in counts.items()),
         "Invalid circuit, measurement, or explanatory data.",
     )
-    return {
+    view = {
         **identity,
         "mode": mode,
         "status": "completed",
@@ -280,3 +282,11 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
         "assumptions": assumptions,
         "explanation": explanation,
     }
+    if mode == "recorded":
+        source = result.get("source")
+        require(
+            isinstance(source, dict) and is_text(source.get("workspace_id")) and is_text(source.get("file")),
+            "Missing backend recording source.",
+        )
+        view["source"] = source
+    return view

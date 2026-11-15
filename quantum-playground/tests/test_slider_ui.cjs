@@ -43,6 +43,28 @@ function fixture(charge = 35, attempt = '1') {
   };
 }
 
+function recordedFixture(charge, attempt) {
+  const data = fixture(charge, attempt);
+  const initial = charge === 35;
+  const bestBitstring = initial ? '00101' : '0110';
+  const width = initial ? 5 : 4;
+  const options = initial ? ['Van1_Slot1', 'Van2_Direct'] : ['Van1_Slot2', 'Van2_Slot1'];
+  return {
+    ...data,
+    mode: 'recorded', provenance: 'recorded',
+    source: {workspace_id: 'recorded-workspace', file: initial ? 'handoff.json' : 'test.json'},
+    quantum: {
+      method: 'Post-Filtered One-Hot Penalty QAOA (QuantumRingsLib)',
+      binary_variables: width, actual_qubits: width, shots: 2048, best_bitstring: bestBitstring,
+    },
+    simulation: {
+      ...data.simulation,
+      counts: {[bestBitstring]: initial ? 310 : 491},
+      vans: data.simulation.vans.map((van, i) => ({...van, option_id: options[i]})),
+    },
+  };
+}
+
 const scene = {
   width: 840, height: 620,
   targets: [
@@ -90,7 +112,7 @@ for (const [, id] of fs.readFileSync('web/index.html', 'utf8').matchAll(/id="([^
   const element = new Element('div');
   element.id = id;
 }
-get('mode').value = 'reference';
+get('mode').value = 'recorded';
 get('speed').value = '4';
 const posts = [];
 const frames = [];
@@ -133,9 +155,48 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 async function main() {
   await waitFor(() => posts.length === 1, 'initial request');
+  assert.deepEqual(posts[0].payload, {mode: 'recorded', prompt});
+  posts[0].respond(json(recordedFixture(35, 'recorded-35')));
+  await waitFor(() => frames.at(-1)?.get('view_id') === 'view-recorded-35' && !get('pygame-frame').hidden,
+    'recorded backend frame');
+  assert.equal(get('prompt').readOnly, true);
+  assert.equal(get('run-badge').textContent, 'Recorded backend run');
+  assert.equal(get('rerun').textContent, 'Load recorded result');
+  assert.equal(get('score').textContent, '$15.78');
+  assert.equal(get('reference-score').textContent, '$15.78');
+  assert.equal(get('gap-score').textContent, '$0.00');
+  assert.match(get('quantum-summary').textContent, /QAOA.*5 executed qubits.*2048 shots.*00101/);
+  assert.equal(get('histogram').children[0].children.at(-1).textContent, 310);
+  assert.match(get('result-source').textContent, /handoff\.json$/);
+  get('fleet').children[1].onclick();
+  assert.match(get('pygame-inspector').textContent, /Option: Van2_Direct/);
+
+  const recordedCharge = get('variable-van_2_initial_charge_pct');
+  recordedCharge.value = '20';
+  recordedCharge.onchange();
+  get('rerun').onclick();
+  assert.deepEqual(posts[1].payload, {
+    mode: 'recorded', view_id: 'view-recorded-35', variables: {van_2_initial_charge_pct: 20},
+  });
+  assert.match(get('status').textContent, /Loading the recorded result/);
+  posts[1].respond(json(recordedFixture(20, 'recorded-20')));
+  await waitFor(() => frames.at(-1)?.get('view_id') === 'view-recorded-20' && !get('pygame-frame').hidden,
+    'recorded control test frame');
+  assert.equal(get('score').textContent, '$58.37');
+  assert.match(get('applied-settings').textContent, /20%/);
+  assert.match(get('quantum-summary').textContent, /4 executed qubits.*2048 shots.*0110/);
+  assert.equal(get('histogram').children[0].children.at(-1).textContent, 491);
+  assert.match(get('result-source').textContent, /test\.json$/);
+
+  get('mode').value = 'reference';
+  get('mode').onchange();
+  assert.equal(get('rerun').disabled, true, 'a recorded view cannot be recalculated as a classical reference');
+  posts.length = 0;
+  get('prompt-form').onsubmit({preventDefault() {}});
   assert.deepEqual(posts[0].payload, {mode: 'reference', prompt});
   posts[0].respond(json(fixture()));
-  await waitFor(() => get('pygame-frame').hidden === false, 'initial Pygame frame');
+  await waitFor(() => frames.at(-1)?.get('view_id') === 'view-1' && !get('pygame-frame').hidden,
+    'classical reference frame');
 
   const charge = get('variable-van_2_initial_charge_pct');
   assert.equal(charge.tag, 'select');
@@ -143,6 +204,7 @@ async function main() {
   assert.equal(charge.value, '35');
   assert.match(get('applied-settings').textContent, /35%/);
   assert.equal(get('run-badge').textContent, 'Exact reference');
+  assert.equal(get('result-source').hidden, true);
   assert.equal(get('score').textContent, '$15.78');
   assert.equal(get('end-time').textContent, '10:00');
   assert.equal(get('circuit-panel').hidden, true);
@@ -226,7 +288,7 @@ async function main() {
     circuits: [{title: 'Solver circuit', drawing: 'q0: --H--M--'}],
   }));
   await flush();
-  assert.equal(get('run-badge').textContent, 'Recorded run');
+  assert.equal(get('run-badge').textContent, 'Recorded backend run');
   assert.equal(get('circuit-panel').hidden, false);
   assert.equal(get('circuits').children.length, 1);
   assert.equal(get('reference-score').textContent, '$15.78');
@@ -237,7 +299,14 @@ async function main() {
   const framesBeforeEnd = frames.length;
   await waitFor(() => frames.length > framesBeforeEnd, 'end of the fractional replay');
   assert.equal(frames.at(-1).get('minute'), '120.009');
-  console.log('PASS: explicit recalculation, failed and mismatched results, replay controls, and provenance');
+  get('mode').value = 'recorded';
+  get('mode').onchange();
+  get('mode').value = 'reference';
+  get('mode').onchange();
+  get('mode').value = 'live';
+  get('mode').onchange();
+  assert.equal(get('prompt').value, 'A new draft.\n', 'local replay modes preserve the live draft');
+  console.log('PASS: recorded outcomes, explicit recalculation, failed and mismatched results, replay controls, and provenance');
 }
 
 main().catch(error => {

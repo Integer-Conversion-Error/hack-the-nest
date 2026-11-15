@@ -48,13 +48,15 @@ The result includes the three IDs, `status: "verified"`, and `provenance: "live"
 
 The dashboard validates handoff identity, approved settings, and replay consistency before creating a view. It consumes the host's feasibility and objective result. The host retains execution and verification evidence.
 
-## Reference data and integration checks
+## Local recordings and integration checks
 
-The dashboard includes two timed exact classical replays from the [EV solver plan](../../example-solver-plans/ev-fleet-dispatch-optimization.md). These show the intended payload shape with `status: "reference"` and `provenance: "classical_reference"` inside the local example path. They contain no measured outcomes.
+The default dashboard mode projects the [recorded backend workspace](../../example-backend-final-result/20261115-071610-ev-fleet-dispatch-optimization-6252) into the same replay model. It uses `problem.json` for the map and operating constraints, the final GO `handoff.json` result for 35%, and the successful 20% run in `test.json`. The player preserves each result's measured counts, timed route, and comparison with the exact reference. The downloaded view identifies its source workspace and file.
 
-From `quantum-playground`, inspect a full handoff envelope or run the stub-backend tests.
+The optional exact classical replays from the [EV solver plan](../../example-solver-plans/ev-fleet-dispatch-optimization.md) use `status: "reference"` and `provenance: "classical_reference"`. Their measurement counts are empty.
+
+From `quantum-playground`, inspect a full recorded handoff envelope or run the HTTP tests.
 
 ```sh
-python -c "import json; from ev_reference import reference_handoff; print(json.dumps(reference_handoff({}), indent=2))"
+python -c "import json; from ev_recorded import recorded_handoff; print(json.dumps(recorded_handoff({}), indent=2))"
 python -m unittest discover -s tests -p test_handoff_http.py -v
 ```

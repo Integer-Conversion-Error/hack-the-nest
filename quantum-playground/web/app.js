@@ -3,7 +3,25 @@ const colors = ['#8af1d0','#a0abff','#ffc177','#fa8faf'];
 const provenanceLabels = {
   classical_reference: 'Exact reference',
   live: 'Live run',
-  recorded: 'Recorded run',
+  recorded: 'Recorded backend run',
+};
+
+const runModes = {
+  recorded: {
+    action: 'Load recorded example',
+    note: 'Replay the backend schedules and measured outcomes.',
+    pending: 'Loading the recorded result…',
+  },
+  reference: {
+    action: 'Load exact reference',
+    note: 'Replay the approved EV plan using the exact classical solution.',
+    pending: 'Loading the exact reference…',
+  },
+  live: {
+    action: 'Run backend',
+    note: 'Submit a prompt to the backend and wait for a verified result.',
+    pending: 'Waiting for a verified backend result…',
+  },
 };
 
 let inspected = null, pygameScene = null, pygameSceneView = null, scrubbing = null;
@@ -61,12 +79,13 @@ function values() {
 
 function updateButtons() {
   const selectedMode = $('mode').value;
-  const canRun = selectedMode === 'reference' || backendConfigured;
+  const isLive = selectedMode === 'live';
+  const canRun = !isLive || backendConfigured;
   $('generate').disabled = !initialized || busy || !canRun;
-  $('load-example').hidden = selectedMode === 'reference';
+  $('load-example').hidden = !isLive;
   $('load-example').disabled = !initialized || busy;
   $('mode').disabled = !initialized || busy;
-  $('prompt').readOnly = selectedMode === 'reference' || busy;
+  $('prompt').readOnly = !isLive || busy;
   const canApply = result?.mode === selectedMode && controlInputs.size > 0;
   const hasChanges = Object.entries(values()).some(([id, value]) => result?.effective_values[id] !== value);
   $('rerun').disabled = busy || !canApply || !hasChanges;
@@ -98,7 +117,10 @@ function acceptResult(data, payload) {
   if (!data) throw Error('The service did not return a verified EV fleet result.');
   const ids = [data.view_id, data.run_id, data.plan_id, data.attempt_id];
   if (data.status !== 'completed' || data.mode !== payload.mode ||
-      !Object.hasOwn(provenanceLabels, data.provenance) || ids.some(id => typeof id !== 'string' || !id) ||
+      !Object.hasOwn(provenanceLabels, data.provenance) ||
+      (payload.mode === 'recorded' && data.provenance !== 'recorded') ||
+      (payload.mode === 'reference' && data.provenance !== 'classical_reference') ||
+      ids.some(id => typeof id !== 'string' || !id) ||
       data.evaluation?.feasible !== true || !Number.isFinite(data.evaluation.objective_value) ||
       !FleetReplay.validate(data.simulation)) {
     throw Error('The service did not return a verified EV fleet result.');
@@ -145,13 +167,13 @@ function queueRun(payload, status) {
 
 function initialRun() {
   const mode = $('mode').value;
-  const prompt = mode === 'reference' ? examplePrompt : $('prompt').value;
+  const prompt = mode === 'live' ? $('prompt').value : examplePrompt;
   if (!prompt.trim()) {
     $('prompt').reportValidity();
     return;
   }
   if ($('generate').disabled) return;
-  queueRun({mode, prompt}, mode === 'reference' ? 'Loading the exact reference…' : 'Waiting for a verified backend result…');
+  queueRun({mode, prompt}, runModes[mode].pending);
 }
 
 $('prompt-form').onsubmit = event => {
@@ -161,24 +183,21 @@ $('prompt-form').onsubmit = event => {
 
 $('rerun').onclick = () => {
   if ($('rerun').disabled) return;
-  queueRun({mode: result.mode, view_id: result.view_id, variables: values()}, 'Recalculating · showing the last verified result');
+  const pending = result.mode === 'recorded' ? 'Loading the recorded result' : 'Recalculating';
+  queueRun({mode: result.mode, view_id: result.view_id, variables: values()}, pending + ' · showing the last verified result');
 };
 
 function updateMode() {
-  if ($('mode').value === 'reference') {
-    $('prompt').value = examplePrompt;
-    $('generate').textContent = 'Load exact reference';
-    $('mode-note').textContent = 'Replay the approved EV plan using the exact classical solution.';
-  } else {
-    $('prompt').value = livePrompt;
-    $('generate').textContent = 'Run backend';
-    $('mode-note').textContent = 'Submit a prompt to the backend and wait for a verified result.';
-  }
+  const mode = $('mode').value;
+  $('prompt').value = mode === 'live' ? livePrompt : examplePrompt;
+  $('generate').textContent = runModes[mode].action;
+  $('mode-note').textContent = runModes[mode].note;
+  $('rerun').textContent = mode === 'recorded' ? 'Load recorded result' : 'Apply and recalculate';
   updateButtons();
 }
 
 $('mode').onchange = () => {
-  if ($('mode').value === 'reference') livePrompt = $('prompt').value;
+  if (!$('prompt').readOnly) livePrompt = $('prompt').value;
   updateMode();
 };
 $('load-example').onclick = () => { $('prompt').value = examplePrompt; };
@@ -208,8 +227,11 @@ function render(data, {preserve = false} = {}) {
 
   const quantum = data.quantum || {};
   const quantumDetails = [
+    quantum.method,
     Number.isFinite(quantum.binary_variables) ? quantum.binary_variables + ' binary decisions' : null,
     Number.isFinite(quantum.actual_qubits) ? quantum.actual_qubits + ' executed qubits' : null,
+    Number.isFinite(quantum.shots) ? quantum.shots + ' shots' : null,
+    typeof quantum.best_bitstring === 'string' ? 'Selected bitstring ' + quantum.best_bitstring : null,
   ];
   $('quantum-summary').textContent = quantumDetails.filter(Boolean).join(' · ');
   $('histogram').replaceChildren();
@@ -237,6 +259,10 @@ function render(data, {preserve = false} = {}) {
   $('costs').replaceChildren(...Object.entries(evaluation.costs || {})
     .map(([label, value]) => node('span', label + ' · ' + money(value))));
   $('explanation').textContent = data.explanation || '';
+  $('result-source').hidden = !data.source?.file;
+  $('result-source').textContent = data.source?.file
+    ? 'Source · ' + [data.source.workspace_id, data.source.file].filter(Boolean).join(' / ')
+    : '';
   $('start-time').textContent = clock(0);
   $('end-time').textContent = clock(sim.duration_min);
   $('scrub').max = sim.duration_min;
@@ -313,7 +339,8 @@ function updateInspector(){
     const van=sim.vans.find(v=>v.id===inspected.id);if(!van){panel.hidden=true;return;}
     const state=FleetReplay.stateAt(van,minute,sim.depot);
     const upcoming=van.events.find(e=>e.end_min>minute);
-    panel.textContent=`${van.id} | ${state.status} | ${state.battery.toFixed(2)} kWh (${(state.battery/sim.battery_capacity_kwh*100).toFixed(0)}%) | Deliveries: ${(van.delivery_ids||[]).join(', ')}${upcoming?` | Current/next event ends ${clock(upcoming.end_min)}`:''}`;
+    const option = van.option_id ? ' | Option: ' + van.option_id : '';
+    panel.textContent=`${van.id} | ${state.status} | ${state.battery.toFixed(2)} kWh (${(state.battery/sim.battery_capacity_kwh*100).toFixed(0)}%) | Deliveries: ${(van.delivery_ids||[]).join(', ')}${option}${upcoming?` | Current/next event ends ${clock(upcoming.end_min)}`:''}`;
   }else if(inspected.kind==='charger'){
     const reservations=sim.vans.flatMap(v=>v.events.filter(e=>e.type==='charge'&&e.charger_id===inspected.id).map(e=>({van:v.id,...e})));
     const active=reservations.find(e=>e.start_min<=minute&&minute<e.end_min);
@@ -384,7 +411,7 @@ async function init() {
     livePrompt = examplePrompt;
     backendConfigured = config.backend_configured;
     $('live-mode').disabled = !backendConfigured;
-    $('connection').textContent = backendConfigured ? 'Backend configured' : 'Local reference';
+    $('connection').textContent = backendConfigured ? 'Backend configured' : 'Local replays';
     initialized = true;
     updateMode();
     startVisualizer();

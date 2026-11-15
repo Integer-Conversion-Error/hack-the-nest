@@ -7,7 +7,8 @@
   <div class="header-right">
     <span id="connection" class="connection">Connecting…</span>
     <select id="mode" aria-label="Run mode" disabled>
-      <option value="reference">Exact reference</option>
+      <option value="recorded" selected>Recorded backend run</option>
+      <option value="reference">Exact classical reference</option>
       <option id="live-mode" value="live">Live backend</option>
     </select>
   </div>
@@ -22,7 +23,7 @@
     <label class="sr-only" for="prompt">Original prompt</label>
     <textarea id="prompt" required maxlength="10000" placeholder="What would you like to optimize?"></textarea>
     <p id="mode-note" class="hint"></p>
-    <button class="primary" id="generate" type="submit" disabled>Load exact reference</button>
+    <button class="primary" id="generate" type="submit" disabled>Load recorded example</button>
   </form>
   <div class="problem-block">
     <h3>Problem statement</h3>
@@ -33,7 +34,7 @@
     <h3>Adjust the plan</h3>
     <div id="variables"></div>
     <p id="applied-settings" class="hint"></p>
-    <button class="secondary" id="rerun" type="button" disabled>Apply and recalculate</button>
+    <button class="secondary" id="rerun" type="button" disabled>Load recorded result</button>
   </div>
   <div id="run-status">
     <p id="status" role="status" aria-live="polite">Connecting…</p>
@@ -75,7 +76,7 @@
 <details class="panel run-details">
   <summary>Results &amp; technical details</summary>
   <div class="detail-body">
-    <div class="explanation"><h3>Plan notes</h3><p id="explanation"></p></div>
+    <div class="explanation"><h3>Plan notes</h3><p id="explanation"></p><p id="result-source" class="hint" hidden></p></div>
     <h3>Vans</h3><div id="fleet" class="fleet"></div>
     <h3>Schedule</h3><div id="timeline" class="timeline"></div>
     <h3>Costs</h3><div id="costs" class="costs"></div>

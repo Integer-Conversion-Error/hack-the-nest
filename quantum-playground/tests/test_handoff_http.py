@@ -110,6 +110,44 @@ class HandoffTests(unittest.TestCase):
             self.assertEqual(json.loads(response.headers["X-Pygame-Scene"])["minute"], 60)
             return response.read()
 
+    def test_recorded_run_and_control_use_backend_measurements_without_a_service(self):
+        with patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}):
+            with self.request("/api/example") as response:
+                example = json.load(response)
+            with self.request("/api/run", {"prompt": example["prompt"]}) as response:
+                first = json.load(response)
+            updated = self.run_plan("recorded", view_id=first["view_id"], variables={CONTROL_ID: 20})
+
+        self.assertEqual(first["mode"], "recorded")
+        self.assertEqual(first["run_id"], updated["run_id"])
+        self.assertEqual(first["plan_id"], updated["plan_id"])
+        self.assertNotEqual(first["attempt_id"], updated["attempt_id"])
+        self.assertNotEqual(first["view_id"], updated["view_id"])
+        for run, charge, cost, qubits, selected, count, file in (
+            (first, 35, 15.783333, 5, "00101", 310, "handoff.json"),
+            (updated, 20, 58.366667, 4, "0110", 491, "test.json"),
+        ):
+            with self.subTest(charge=charge):
+                self.assertEqual(run["provenance"], "recorded")
+                self.assertEqual(run["source"]["file"], file)
+                self.assertEqual(run["effective_values"], {CONTROL_ID: charge})
+                self.assertEqual(run["evaluation"]["objective_value"], cost)
+                self.assertEqual(run["evaluation"]["reference_value"], cost)
+                self.assertEqual(run["evaluation"]["gap"], 0)
+                self.assertEqual(run["quantum"]["actual_qubits"], qubits)
+                self.assertEqual(run["quantum"]["best_bitstring"], selected)
+                self.assertEqual(sum(run["simulation"]["counts"].values()), 2048)
+                self.assertEqual(run["simulation"]["counts"][selected], count)
+        with patch("pygame_renderer.render_png", return_value=b"recorded png") as render:
+            self.assertEqual(self.read_frame(updated["view_id"]), b"recorded png")
+            schedule = render.call_args.args[0]
+            charging = {
+                van["id"]: [(event["start_min"], event["end_min"]) for event in van["events"]
+                            if event["type"] == "charge"]
+                for van in schedule["vans"]
+            }
+            self.assertEqual(charging, {"V1": [(60, 90)], "V2": [(30, 60)]})
+
     def test_reference_dispatch_and_recalculation_work_without_backend(self):
         with patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}):
             with self.request("/api/config") as response:

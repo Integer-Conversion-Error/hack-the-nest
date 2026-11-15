@@ -1,0 +1,1185 @@
+{
+  "runs": [
+    {
+      "command": "python main.py",
+      "controls": {},
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 13.59,
+      "stdout_tail": "EV Fleet Dispatch QAOA completed (van_2_initial_charge_pct=35%).\nSelected options : ['Van1_Slot1', 'Van2_Direct']\nQuantum total    : $15.7833 USD\nClassical ref    : $15.7833 USD (matches=True)\nQuantum circuit  : 5 qubits, p=2, 2048 shots, 36 runs, best='00101' (15.9%)\nAnimation        : dispatch_animation.html\nRuntime          : 12.04s",
+      "stderr_tail": "",
+      "results": {
+        "status": "ok",
+        "error": null,
+        "controls": {
+          "van_2_initial_charge_pct": 35
+        },
+        "objective": {
+          "value": 15.783333,
+          "unit": "USD",
+          "direction": "minimize"
+        },
+        "solution": {
+          "selected_options": [
+            "Van1_Slot1",
+            "Van2_Direct"
+          ],
+          "vans": [
+            {
+              "qubit_index": 0,
+              "option_id": "Van1_Slot1",
+              "van_id": 1,
+              "van_name": "Van 1",
+              "mode": "Slot 1",
+              "charger_slot": 1,
+              "feasible": true,
+              "initial_soc_kwh": 4.0,
+              "initial_soc_pct": 20.0,
+              "total_distance_km": 4.0,
+              "energy_charged_kwh": 5.0,
+              "wait_minutes": 29.0,
+              "late_minutes": 0.0,
+              "delivery_completion_min": 68.0,
+              "delivery_completion_time": "09:08",
+              "depot_return_min": 72.0,
+              "depot_return_time": "09:12",
+              "min_soc_kwh": 3.85,
+              "min_soc_pct": 19.25,
+              "final_soc_kwh": 7.8,
+              "final_soc_pct": 39.0,
+              "driving_cost": 1.2,
+              "electricity_cost": 1.0,
+              "waiting_cost": 12.083333,
+              "late_penalty": 0.0,
+              "total_cost": 14.283333,
+              "legs": [
+                {
+                  "leg_type": "drive",
+                  "description": "Van 1 drives Depot -> Charger (2, 1)",
+                  "start_coord": [
+                    2,
+                    2
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 0.0,
+                  "end_min": 1.0,
+                  "start_time_str": "08:00",
+                  "end_time_str": "08:01",
+                  "distance_km": 0.5,
+                  "energy_delta_kwh": -0.15,
+                  "soc_start_kwh": 4.0,
+                  "soc_end_kwh": 3.85
+                },
+                {
+                  "leg_type": "wait",
+                  "description": "Van 1 waits at Charger for Slot 1",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 1.0,
+                  "end_min": 30.0,
+                  "start_time_str": "08:01",
+                  "end_time_str": "08:30",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 3.85,
+                  "soc_end_kwh": 3.85
+                },
+                {
+                  "leg_type": "charge",
+                  "description": "Van 1 charges in Slot 1",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 30.0,
+                  "end_min": 60.0,
+                  "start_time_str": "08:30",
+                  "end_time_str": "09:00",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 5.0,
+                  "soc_start_kwh": 3.85,
+                  "soc_end_kwh": 8.85
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 1 drives Charger -> Delivery (0, 0)",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    0,
+                    0
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      0,
+                      1
+                    ],
+                    [
+                      0,
+                      0
+                    ]
+                  ],
+                  "start_min": 60.0,
+                  "end_min": 63.0,
+                  "start_time_str": "09:00",
+                  "end_time_str": "09:03",
+                  "distance_km": 1.5,
+                  "energy_delta_kwh": -0.44999999999999996,
+                  "soc_start_kwh": 8.85,
+                  "soc_end_kwh": 8.4
+                },
+                {
+                  "leg_type": "deliver",
+                  "description": "Van 1 completes delivery at (0, 0)",
+                  "start_coord": [
+                    0,
+                    0
+                  ],
+                  "end_coord": [
+                    0,
+                    0
+                  ],
+                  "path": [
+                    [
+                      0,
+                      0
+                    ]
+                  ],
+                  "start_min": 63.0,
+                  "end_min": 68.0,
+                  "start_time_str": "09:03",
+                  "end_time_str": "09:08",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 8.4,
+                  "soc_end_kwh": 8.4
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 1 returns Delivery -> Depot (2, 2)",
+                  "start_coord": [
+                    0,
+                    0
+                  ],
+                  "end_coord": [
+                    2,
+                    2
+                  ],
+                  "path": [
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      1,
+                      0
+                    ],
+                    [
+                      2,
+                      0
+                    ],
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ]
+                  ],
+                  "start_min": 68.0,
+                  "end_min": 72.0,
+                  "start_time_str": "09:08",
+                  "end_time_str": "09:12",
+                  "distance_km": 2.0,
+                  "energy_delta_kwh": -0.6,
+                  "soc_start_kwh": 8.4,
+                  "soc_end_kwh": 7.800000000000001
+                }
+              ]
+            },
+            {
+              "qubit_index": 2,
+              "option_id": "Van2_Direct",
+              "van_id": 2,
+              "van_name": "Van 2",
+              "mode": "Direct",
+              "charger_slot": null,
+              "feasible": true,
+              "initial_soc_kwh": 7.0,
+              "initial_soc_pct": 35.0,
+              "total_distance_km": 5.0,
+              "energy_charged_kwh": 0.0,
+              "wait_minutes": 0.0,
+              "late_minutes": 0.0,
+              "delivery_completion_min": 10.0,
+              "delivery_completion_time": "08:10",
+              "depot_return_min": 15.0,
+              "depot_return_time": "08:15",
+              "min_soc_kwh": 5.5,
+              "min_soc_pct": 27.5,
+              "final_soc_kwh": 5.5,
+              "final_soc_pct": 27.5,
+              "driving_cost": 1.5,
+              "electricity_cost": 0.0,
+              "waiting_cost": 0.0,
+              "late_penalty": 0.0,
+              "total_cost": 1.5,
+              "legs": [
+                {
+                  "leg_type": "drive",
+                  "description": "Van 2 drives Depot -> Delivery (5, 0)",
+                  "start_coord": [
+                    2,
+                    2
+                  ],
+                  "end_coord": [
+                    5,
+                    0
+                  ],
+                  "path": [
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      2
+                    ],
+                    [
+                      4,
+                      2
+                    ],
+                    [
+                      5,
+                      2
+                    ],
+                    [
+                      5,
+                      1
+                    ],
+                    [
+                      5,
+                      0
+                    ]
+                  ],
+                  "start_min": 0.0,
+                  "end_min": 5.0,
+                  "start_time_str": "08:00",
+                  "end_time_str": "08:05",
+                  "distance_km": 2.5,
+                  "energy_delta_kwh": -0.75,
+                  "soc_start_kwh": 7.0,
+                  "soc_end_kwh": 6.25
+                },
+                {
+                  "leg_type": "deliver",
+                  "description": "Van 2 completes delivery at (5, 0)",
+                  "start_coord": [
+                    5,
+                    0
+                  ],
+                  "end_coord": [
+                    5,
+                    0
+                  ],
+                  "path": [
+                    [
+                      5,
+                      0
+                    ]
+                  ],
+                  "start_min": 5.0,
+                  "end_min": 10.0,
+                  "start_time_str": "08:05",
+                  "end_time_str": "08:10",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 6.25,
+                  "soc_end_kwh": 6.25
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 2 returns Delivery -> Depot (2, 2)",
+                  "start_coord": [
+                    5,
+                    0
+                  ],
+                  "end_coord": [
+                    2,
+                    2
+                  ],
+                  "path": [
+                    [
+                      5,
+                      0
+                    ],
+                    [
+                      4,
+                      0
+                    ],
+                    [
+                      3,
+                      0
+                    ],
+                    [
+                      2,
+                      0
+                    ],
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ]
+                  ],
+                  "start_min": 10.0,
+                  "end_min": 15.0,
+                  "start_time_str": "08:10",
+                  "end_time_str": "08:15",
+                  "distance_km": 2.5,
+                  "energy_delta_kwh": -0.75,
+                  "soc_start_kwh": 6.25,
+                  "soc_end_kwh": 5.5
+                }
+              ]
+            }
+          ],
+          "charger_bookings": {
+            "slot_1": "Van1_Slot1",
+            "slot_2": null
+          },
+          "cost_breakdown": {
+            "driving_cost": 2.7,
+            "electricity_cost": 1.0,
+            "waiting_cost": 12.083333,
+            "late_penalty": 0.0,
+            "total_cost": 15.783333
+          },
+          "pruned_infeasible_options": [
+            {
+              "option_id": "Van1_Direct",
+              "van_id": 1,
+              "mode": "Direct",
+              "reason": "Minimum SoC 2.800 kWh violates 3.000 kWh (15%) floor"
+            }
+          ],
+          "verification": {
+            "feasible": true,
+            "violations": [],
+            "independent_cost_breakdown": {
+              "driving_cost": 2.7,
+              "electricity_cost": 1.0,
+              "waiting_cost": 12.083333,
+              "late_penalty": 0.0,
+              "total_cost": 15.783333
+            },
+            "cost_discrepancy_usd": 0.0,
+            "optimality_gap_usd": 0.0,
+            "matches_classical_optimum": true,
+            "circuit_width": {
+              "total_qubits": 5,
+              "decision_qubits": 5,
+              "auxiliary_qubits": 0
+            },
+            "qubo_exhaustive_sweep": {
+              "states_evaluated": 32,
+              "min_qubo_energy": 15.783333,
+              "matches_reference_optimum": true,
+              "ground_state_count": 1
+            }
+          },
+          "animation_path": "dispatch_animation.html"
+        },
+        "animation_path": "dispatch_animation.html",
+        "reference": {
+          "method": "Exact classical enumeration over all candidate route-and-charging pairs",
+          "objective_value": 15.783333,
+          "unit": "USD",
+          "selected_options": [
+            "Van1_Slot1",
+            "Van2_Direct"
+          ],
+          "selected_modes": {
+            "van_1": "Slot 1",
+            "van_2": "Direct"
+          },
+          "cost_breakdown": {
+            "driving_cost": 2.7,
+            "electricity_cost": 1.0,
+            "waiting_cost": 12.083333,
+            "late_penalty": 0.0,
+            "total_cost": 15.783333
+          },
+          "feasible_pair_count": 4,
+          "all_feasible_pairs": [
+            {
+              "selected_options": [
+                "Van1_Slot1",
+                "Van2_Direct"
+              ],
+              "total_cost": 15.783333
+            },
+            {
+              "selected_options": [
+                "Van1_Slot2",
+                "Van2_Direct"
+              ],
+              "total_cost": 36.283333
+            },
+            {
+              "selected_options": [
+                "Van1_Slot2",
+                "Van2_Slot1"
+              ],
+              "total_cost": 58.366667
+            },
+            {
+              "selected_options": [
+                "Van1_Slot1",
+                "Van2_Slot2"
+              ],
+              "total_cost": 80.366667
+            }
+          ],
+          "matches_quantum_solution": true
+        },
+        "quantum": {
+          "method": "Post-Filtered One-Hot Penalty QAOA (QuantumRingsLib)",
+          "qubits": 5,
+          "decision_qubits": 5,
+          "auxiliary_qubits": 0,
+          "p_layers": 2,
+          "shots": 2048,
+          "circuit_runs": 36,
+          "counts": {
+            "00000": 159,
+            "00001": 303,
+            "00010": 189,
+            "00011": 4,
+            "00100": 128,
+            "00101": 326,
+            "00110": 249,
+            "00111": 9,
+            "01000": 120,
+            "01001": 50,
+            "01010": 210,
+            "01011": 1,
+            "01100": 1,
+            "01101": 3,
+            "01110": 2,
+            "10000": 70,
+            "10001": 170,
+            "10010": 21,
+            "10110": 4,
+            "11000": 3,
+            "11001": 6,
+            "11010": 8,
+            "11100": 4,
+            "11101": 6,
+            "11110": 2
+          },
+          "best_bitstring": "00101",
+          "best_bitstring_share": 0.15918,
+          "feasible_shot_share": 0.466309,
+          "raw_most_frequent_bitstring": "00101",
+          "raw_most_frequent_share": 0.15918,
+          "optimal_gammas": [
+            0.00237764,
+            0.00642282
+          ],
+          "optimal_betas": [
+            -0.55526617,
+            -0.28239975
+          ],
+          "optimal_ising_energy": 130.221916,
+          "endianness_check_passed": true,
+          "ising_equivalence_max_error": 2.2737367544323206e-13,
+          "qubit_mapping": {
+            "q0": "Van1_Slot1",
+            "q1": "Van1_Slot2",
+            "q2": "Van2_Direct",
+            "q3": "Van2_Slot1",
+            "q4": "Van2_Slot2"
+          }
+        },
+        "runtime_seconds": 12.0435
+      },
+      "issues": []
+    },
+    {
+      "command": "python main.py --van_2_initial_charge_pct 20",
+      "controls": {
+        "van_2_initial_charge_pct": 20
+      },
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 14.34,
+      "stdout_tail": "EV Fleet Dispatch QAOA completed (van_2_initial_charge_pct=20%).\nSelected options : ['Van1_Slot2', 'Van2_Slot1']\nQuantum total    : $58.3667 USD\nClassical ref    : $58.3667 USD (matches=True)\nQuantum circuit  : 4 qubits, p=2, 2048 shots, 40 runs, best='0110' (24.0%)\nAnimation        : dispatch_animation.html\nRuntime          : 12.85s",
+      "stderr_tail": "",
+      "results": {
+        "status": "ok",
+        "error": null,
+        "controls": {
+          "van_2_initial_charge_pct": 20
+        },
+        "objective": {
+          "value": 58.366667,
+          "unit": "USD",
+          "direction": "minimize"
+        },
+        "solution": {
+          "selected_options": [
+            "Van1_Slot2",
+            "Van2_Slot1"
+          ],
+          "vans": [
+            {
+              "qubit_index": 1,
+              "option_id": "Van1_Slot2",
+              "van_id": 1,
+              "van_name": "Van 1",
+              "mode": "Slot 2",
+              "charger_slot": 2,
+              "feasible": true,
+              "initial_soc_kwh": 4.0,
+              "initial_soc_pct": 20.0,
+              "total_distance_km": 4.0,
+              "energy_charged_kwh": 5.0,
+              "wait_minutes": 59.0,
+              "late_minutes": 8.0,
+              "delivery_completion_min": 98.0,
+              "delivery_completion_time": "09:38",
+              "depot_return_min": 102.0,
+              "depot_return_time": "09:42",
+              "min_soc_kwh": 3.85,
+              "min_soc_pct": 19.25,
+              "final_soc_kwh": 7.8,
+              "final_soc_pct": 39.0,
+              "driving_cost": 1.2,
+              "electricity_cost": 1.0,
+              "waiting_cost": 24.583333,
+              "late_penalty": 8.0,
+              "total_cost": 34.783333,
+              "legs": [
+                {
+                  "leg_type": "drive",
+                  "description": "Van 1 drives Depot -> Charger (2, 1)",
+                  "start_coord": [
+                    2,
+                    2
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 0.0,
+                  "end_min": 1.0,
+                  "start_time_str": "08:00",
+                  "end_time_str": "08:01",
+                  "distance_km": 0.5,
+                  "energy_delta_kwh": -0.15,
+                  "soc_start_kwh": 4.0,
+                  "soc_end_kwh": 3.85
+                },
+                {
+                  "leg_type": "wait",
+                  "description": "Van 1 waits at Charger for Slot 2",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 1.0,
+                  "end_min": 60.0,
+                  "start_time_str": "08:01",
+                  "end_time_str": "09:00",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 3.85,
+                  "soc_end_kwh": 3.85
+                },
+                {
+                  "leg_type": "charge",
+                  "description": "Van 1 charges in Slot 2",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 60.0,
+                  "end_min": 90.0,
+                  "start_time_str": "09:00",
+                  "end_time_str": "09:30",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 5.0,
+                  "soc_start_kwh": 3.85,
+                  "soc_end_kwh": 8.85
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 1 drives Charger -> Delivery (0, 0)",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    0,
+                    0
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      0,
+                      1
+                    ],
+                    [
+                      0,
+                      0
+                    ]
+                  ],
+                  "start_min": 90.0,
+                  "end_min": 93.0,
+                  "start_time_str": "09:30",
+                  "end_time_str": "09:33",
+                  "distance_km": 1.5,
+                  "energy_delta_kwh": -0.44999999999999996,
+                  "soc_start_kwh": 8.85,
+                  "soc_end_kwh": 8.4
+                },
+                {
+                  "leg_type": "deliver",
+                  "description": "Van 1 completes delivery at (0, 0)",
+                  "start_coord": [
+                    0,
+                    0
+                  ],
+                  "end_coord": [
+                    0,
+                    0
+                  ],
+                  "path": [
+                    [
+                      0,
+                      0
+                    ]
+                  ],
+                  "start_min": 93.0,
+                  "end_min": 98.0,
+                  "start_time_str": "09:33",
+                  "end_time_str": "09:38",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 8.4,
+                  "soc_end_kwh": 8.4
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 1 returns Delivery -> Depot (2, 2)",
+                  "start_coord": [
+                    0,
+                    0
+                  ],
+                  "end_coord": [
+                    2,
+                    2
+                  ],
+                  "path": [
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      1,
+                      0
+                    ],
+                    [
+                      2,
+                      0
+                    ],
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ]
+                  ],
+                  "start_min": 98.0,
+                  "end_min": 102.0,
+                  "start_time_str": "09:38",
+                  "end_time_str": "09:42",
+                  "distance_km": 2.0,
+                  "energy_delta_kwh": -0.6,
+                  "soc_start_kwh": 8.4,
+                  "soc_end_kwh": 7.800000000000001
+                }
+              ]
+            },
+            {
+              "qubit_index": 2,
+              "option_id": "Van2_Slot1",
+              "van_id": 2,
+              "van_name": "Van 2",
+              "mode": "Slot 1",
+              "charger_slot": 1,
+              "feasible": true,
+              "initial_soc_kwh": 4.0,
+              "initial_soc_pct": 20.0,
+              "total_distance_km": 5.0,
+              "energy_charged_kwh": 5.0,
+              "wait_minutes": 29.0,
+              "late_minutes": 9.0,
+              "delivery_completion_min": 69.0,
+              "delivery_completion_time": "09:09",
+              "depot_return_min": 74.0,
+              "depot_return_time": "09:14",
+              "min_soc_kwh": 3.85,
+              "min_soc_pct": 19.25,
+              "final_soc_kwh": 7.5,
+              "final_soc_pct": 37.5,
+              "driving_cost": 1.5,
+              "electricity_cost": 1.0,
+              "waiting_cost": 12.083333,
+              "late_penalty": 9.0,
+              "total_cost": 23.583333,
+              "legs": [
+                {
+                  "leg_type": "drive",
+                  "description": "Van 2 drives Depot -> Charger (2, 1)",
+                  "start_coord": [
+                    2,
+                    2
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 0.0,
+                  "end_min": 1.0,
+                  "start_time_str": "08:00",
+                  "end_time_str": "08:01",
+                  "distance_km": 0.5,
+                  "energy_delta_kwh": -0.15,
+                  "soc_start_kwh": 4.0,
+                  "soc_end_kwh": 3.85
+                },
+                {
+                  "leg_type": "wait",
+                  "description": "Van 2 waits at Charger for Slot 1",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 1.0,
+                  "end_min": 30.0,
+                  "start_time_str": "08:01",
+                  "end_time_str": "08:30",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 3.85,
+                  "soc_end_kwh": 3.85
+                },
+                {
+                  "leg_type": "charge",
+                  "description": "Van 2 charges in Slot 1",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    2,
+                    1
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ]
+                  ],
+                  "start_min": 30.0,
+                  "end_min": 60.0,
+                  "start_time_str": "08:30",
+                  "end_time_str": "09:00",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 5.0,
+                  "soc_start_kwh": 3.85,
+                  "soc_end_kwh": 8.85
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 2 drives Charger -> Delivery (5, 0)",
+                  "start_coord": [
+                    2,
+                    1
+                  ],
+                  "end_coord": [
+                    5,
+                    0
+                  ],
+                  "path": [
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      3,
+                      1
+                    ],
+                    [
+                      4,
+                      1
+                    ],
+                    [
+                      5,
+                      1
+                    ],
+                    [
+                      5,
+                      0
+                    ]
+                  ],
+                  "start_min": 60.0,
+                  "end_min": 64.0,
+                  "start_time_str": "09:00",
+                  "end_time_str": "09:04",
+                  "distance_km": 2.0,
+                  "energy_delta_kwh": -0.6,
+                  "soc_start_kwh": 8.85,
+                  "soc_end_kwh": 8.25
+                },
+                {
+                  "leg_type": "deliver",
+                  "description": "Van 2 completes delivery at (5, 0)",
+                  "start_coord": [
+                    5,
+                    0
+                  ],
+                  "end_coord": [
+                    5,
+                    0
+                  ],
+                  "path": [
+                    [
+                      5,
+                      0
+                    ]
+                  ],
+                  "start_min": 64.0,
+                  "end_min": 69.0,
+                  "start_time_str": "09:04",
+                  "end_time_str": "09:09",
+                  "distance_km": 0.0,
+                  "energy_delta_kwh": 0.0,
+                  "soc_start_kwh": 8.25,
+                  "soc_end_kwh": 8.25
+                },
+                {
+                  "leg_type": "drive",
+                  "description": "Van 2 returns Delivery -> Depot (2, 2)",
+                  "start_coord": [
+                    5,
+                    0
+                  ],
+                  "end_coord": [
+                    2,
+                    2
+                  ],
+                  "path": [
+                    [
+                      5,
+                      0
+                    ],
+                    [
+                      4,
+                      0
+                    ],
+                    [
+                      3,
+                      0
+                    ],
+                    [
+                      2,
+                      0
+                    ],
+                    [
+                      2,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ]
+                  ],
+                  "start_min": 69.0,
+                  "end_min": 74.0,
+                  "start_time_str": "09:09",
+                  "end_time_str": "09:14",
+                  "distance_km": 2.5,
+                  "energy_delta_kwh": -0.75,
+                  "soc_start_kwh": 8.25,
+                  "soc_end_kwh": 7.5
+                }
+              ]
+            }
+          ],
+          "charger_bookings": {
+            "slot_1": "Van2_Slot1",
+            "slot_2": "Van1_Slot2"
+          },
+          "cost_breakdown": {
+            "driving_cost": 2.7,
+            "electricity_cost": 2.0,
+            "waiting_cost": 36.666667,
+            "late_penalty": 17.0,
+            "total_cost": 58.366667
+          },
+          "pruned_infeasible_options": [
+            {
+              "option_id": "Van1_Direct",
+              "van_id": 1,
+              "mode": "Direct",
+              "reason": "Minimum SoC 2.800 kWh violates 3.000 kWh (15%) floor"
+            },
+            {
+              "option_id": "Van2_Direct",
+              "van_id": 2,
+              "mode": "Direct",
+              "reason": "Minimum SoC 2.500 kWh violates 3.000 kWh (15%) floor"
+            }
+          ],
+          "verification": {
+            "feasible": true,
+            "violations": [],
+            "independent_cost_breakdown": {
+              "driving_cost": 2.7,
+              "electricity_cost": 2.0,
+              "waiting_cost": 36.666667,
+              "late_penalty": 17.0,
+              "total_cost": 58.366667
+            },
+            "cost_discrepancy_usd": 0.0,
+            "optimality_gap_usd": -0.0,
+            "matches_classical_optimum": true,
+            "circuit_width": {
+              "total_qubits": 4,
+              "decision_qubits": 4,
+              "auxiliary_qubits": 0
+            },
+            "qubo_exhaustive_sweep": {
+              "states_evaluated": 16,
+              "min_qubo_energy": 58.366667,
+              "matches_reference_optimum": true,
+              "ground_state_count": 1
+            }
+          },
+          "animation_path": "dispatch_animation.html"
+        },
+        "animation_path": "dispatch_animation.html",
+        "reference": {
+          "method": "Exact classical enumeration over all candidate route-and-charging pairs",
+          "objective_value": 58.366667,
+          "unit": "USD",
+          "selected_options": [
+            "Van1_Slot2",
+            "Van2_Slot1"
+          ],
+          "selected_modes": {
+            "van_1": "Slot 2",
+            "van_2": "Slot 1"
+          },
+          "cost_breakdown": {
+            "driving_cost": 2.7,
+            "electricity_cost": 2.0,
+            "waiting_cost": 36.666667,
+            "late_penalty": 17.0,
+            "total_cost": 58.366667
+          },
+          "feasible_pair_count": 2,
+          "all_feasible_pairs": [
+            {
+              "selected_options": [
+                "Van1_Slot2",
+                "Van2_Slot1"
+              ],
+              "total_cost": 58.366667
+            },
+            {
+              "selected_options": [
+                "Van1_Slot1",
+                "Van2_Slot2"
+              ],
+              "total_cost": 80.366667
+            }
+          ],
+          "matches_quantum_solution": true
+        },
+        "quantum": {
+          "method": "Post-Filtered One-Hot Penalty QAOA (QuantumRingsLib)",
+          "qubits": 4,
+          "decision_qubits": 4,
+          "auxiliary_qubits": 0,
+          "p_layers": 2,
+          "shots": 2048,
+          "circuit_runs": 40,
+          "counts": {
+            "0000": 165,
+            "0001": 301,
+            "0010": 180,
+            "0011": 18,
+            "0100": 188,
+            "0101": 53,
+            "0110": 491,
+            "0111": 25,
+            "1000": 93,
+            "1001": 434,
+            "1010": 24,
+            "1011": 12,
+            "1100": 19,
+            "1101": 22,
+            "1110": 23
+          },
+          "best_bitstring": "0110",
+          "best_bitstring_share": 0.239746,
+          "feasible_shot_share": 0.45166,
+          "raw_most_frequent_bitstring": "0110",
+          "raw_most_frequent_share": 0.239746,
+          "optimal_gammas": [
+            0.00370735,
+            0.0090387
+          ],
+          "optimal_betas": [
+            -0.55195894,
+            -0.3188171
+          ],
+          "optimal_ising_energy": 151.898812,
+          "endianness_check_passed": true,
+          "ising_equivalence_max_error": 5.684341886080802e-14,
+          "qubit_mapping": {
+            "q0": "Van1_Slot1",
+            "q1": "Van1_Slot2",
+            "q2": "Van2_Slot1",
+            "q3": "Van2_Slot2"
+          }
+        },
+        "runtime_seconds": 12.845
+      },
+      "issues": []
+    }
+  ],
+  "semantics": {
+    "verdict": "matches",
+    "summary": "The solver accurately models and solves the EV fleet dispatch and charging scheduling problem using QAOA on Quantum Rings, matching exact classical enumeration for both Van 2 starting battery charge regimes (35% and 20%). All problem constants, objective cost weights, hard constraints, quantum measurement outputs, and interactive animation requirements are faithfully implemented and reported.",
+    "checks_done": [
+      "Recomputed Van 1 Direct round-trip distance (4.0 km), energy consumption (1.20 kWh), and minimum SoC (2.80 kWh < 3.00 kWh 15% floor), matching pruned_infeasible_options in results.json.",
+      "Recomputed Van 1 Slot 1 waiting time (29 min, $12.083333), charging energy (5.0 kWh, $1.00), driving cost (4.0 km, $1.20), and 0 min lateness, plus Van 2 Direct at 35% (5.0 km, $1.50, 0 min lateness), summing to $15.783333 USD and matching results.json for the default run.",
+      "Recomputed Van 1 Slot 2 ($1.20 driving + $1.00 electricity + 59 min waiting $24.583333 + 8 min lateness $8.00 = $34.783333) and Van 2 Slot 1 at 20% ($1.50 driving + $1.00 electricity + 29 min waiting $12.083333 + 9 min lateness $9.00 = $23.583333), summing to $58.366667 USD and matching results.json for the 20% run.",
+      "Checked measured quantum bitstrings ('00101' for 5-qubit 35% run; '0110' for 4-qubit 20% run) against the reported qubit mappings and endianness smoke test, confirming both selected schedules come directly from measured quantum counts."
+    ],
+    "issues": [],
+    "model": "gemini-4-hydrogen"
+  }
+}

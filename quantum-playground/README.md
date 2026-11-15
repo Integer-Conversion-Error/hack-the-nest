@@ -9,8 +9,8 @@ python -m pip install -r quantum-playground/requirements.txt
 python quantum-playground/server.py
 ```
 
-Open **http://127.0.0.1:8000**. The exact classical reference loads with Van 2 starting at 35% charge and a total cost of $15.78. Choose 20% and click **Apply and recalculate** to replay the $58.37 reference. Click vans, the charger, or delivery stops to inspect the schedule.
+Open **http://127.0.0.1:8000**. The dashboard starts with the recorded backend result at 35% starting charge for Van 2. It cost $15.78 and used five qubits. Choose 20% and load the recorded result for the $58.37 run with four qubits. Each replay includes the original paths, battery levels, and 2,048 measurement shots. Click a van, the charger, or a delivery to inspect the schedule.
 
-The reference uses the committed [EV solver plan](../example-solver-plans/ev-fleet-dispatch-optimization.md) and requires only Pygame. For measured results, set `QUANTUM_BACKEND_URL` to a backend that serves the [verified handoff contract](docs/BACKEND_CONTRACT.md). The backend CLI writes a workspace `handoff.json` after GO. Live mode requires an HTTP adapter that translates the CLI handoff to the dashboard contract.
+Both recordings are available locally in [example-backend-final-result](../example-backend-final-result). The separate **Exact classical reference** mode shows the classical schedules from the [EV solver plan](../example-solver-plans/ev-fleet-dispatch-optimization.md). **Live backend** uses `QUANTUM_BACKEND_URL` and the [verified handoff contract](docs/BACKEND_CONTRACT.md).
 
 See the [development guide](docs/DEVELOPMENT.md) for playback controls and checks.

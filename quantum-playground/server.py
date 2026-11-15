@@ -1,4 +1,4 @@
-"""Serve the EV reference and verified backend handoffs on localhost."""
+"""Serve recorded EV results, the classical reference, and live handoffs on localhost."""
 
 import json
 import math
@@ -11,7 +11,8 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from ev_reference import CONTROLS, PROMPT, reference_handoff
+from ev_recorded import RECORDED_CONTROLS, RECORDED_PROMPT, recorded_handoff
+from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
 
 ROOT = Path(__file__).resolve().parent
@@ -75,8 +76,8 @@ def read_view(view_id):
 
 
 def run_plan(data):
-    mode = data.get("mode", "reference")
-    if mode not in ("reference", "live"):
+    mode = data.get("mode", "recorded")
+    if mode not in ("recorded", "reference", "live"):
         raise ValueError("Unknown run mode.")
     overrides = data.get("variables", {})
     if not isinstance(overrides, dict):
@@ -95,11 +96,13 @@ def run_plan(data):
             raise ValueError("Enter a prompt of 1–10,000 characters.")
         if overrides:
             raise ValueError("Start a plan before changing its controls.")
-        if mode == "reference" and prompt != PROMPT:
-            raise ValueError("Load the EV example prompt to run the reference.")
+        if (mode == "recorded" and prompt != RECORDED_PROMPT) or (mode == "reference" and prompt != PROMPT):
+            raise ValueError("Load the EV example prompt to replay the example.")
 
     attempt_id = None
-    if mode == "reference":
+    if mode == "recorded":
+        handoff = recorded_handoff(values, previous)
+    elif mode == "reference":
         handoff = reference_handoff(values, previous)
     else:
         attempt_id = str(uuid4())
@@ -159,7 +162,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(404, {"error": "No Pygame frame received yet."})
             return self.send_png(frame)
         if url.path == "/api/example":
-            return self.send_json(200, {"prompt": PROMPT, "variables": CONTROLS})
+            return self.send_json(200, {"prompt": RECORDED_PROMPT, "variables": RECORDED_CONTROLS})
         if url.path == "/api/config":
             return self.send_json(200, {"backend_configured": bool(backend_url())})
         return super().do_GET()
