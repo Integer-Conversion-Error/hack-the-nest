@@ -78,3 +78,68 @@ def run_counts(circuit, shots: int = 1024) -> dict[str, int]:
 def bit(bitstring: str, qubit: int) -> int:
     """Value (0 or 1) measured on the given qubit in a bitstring from run_counts."""
     return int(bitstring[len(bitstring) - 1 - qubit])
+
+
+CIRCUIT_DIAGRAM = "circuit.png"
+
+
+def save_circuit_diagram(circuit, qubit_labels=None, section_labels=None, filename: str = CIRCUIT_DIAGRAM) -> dict:
+    """Save a picture of a circuit in the workspace folder and describe the circuit.
+
+    qubit_labels: optional short name for each qubit, in qubit order, such as
+    ["Ava", "Ben"] or ["van1_morning", "van1_evening"]. Shown beside each wire.
+
+    section_labels: optional name for each circuit.barrier() in the circuit, in
+    order, such as ["cost 1", "mixer 1", "measure"]. Each barrier is drawn as a
+    divider with its name above it, so put a barrier BEFORE each stage and name
+    it after that stage. Barriers do not change the measured results.
+
+    Returns {"file", "qubits", "depth", "gate_counts"}; put it in results.json
+    under quantum.circuit_diagram. Call it once, on the final circuit.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")  # draw to a file, never open a window
+    import matplotlib.pyplot as plt
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister, qasm2
+
+    try:
+        parsed = qasm2.loads(circuit.qasm(), custom_instructions=qasm2.LEGACY_CUSTOM_INSTRUCTIONS)
+        labels = [str(label) for label in (qubit_labels or [])]
+        if len(labels) != parsed.num_qubits or len(set(labels)) != len(labels):
+            labels = [f"q{index}" for index in range(parsed.num_qubits)]
+        sections = [str(label) for label in (section_labels or [])]
+
+        # Redraw gate by gate: named wires, and each run of barriers as one named divider.
+        drawing = QuantumCircuit(*(QuantumRegister(1, label) for label in labels))
+        if parsed.num_clbits:
+            drawing.add_register(ClassicalRegister(parsed.num_clbits, "result"))
+        gates_only = parsed.copy_empty_like()
+        dividers = 0
+        in_divider = False
+        for instruction in parsed.data:
+            if instruction.operation.name == "barrier":
+                if not in_divider:
+                    drawing.barrier(label=sections[dividers] if dividers < len(sections) else None)
+                    dividers += 1
+                in_divider = True
+                continue
+            in_divider = False
+            gates_only.append(instruction)
+            drawing.append(
+                instruction.operation,
+                [drawing.qubits[parsed.find_bit(qubit).index] for qubit in instruction.qubits],
+                [drawing.clbits[parsed.find_bit(clbit).index] for clbit in instruction.clbits],
+            )
+        figure = drawing.draw("mpl", fold=30, style="iqp")
+        figure.savefig(filename, dpi=110, bbox_inches="tight")
+        plt.close(figure)
+    except Exception as error:  # every drawing problem is reported the same way
+        raise QuantumRingsError(f"Could not draw the circuit: {error}") from error
+
+    return {
+        "file": filename,
+        "qubits": int(parsed.num_qubits),
+        "depth": int(gates_only.depth()),
+        "gate_counts": {str(name): int(count) for name, count in gates_only.count_ops().items()},
+    }

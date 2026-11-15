@@ -40,7 +40,7 @@ from backend.problem_statement import (
     parse_problem_statement,
 )
 from backend.prompt_loader import PromptError, load_prompt
-from backend.runner import RESULTS_JSON
+from backend.runner import CIRCUIT_DIAGRAM, RESULTS_JSON
 from backend.testing import TestNotPassed, run_test_phase
 from backend.workspace import Workspace, WorkspaceError, init_workspace, open_workspace
 
@@ -91,6 +91,7 @@ def write_handoff(workspace: Workspace, decision: FinalDecision) -> dict:
         },
         "controls": [control.model_dump(mode="json") for control in planning.plan.controls],
         "rerun_command": f"python {ENTRY_POINT} --<control key> <value>",
+        "circuit_diagram": CIRCUIT_DIAGRAM,  # picture of the final circuit, in the workspace folder
         "results": json.loads(workspace.resolve(RESULTS_JSON).read_text(encoding="utf-8")),
         "final_checks": [{"name": check.name, "summary": check.summary} for check in decision.checks],
     }

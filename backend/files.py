@@ -21,7 +21,7 @@ from backend.workspace import Workspace, WorkspaceError
 READ_ONLY_FILES = frozenset(
     {
         "prompt.md", "meta.json", "problem.json", "PROBLEM.md", "plan.json", "PLAN.md",
-        "qr_runtime.py", "build.json", "build_review.json", "results.json", "test.json", "final.json", "handoff.json",
+        "qr_runtime.py", "build.json", "build_review.json", "results.json", "circuit.png", "test.json", "final.json", "handoff.json",
     }
 )
 WRITABLE_SUFFIXES = frozenset({".py", ".json", ".md", ".txt"})
