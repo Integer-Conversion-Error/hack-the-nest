@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const colors = ['#8af1d0','#a0abff','#ffc177','#fa8faf'];
+const colors = ['#185f55', '#315b8f', '#8a4d27', '#75527c'];
 const provenanceLabels = {
   classical_reference: 'Exact reference',
   live: 'Live run',
@@ -120,7 +120,7 @@ function clock(m) {
 
 function setPlaying(value) {
   playing = value;
-  $('play').textContent = value ? 'Ⅱ Pause' : '▶ Play';
+  $('play').textContent = value ? 'Pause' : 'Play';
   $('play').setAttribute('aria-pressed', String(value));
 }
 
@@ -383,7 +383,7 @@ function updatePlayback() {
     writeText(status, state.status);
     writeText(energy, state.battery.toFixed(1) + ' kWh · ' + percent.toFixed(0) + '%');
     fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
-    fill.style.background = percent < sim.reserve_pct ? '#ff7d91' : color;
+    fill.style.background = percent < sim.reserve_pct ? 'var(--danger)' : color;
   });
   $('timeline').style.setProperty('--playhead', minute / sim.duration_min * 100 + '%');
   updateInspector();

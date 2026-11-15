@@ -8,12 +8,15 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">◈</span> <span>Fleet Lab</span></a>
-  <select id="mode" aria-label="Run mode" disabled>
-    <option value="recorded" selected>Recorded backend run</option>
-    <option value="reference">Exact classical reference</option>
-    <option id="live-mode" value="live">Live backend</option>
-  </select>
+  <a class="brand" href="/">Fleet Lab</a>
+  <div class="mode-control">
+    <label for="mode" aria-hidden="true">Mode</label>
+    <select id="mode" aria-label="Run mode" disabled>
+      <option value="recorded" selected>Recorded backend run</option>
+      <option value="reference">Exact classical reference</option>
+      <option id="live-mode" value="live">Live backend</option>
+    </select>
+  </div>
 </header>
 <main>
   <h1>EV fleet dispatch</h1>

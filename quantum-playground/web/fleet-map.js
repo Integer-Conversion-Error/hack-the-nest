@@ -3,16 +3,26 @@
   'use strict';
 
   const palette = {
-    background: '#0b1520',
-    street: '#1b2c3a',
-    curb: '#263b4b',
-    block: '#132330',
-    blockEdge: '#1d3241',
-    park: '#162b30',
-    label: '#dce9f0',
-    quiet: '#7791a5',
-    charge: '#f7c671',
-    delivered: '#9ae7bf',
+    background: '#f4f5f3',
+    parcel: '#eceee8',
+    street: '#fcfdfb',
+    curb: '#c2cbc4',
+    block: '#e6e8e1',
+    blockEdge: '#d5d9d0',
+    building: '#d8ded5',
+    park: '#e1e8da',
+    trees: '#c9d8c4',
+    surface: '#fff',
+    labelBorder: '#bec8c2',
+    depot: '#455e64',
+    charger: '#1e5147',
+    charge: '#42724f',
+    chargeFill: '#e1ebdf',
+    delivered: '#285941',
+    deliveredFill: '#e7eee2',
+    pending: '#52636a',
+    vehicleEdge: '#303e40',
+    windshield: '#526970',
   };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -122,15 +132,12 @@
 
   function drawBase(context, grid, view) {
     const { width, height, cell, left, top, right, bottom } = view;
-    const shade = context.createLinearGradient(0, 0, width, height);
-    shade.addColorStop(0, '#0d1a26');
-    shade.addColorStop(1, palette.background);
-    context.fillStyle = shade;
+    context.fillStyle = palette.background;
     context.fillRect(0, 0, width, height);
 
-    const inset = Math.min(24, cell * 0.45);
+    const inset = Math.min(20, cell * 0.45);
     rounded(context, left - inset, top - inset, right - left + inset * 2,
-      bottom - top + inset * 2, Math.min(13, inset * 0.55), '#0e1c28', '#223544');
+      bottom - top + inset * 2, Math.min(3, inset), palette.parcel, palette.blockEdge);
 
     const pavement = clamp(cell * 0.29, 2, 18);
     const blockInset = pavement * 0.7;
@@ -141,18 +148,18 @@
           const px = left + x * cell + blockInset;
           const py = top + y * cell + blockInset;
           const green = (x + y * 3) % 5 === 2;
-          rounded(context, px, py, blockSize, blockSize, Math.min(6, blockSize * 0.14),
+          rounded(context, px, py, blockSize, blockSize, Math.min(2, blockSize * 0.14),
             green ? palette.park : palette.block, palette.blockEdge);
           if (blockSize > 23) {
             const unit = blockSize / 5;
             if (green) {
-              circle(context, px + unit * 1.5, py + unit * 1.5, unit * 0.55, '#25434a');
-              circle(context, px + unit * 3.4, py + unit * 2.7, unit * 0.7, '#25434a');
-              circle(context, px + unit * 1.8, py + unit * 3.4, unit * 0.45, '#25434a');
+              circle(context, px + unit * 1.5, py + unit * 1.5, unit * 0.55, palette.trees);
+              circle(context, px + unit * 3.4, py + unit * 2.7, unit * 0.7, palette.trees);
+              circle(context, px + unit * 1.8, py + unit * 3.4, unit * 0.45, palette.trees);
             } else {
-              rounded(context, px + unit, py + unit, unit * 3, unit * 1.1, 2, '#1a2e3d');
-              rounded(context, px + unit, py + unit * 2.7, unit * 1.25, unit * 1.3, 2, '#1a2e3d');
-              rounded(context, px + unit * 2.75, py + unit * 2.7, unit * 1.25, unit * 1.3, 2, '#1a2e3d');
+              rounded(context, px + unit, py + unit, unit * 3, unit * 1.1, 2, palette.building);
+              rounded(context, px + unit, py + unit * 2.7, unit * 1.25, unit * 1.3, 2, palette.building);
+              rounded(context, px + unit * 2.75, py + unit * 2.7, unit * 1.25, unit * 1.3, 2, palette.building);
             }
           }
         }
@@ -169,8 +176,8 @@
     context.lineWidth = pavement;
     context.stroke(streets);
     if (cell >= 27) {
-      context.setLineDash([3, 6]);
-      context.strokeStyle = '#314856';
+      context.setLineDash([2, 5]);
+      context.strokeStyle = '#d1d9d2';
       context.lineWidth = 1;
       context.stroke(streets);
       context.setLineDash([]);
@@ -208,7 +215,7 @@
   }
 
   function label(context, text, x, y, color, size) {
-    context.font = '600 ' + size + 'px "Segoe UI", sans-serif';
+    context.font = '600 ' + size + 'px Inter, "Segoe UI", sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     const pad = size * 0.45;
@@ -216,17 +223,18 @@
     const left = x - width / 2;
     const top = y - size * 0.69;
     const height = size * 1.4;
-    rounded(context, left, top, width, height, size * 0.45, '#0b1721', '#2b4150');
+    rounded(context, left, top, width, height, 2, palette.surface, palette.labelBorder);
     context.fillStyle = color;
     context.fillText(text, x, y + 0.25);
     return { left, top, right: left + width, bottom: top + height };
   }
 
-  function drawStop(context, item, point, marker, minute, playing, target, view) {
+  function drawStop(context, item, point, marker, target, view) {
     const [anchorX, anchorY] = point;
     const { kind, id, done, active } = item;
     const tint = active ? palette.charge : done ? palette.delivered
-      : kind === 'charger' ? '#80e5d4' : kind === 'depot' ? '#8ebaf5' : '#bdcadb';
+      : kind === 'charger' ? palette.charger : kind === 'depot' ? palette.depot : palette.pending;
+    const fill = active ? palette.chargeFill : done ? palette.deliveredFill : palette.surface;
     const badge = Math.max(5, marker * 0.87);
     const chargingPoint = kind === 'charger';
     const side = anchorX > view.width / 2 ? -1 : 1;
@@ -236,13 +244,7 @@
     line(context, [[x, y], point], tint);
     circle(context, anchorX, anchorY, marker * 0.23, tint);
 
-    const pulse = playing ? (1 + Math.sin(minute * 2.6)) / 2 : 0.3;
-    if (active) {
-      context.globalAlpha = 0.12 + pulse * 0.12;
-      circle(context, x, y, badge + 3 + pulse * 3, tint);
-      context.globalAlpha = 1;
-    }
-    circle(context, x, y, badge, '#10202b', tint, 1.35);
+    circle(context, x, y, badge, fill, tint, active ? 1.8 : 1.35);
 
     const s = badge * 0.45;
     if (kind === 'depot') {
@@ -277,7 +279,7 @@
     const [x, y] = point;
     const tint = vehicle.color;
     if (selected) {
-      circle(context, x, y, marker * 1.25, '#152b38', tint, 1.2);
+      circle(context, x, y, marker * 1.28, palette.surface, tint, 1.4);
     }
     context.save();
     context.translate(x, y);
@@ -286,13 +288,13 @@
     const length = marker * 2.05;
     const width = marker * 1.15;
     const corner = width * 0.22;
-    rounded(context, -length / 2, -width / 2, length, width, corner, '#0b1520', '#070d13');
+    rounded(context, -length / 2, -width / 2, length, width, corner, palette.surface, palette.vehicleEdge);
     rounded(context, -length / 2 + 1, -width / 2 + 1,
       length * 0.63, width - 2, Math.max(1, corner - 1), tint);
     rounded(context, length * 0.14, -width / 2 + 1,
-      length * 0.32, width - 2, Math.max(1, corner - 1), '#dae8f3');
+      length * 0.32, width - 2, Math.max(1, corner - 1), '#e6eae8');
     rounded(context, length * 0.30, -width * 0.26, Math.max(1, length * 0.1),
-      width * 0.52, 1, '#344f66');
+      width * 0.52, 1, palette.windshield);
     context.restore();
     return label(context, vehicle.van.id, x, y + marker * 1.25, tint, clamp(marker * 0.85, 8, 12));
   }
@@ -301,7 +303,6 @@
     const context = canvas.getContext('2d', { alpha: false });
     const background = canvas.ownerDocument.createElement('canvas');
     const baseContext = background.getContext('2d', { alpha: false });
-    const allowPulse = !root.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     let simulation = null;
     let vehicles = [];
     let routePaths = [];
@@ -336,9 +337,9 @@
       return true;
     }
 
-    function draw(minute, selectedVan = null, playing = false) {
+    function draw(minute, selectedVan = null) {
       if (!simulation) return;
-      lastDraw = [minute, selectedVan, playing];
+      lastDraw = [minute, selectedVan];
       const scale = clamp(root.devicePixelRatio || 1, 1, 2.5);
       if ((resized || density !== scale) && !resize(scale)) return;
       context.setTransform(1, 0, 0, 1, 0, 0);
@@ -352,11 +353,8 @@
         const selected = van.id === selectedVan;
         const muted = selectedVan && !selected;
         context.strokeStyle = color;
-        context.globalAlpha = muted ? 0.05 : selected ? 0.28 : 0.15;
-        context.lineWidth = selected ? 7 : 5;
-        context.stroke(route);
-        context.globalAlpha = muted ? 0.22 : selected ? 0.95 : 0.68;
-        context.lineWidth = selected ? 2.4 : 1.55;
+        context.globalAlpha = muted ? 0.23 : selected ? 1 : 0.72;
+        context.lineWidth = selected ? 2.6 : 1.65;
         context.stroke(route);
       });
       context.globalAlpha = 1;
@@ -372,7 +370,7 @@
       hitTargets = [];
       const stop = item => {
         const target = item.kind === 'depot' ? null : { kind: item.kind, id: item.id };
-        drawStop(context, item, view.point(item.position), marker, minute, playing && allowPulse, target, view);
+        drawStop(context, item, view.point(item.position), marker, target, view);
         if (target) hitTargets.push(target);
       };
       stop({ kind: 'depot', position: simulation.depot });
