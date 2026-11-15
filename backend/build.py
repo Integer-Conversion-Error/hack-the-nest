@@ -85,9 +85,12 @@ class BuildResult(BaseModel):
     feedback: str | None = None
 
 
-def build_contract(planning) -> str:
+def build_contract(planning, workspace: Workspace | None = None) -> str:
     """The rules every build must follow, shared by the builder and the plan reviewer."""
-    return load_prompt("build.contract", max_qubits=planning.max_qubits, worker_seconds=planning.worker_seconds)
+    contract = load_prompt("build.contract", max_qubits=planning.max_qubits, worker_seconds=planning.worker_seconds)
+    if workspace is not None and workspace.meta.get("scene_type") == "ev_fleet":
+        contract += "\n\n" + load_prompt("build.ev_fleet")
+    return contract
 
 
 def gemini_client():
@@ -174,7 +177,7 @@ def run_build(
     shutil.copyfile(TEMPLATES / RUNTIME_HELPER, workspace.resolve(RUNTIME_HELPER))
 
     # Prompts are read from prompts.md now, before Gemini is called.
-    system = load_prompt("build.system", contract=build_contract(planning))
+    system = load_prompt("build.system", contract=build_contract(planning, workspace))
     message = load_prompt(
         "build.user",
         problem=problem.model_dump_json(indent=2),

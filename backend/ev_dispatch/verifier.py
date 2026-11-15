@@ -12,6 +12,8 @@ from typing import Any
 
 import numpy as np
 
+from . import validate_van2_charge_pct
+
 
 RAW_PROBLEM = {
     "grid_bounds": (0, 5),
@@ -181,8 +183,7 @@ def independent_evaluate_pair(van1_mode: str, van2_mode: str, van2_charge_pct: i
 
 def solve_classical_reference(van2_charge_pct: int) -> dict[str, Any]:
     """Exact classical enumeration over all candidate mode pairs from raw problem data."""
-    if van2_charge_pct not in (20, 35):
-        raise ValueError(f"van2_charge_pct must be 20 or 35, got {van2_charge_pct}")
+    validate_van2_charge_pct(van2_charge_pct)
 
     modes = ("Direct", "Slot 1", "Slot 2")
     feasible_pairs: list[dict[str, Any]] = []

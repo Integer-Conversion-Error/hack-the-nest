@@ -113,7 +113,7 @@ def check_plan_against_problem(workspace: Workspace, client, model: str) -> Fina
     planning = load_plan(workspace)
     return _judge(
         client, model, "Plan against the problem statement", "plan",
-        load_prompt("final.plan.system", contract=build_contract(planning)),
+        load_prompt("final.plan.system", contract=build_contract(planning, workspace)),
         load_prompt(
             "final.plan.user",
             problem=load_problem_statement(workspace).model_dump_json(indent=2),

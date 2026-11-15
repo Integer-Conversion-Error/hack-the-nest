@@ -1,4 +1,8 @@
+import sys
 import unittest
+from importlib.util import find_spec
+from pathlib import Path
+from unittest.mock import patch
 
 from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, applied_values, normalize_controls, normalize_handoff
@@ -49,12 +53,30 @@ class PipelineControlsTests(unittest.TestCase):
 
     def test_parses_legacy_numeric_values_and_optional_metadata(self):
         legacy = {"id": "charge", "label": "Charge", "default": 35, "allowed_values": [35, 20],
-                  "rerun_mode": "rebuild", "unit": None, "group": None}
+                  "rerun_mode": "rebuild", "unit": None, "group": " "}
         controls = normalize_controls([legacy])
         self.assertEqual(applied_values(controls, {"charge": 35}, {"charge": 20.0}), {"charge": 20})
         self.assertIs(type(applied_values(controls, {"charge": 35}, {"charge": 20.0})["charge"]), int)
         self.assertNotIn("group", controls[0])
         self.assertEqual(controls[0]["unit"], "")
+
+    @unittest.skipUnless(find_spec("pydantic"), "The planner dependencies are required.")
+    def test_normalizes_planner_controls_before_handoff_validation(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        with patch.object(sys, "path", [str(repo_root), *sys.path]):
+            from backend.plan import PlanControl
+
+        draft = PlanControl.model_validate(definition(
+            "electricity_cost", "number", 0.35, allowed_values=[0.35, 0.55, 0.35], group=" ",
+        ))
+        controls = normalize_controls([draft.model_dump(mode="json"), self.rate])
+        self.assertNotIn("group", controls[0])
+        self.assertEqual(controls[0]["allowed_values"], [0.35, 0.55])
+        self.assertEqual(controls[1]["group"], "Costs")
+        defaults = {"electricity_cost": 0.35, "tariff": self.rate["default"]}
+        self.assertEqual(applied_values(controls, defaults, {"electricity_cost": 0.55}), {
+            "electricity_cost": 0.55, "tariff": 0.25,
+        })
 
     def test_checks_typed_effective_settings_on_a_verified_handoff(self):
         first = reference_handoff({})

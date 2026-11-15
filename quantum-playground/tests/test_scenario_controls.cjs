@@ -49,25 +49,45 @@ const route = {
   allowed_values: ['A', 'B', 'C', 'D', 'E'],
 };
 
-test('small backend enums use labeled radio buttons and preserve value type', () => {
+test('charge choices use a slider that previews approved percentages and commits a number', () => {
   const { pane, find } = fixture();
   let changes = 0;
   const controls = render(pane, [charge], { [charge.id]: 35 }, { onChange: () => changes++ });
-  const standard = find('variable-' + charge.id + '-0');
-  const low = find('variable-' + charge.id + '-1');
-  assert.equal(standard.type, 'radio');
-  assert.equal(low.type, 'radio');
-  assert.equal(standard.checked, true);
+  const slider = find('variable-' + charge.id + '-slider');
+  assert.equal(slider.type, 'range');
+  assert.deepEqual([slider.min, slider.max, slider.step, slider.value], ['0', '1', '1', '1']);
+  assert.equal(slider['aria-valuetext'], '35%');
   assert.equal(controls.automatic, true);
   assert.equal(controls.displayApplied(), '35%');
 
-  standard.checked = false;
-  low.checked = true;
-  low.onchange();
+  slider.value = '0';
+  slider.oninput();
+  assert.equal(slider['aria-valuetext'], '20%');
   assert.deepEqual(controls.values(), { [charge.id]: 20 });
+  assert.equal(changes, 0);
+  slider.onchange();
   assert.equal(changes, 1);
   controls.setDisabled(true);
-  assert.ok(standard.disabled && low.disabled);
+  assert.equal(slider.disabled, true);
+});
+
+test('nonuniform numeric choices snap to approved values in ascending order', () => {
+  const { pane, find } = fixture();
+  const allowed_values = [1.05, 0, 0.2, 0.35, 3.2];
+  const pricedChoices = { id: 'tariff', label: 'Electricity', type: 'number', unit: '$/kWh', allowed_values };
+  const controls = render(pane, [pricedChoices], { tariff: 0.2 });
+  const slider = find('variable-tariff-slider');
+  assert.equal(slider.type, 'range');
+  assert.deepEqual([slider.min, slider.max, slider.step, slider.value], ['0', '4', '1', '1']);
+  assert.deepEqual(allowed_values, [1.05, 0, 0.2, 0.35, 3.2], 'rendering leaves the planner list intact');
+
+  const selected = allowed_values.map((_, index) => {
+    slider.value = String(index);
+    slider.oninput();
+    return controls.values().tariff;
+  });
+  assert.deepEqual(selected, [0, 0.2, 0.35, 1.05, 3.2]);
+  assert.equal(slider['aria-valuetext'], '3.2 $/kWh');
 });
 
 test('range, toggle, and menu use approved values and keep groups initially collapsed', () => {

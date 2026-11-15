@@ -57,7 +57,7 @@ class _RetryableRequestError(PlanningError):
     """A transport or service error can be retried within the planning budget."""
 
 
-def _transport_errors() -> tuple[type[Exception], ...]:
+def gemini_transport_errors() -> tuple[type[Exception], ...]:
     errors: list[type[Exception]] = [TimeoutError]
     for module in ("httpx2", "httpx"):
         try:
@@ -87,7 +87,7 @@ def _generate(client, model: str, system: str, contents: str, **config):
         if error.code in (408, 429, 500, 502, 503, 504):
             raise _RetryableRequestError(f"Gemini request failed temporarily (HTTP {error.code}).") from error
         raise PlanningError(f"Gemini request failed (HTTP {error.code}).") from error
-    except _transport_errors() as error:
+    except gemini_transport_errors() as error:
         raise _RetryableRequestError("Could not complete the request to Gemini.") from error
 
 
@@ -162,7 +162,8 @@ def run_planning(
     if not problem.is_optimization_problem:
         raise PlanningError(problem.rejection_reason or "Init rejected the problem.")
 
-    limits = workspace.meta["limits"]
+    metadata = workspace.meta
+    limits = metadata["limits"]
     max_qubits = limits["max_qubits"]
     if problem.quantum.qubit_budget is not None:
         max_qubits = min(max_qubits, problem.quantum.qubit_budget)
@@ -173,6 +174,8 @@ def run_planning(
     model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
     problem_json = problem.model_dump_json(indent=2)
     context = {"user_answers": list(answers), "caller_feedback": feedback}
+    if metadata.get("scene_type") == "ev_fleet":
+        context["dashboard_requirements"] = load_prompt("build.ev_fleet")
     if feedback and workspace.resolve(PLAN_JSON).is_file():
         context["previous_approved_plan"] = load_plan(workspace).plan.model_dump(mode="json")
 

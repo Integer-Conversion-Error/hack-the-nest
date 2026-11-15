@@ -10,13 +10,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class LocalEvSolverTests(unittest.TestCase):
-    def test_both_controls_produce_verified_schedules_from_local_samples(self):
+    def test_charge_range_produces_verified_schedules_from_local_samples(self):
         environment = {
             key: value
             for key, value in os.environ.items()
             if key not in {"QR_KEY", "QR_ACCOUNT", "QR_BACKEND", "QUANTUM_BACKEND_URL"}
         }
-        for charge, qubits, reference_cost in ((35, 5, 15.783333), (20, 4, 58.366667)):
+        environment["PYTHON_DOTENV_DISABLED"] = "1"
+        scenarios = (
+            (20, 4, 58.366667),
+            (22, 4, 58.366667),
+            (23, 5, 15.783333),
+            (35, 5, 15.783333),
+        )
+        for charge, qubits, reference_cost in scenarios:
             with self.subTest(charge=charge):
                 completed = subprocess.run(
                     [

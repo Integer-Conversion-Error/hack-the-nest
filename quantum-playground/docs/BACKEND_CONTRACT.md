@@ -1,8 +1,16 @@
 # Verified EV handoff
 
-The built-in EV solver runs locally when the dashboard dependencies are installed. It accepts the EV example prompt and rebuilds the QUBO for each selected charge. The worker reports fresh circuit measurements and passes the chosen schedule through independent verification before the dashboard updates.
+## Native pipeline
 
-Set `QUANTUM_BACKEND_URL` to use an external backend host instead. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. The `backend.pipeline` CLI runs the workflow and writes `handoff.json` in the workspace after GO. Its file uses `workspace_id`, `decision`, and `results`. The live HTTP adapter needs to translate that file into the versioned response below, including attempt identity and the timed EV schedule. See the [solver skill](../../agent-prompts/skills/backend/run-quantum-solver/SKILL.md) and [verification skill](../../agent-prompts/skills/backend/verify-and-handoff/SKILL.md).
+With Gemini configured, the dashboard starts the native `backend.pipeline` in an EV fleet workspace. The generated solver supplies a timed `simulation`, the effective control values, the cost breakdown, and its feasibility verification. Test checks the replay contract before GO. The dashboard translates the approved workspace `handoff.json` into the response below, using the workspace ID as the plan ID.
+
+Apply runs the approved solver with the full set of settings in a temporary copy of the workspace. It checks the replay and runs the pipeline's semantic review on the fresh result before displaying it. The approved workspace retains its original result for later attempts.
+
+The built-in example worker is available without Gemini configuration. It accepts the live EV example prompt and rebuilds the QUBO for each whole percentage from 20% to 35%. The worker reports fresh circuit measurements and passes the chosen schedule through independent verification before the dashboard updates.
+
+## External backend
+
+Set `QUANTUM_BACKEND_URL` to use an external backend host. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. It returns the versioned response below, including attempt identity and the timed EV schedule.
 
 Set the URL in the dashboard server environment. For example, in PowerShell:
 
@@ -40,7 +48,7 @@ A successful response is a v1 `VisualizationHandoff` with these fields.
 | `controls` | Approved Plan controls with `key` (or `id`), `label`, `type`, `default`, and `rerun_mode`. Specify `allowed_values` for discrete choices, or `minimum`, `maximum`, and optional `step` for a numeric range. A boolean can omit choices. Optional `unit` and `group` affect display. Keep the definitions stable for the same plan ID. |
 | `result` | The verified `RunResult` described below. |
 
-The Plan phase selects controls that the proposed implementation can apply. The dashboard renders the controls approved for that run and posts their typed values. For a cost control, use those values in both the solver and independent verifier before sending the new schedule. The built-in EV example approves Van 2 starting charge at 20% and 35%.
+The Plan phase selects controls that the proposed implementation can apply. The dashboard renders the controls approved for that run and posts their typed values. Use those values in both the solver and independent verifier before sending the new schedule. The live EV example approves Van 2 starting charge from 20% to 35%, with a step of one percentage point and a default of 35%.
 
 The result includes the three IDs, `status: "verified"`, and `provenance: "live"` for a fresh execution or `"recorded"` for previously verified execution data. `effective_values` gives the complete control values used for the attempt. The initial values match the approved defaults. Apply results match the requested values.
 

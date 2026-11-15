@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+const chargeControlId = 'van_2_initial_charge_pct';
 const colors = ['#185f55', '#315b8f', '#8a4d27', '#75527c'];
 const provenanceLabels = {
   classical_reference: 'Exact reference',
@@ -19,13 +20,21 @@ const runModes = {
     action: 'Run backend',
     pending: 'Waiting for a verified backend result…',
   },
+  local: {
+    action: 'Run solver',
+    pending: 'Running solver…',
+  },
+  planner: {
+    action: 'Plan and run',
+    pending: 'Planning and running solver…',
+  },
 };
 
 let inspected = null;
 let result = null, sim = null, busy = false, initialized = false;
-let backendConfigured = false, localBackendConfigured = false;
+let backendConfigured = false, localBackendConfigured = false, pipelineBackendConfigured = false;
 let playing = false, minute = 0, last = null, selectedVan = null;
-let examplePrompt = '', livePrompt = '';
+let examplePrompt = '', liveExamplePrompt = '', livePrompt = '';
 let controlPanel = null;
 let vanCards = [];
 const mapCanvas = $('fleet-map');
@@ -58,7 +67,10 @@ function setStatus(message) {
 }
 
 function controls(definitions, applied) {
-  controlPanel = ScenarioControls.render($('variables'), definitions, applied, {onChange: controlChanged});
+  controlPanel = ScenarioControls.render($('variables'), definitions, applied, {
+    onChange: controlChanged,
+    expandGroupFor: chargeControlId,
+  });
   $('settings').hidden = !definitions.length;
   $('applied-settings').textContent = 'Applied · ' + controlPanel.displayApplied();
 }
@@ -67,8 +79,18 @@ function usesLocalSolver() {
   return localBackendConfigured && $('mode').value === 'live';
 }
 
+function usesNativePlanner() {
+  return pipelineBackendConfigured && $('mode').value === 'live';
+}
+
+function runLabels() {
+  if (usesLocalSolver()) return runModes.local;
+  if (usesNativePlanner()) return runModes.planner;
+  return runModes[$('mode').value];
+}
+
 function usesImmediateApply() {
-  return usesLocalSolver() && Boolean(controlPanel?.automatic);
+  return (usesLocalSolver() || usesNativePlanner()) && Boolean(controlPanel?.automatic);
 }
 
 function updateButtons() {
@@ -81,7 +103,8 @@ function updateButtons() {
   const hasCurrentResult = result?.mode === selectedMode;
   const canApply = hasCurrentResult && result.variables.length > 0;
   const draft = canApply ? controlPanel.values() : null;
-  const hasChanges = draft && Object.entries(draft).some(([id, value]) => result.effective_values[id] !== value);
+  const changes = draft ? Object.keys(draft).filter(id => result.effective_values[id] !== draft[id]) : [];
+  const hasChanges = changes.length > 0;
 
   $('generate').disabled = !initialized || busy || !canRun;
   $('run-action').hidden = !initialized || !canRun || busy || (hasCurrentResult && !canEditPrompt);
@@ -95,11 +118,14 @@ function updateButtons() {
   $('rerun').textContent = immediate ? 'Retry solver'
     : selectedMode === 'recorded' ? 'Load recorded result' : 'Apply changes';
   controlPanel?.setDisabled(busy || !canApply);
+  return changes;
 }
 
-function controlChanged() {
-  updateButtons();
-  if (usesImmediateApply() && !$('rerun').disabled) submitControlChanges();
+function controlChanged(committedRange) {
+  const changes = updateButtons();
+  const chargeOnly = committedRange === chargeControlId && changes.length === 1 && changes[0] === chargeControlId;
+  const automaticCharge = chargeOnly && (usesLocalSolver() || usesNativePlanner());
+  if ((usesImmediateApply() || automaticCharge) && !$('rerun').disabled) submitControlChanges();
 }
 
 async function request(path, data) {
@@ -184,7 +210,7 @@ function initialRun() {
     return;
   }
   if ($('generate').disabled) return;
-  queueRun({mode, prompt}, usesLocalSolver() ? 'Running solver…' : runModes[mode].pending);
+  queueRun({mode, prompt}, runLabels().pending);
 }
 
 $('prompt-form').onsubmit = event => {
@@ -203,9 +229,8 @@ $('rerun').onclick = submitControlChanges;
 
 function updateMode() {
   const mode = $('mode').value;
-  const localLive = usesLocalSolver();
-  $('prompt').value = mode === 'live' && !localLive ? livePrompt : examplePrompt;
-  $('generate').textContent = localLive ? 'Run solver' : runModes[mode].action;
+  $('prompt').value = mode === 'live' ? livePrompt : examplePrompt;
+  $('generate').textContent = runLabels().action;
   updateButtons();
 }
 
@@ -215,7 +240,7 @@ $('mode').onchange = () => {
   setStatus('');
   updateMode();
 };
-$('load-example').onclick = () => { $('prompt').value = examplePrompt; };
+$('load-example').onclick = () => { $('prompt').value = liveExamplePrompt; };
 
 function render(data, {preserve = false} = {}) {
   const saved = {minute, playing, selectedVan};
@@ -527,9 +552,11 @@ async function init() {
       })
     );
     examplePrompt = example.prompt;
-    livePrompt = examplePrompt;
+    liveExamplePrompt = example.live_prompt || examplePrompt;
+    livePrompt = liveExamplePrompt;
     localBackendConfigured = Boolean(config.local_backend_configured);
-    backendConfigured = localBackendConfigured || Boolean(config.backend_configured);
+    pipelineBackendConfigured = Boolean(config.pipeline_backend_configured);
+    backendConfigured = localBackendConfigured || pipelineBackendConfigured || Boolean(config.backend_configured);
     $('live-mode').disabled = !backendConfigured;
     if (localBackendConfigured) $('mode').value = 'live';
     initialized = true;

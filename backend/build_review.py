@@ -141,7 +141,7 @@ def compare_with_plan(workspace: Workspace, *, model: str | None = None, client=
         client or gemini_client(),
         model,
         # Prompts are read from prompts.md now, before Gemini is called.
-        load_prompt("build_review.system", contract=build_contract(planning)),
+        load_prompt("build_review.system", contract=build_contract(planning, workspace)),
         load_prompt(
             "build_review.user",
             problem=problem.model_dump_json(indent=2),

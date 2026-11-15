@@ -5,11 +5,12 @@ from fractions import Fraction
 from pathlib import Path
 from uuid import uuid4
 
+from ev_recorded import RECORDED_PROMPT as PROMPT
+
 SCENARIO = "ev-fleet-dispatch-optimization"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = REPO_ROOT / "example-solver-plans" / SCENARIO
 
-PROMPT = (REPO_ROOT / "example-user-prompts" / f"{SCENARIO}.md").read_text(encoding="utf-8")
 PROBLEM = json.loads((FIXTURES / "problem.json").read_text(encoding="utf-8"))
 PLAN = json.loads((FIXTURES / "plan.json").read_text(encoding="utf-8"))["plan"]
 PLAN_ID = "ev-fleet-dispatch-v1"

@@ -47,7 +47,7 @@
     return label + (unit === '%' || unit === '°' ? '' : ' ') + unit;
   }
 
-  function render(container, definitions, applied, { onChange = () => {} } = {}) {
+  function render(container, definitions, applied, { onChange = () => {}, expandGroupFor } = {}) {
     const document = container.ownerDocument || root.document;
     const create = (tag, className, text) => {
       const element = document.createElement(tag);
@@ -113,6 +113,41 @@
       return { inputs: [input], read: () => choices.find(value => String(value) === input.value) };
     }
 
+    function choiceSlider(definition, id, current, field, choices) {
+      const ordered = [...choices].sort((first, second) => first - second);
+      const slider = create('input', 'control-choice-slider');
+      slider.id = id + '-slider';
+      slider.type = 'range';
+      slider.min = '0';
+      slider.max = String(ordered.length - 1);
+      slider.step = '1';
+      slider.value = String(ordered.indexOf(current));
+
+      const read = () => ordered[Number(slider.value)];
+      const selected = create('span', 'control-choice-value');
+      selected.setAttribute('aria-hidden', 'true');
+      const showValue = () => {
+        const text = displayValue(read(), definition.unit);
+        selected.textContent = text;
+        slider.setAttribute('aria-valuetext', text);
+      };
+      showValue();
+      slider.oninput = showValue;
+      slider.onchange = () => {
+        showValue();
+        onChange();
+      };
+
+      const heading = create('div', 'control-choice-heading');
+      heading.append(labelFor(definition.label, slider.id), selected);
+      const bounds = create('div', 'control-choice-bounds');
+      bounds.setAttribute('aria-hidden', 'true');
+      bounds.append(create('span', null, displayValue(ordered[0], definition.unit)),
+        create('span', null, displayValue(ordered[ordered.length - 1], definition.unit)));
+      field.append(heading, slider, bounds);
+      return { inputs: [slider], read, automatic: true };
+    }
+
     function range(definition, id, current, field) {
       const controls = create('div', 'control-range');
       const slider = create('input');
@@ -140,6 +175,8 @@
       number.setAttribute('aria-describedby', bounds.id);
       bounds.textContent = validText;
       const read = () => number.value.trim() ? Number(number.value) : undefined;
+      const showSliderValue = () => slider.setAttribute('aria-valuetext', displayValue(Number(slider.value), definition.unit));
+      showSliderValue();
 
       function showValidity(valid) {
         number.setAttribute('aria-invalid', String(!valid));
@@ -148,20 +185,25 @@
 
       function updateFromSlider() {
         number.value = slider.value;
+        showSliderValue();
         showValidity(true);
       }
       slider.oninput = updateFromSlider;
       slider.onchange = () => {
         updateFromSlider();
-        onChange();
+        onChange(definition.id);
       };
       number.oninput = () => {
         const value = read();
         const valid = isValidValue(definition, value);
         showValidity(valid);
-        if (valid) slider.value = String(value);
+        if (valid) {
+          slider.value = String(value);
+          showSliderValue();
+        }
         onChange();
       };
+      number.onchange = () => onChange(definition.id);
 
       controls.append(slider, number);
       const label = definition.unit ? definition.label + ' (' + definition.unit + ')' : definition.label;
@@ -176,11 +218,14 @@
       const id = 'variable-' + definition.id;
       const current = applied[definition.id];
       const choices = definition.allowed_values;
-      const boolean = controlType(definition) === 'boolean' && (!choices || choices.length === 2);
-      const smallEnum = !boolean && Array.isArray(choices) && choices.length <= 4;
+      const type = controlType(definition);
+      const boolean = type === 'boolean' && (!choices || choices.length === 2);
+      const numericChoices = (type === 'integer' || type === 'number') && Array.isArray(choices) && choices.length > 1;
+      const smallEnum = !boolean && !numericChoices && Array.isArray(choices) && choices.length <= 4;
       const field = create(smallEnum ? 'fieldset' : 'div', 'control');
       let editor;
       if (boolean) editor = toggle(definition, id, current, field);
+      else if (numericChoices) editor = choiceSlider(definition, id, current, field, choices);
       else if (smallEnum) editor = segments(definition, id, current, field, choices);
       else if (Array.isArray(choices)) editor = menu(definition, id, current, field, choices);
       else editor = range(definition, id, current, field);
@@ -194,6 +239,7 @@
           groups.set(definition.group, group);
           container.append(group);
         }
+        if (definition.id === expandGroupFor && !previousGroups?.has(definition.group)) group.open = true;
         group.append(field);
       } else {
         container.append(field);

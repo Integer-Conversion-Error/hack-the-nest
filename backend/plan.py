@@ -39,6 +39,8 @@ class PlanControl(BaseModel):
             raise ValueError("Control key must use lowercase letters, digits, and underscores.")
         if not self.label.strip():
             raise ValueError("Control label is required.")
+        if self.group is not None:
+            self.group = self.group.strip() or None
 
         bounds = (self.minimum, self.maximum, self.step)
         has_bounds = any(value is not None for value in bounds)
@@ -52,6 +54,7 @@ class PlanControl(BaseModel):
         if self.allowed_values is not None:
             if has_bounds or not self.allowed_values or self.default not in self.allowed_values:
                 raise ValueError("Specify nonempty allowed values containing the default, or a numeric range.")
+            self.allowed_values = list(dict.fromkeys(self.allowed_values))
             return self
 
         if self.type == "boolean":

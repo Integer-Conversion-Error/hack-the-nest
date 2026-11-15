@@ -6,11 +6,29 @@ import sys
 from importlib.util import find_spec
 from uuid import uuid4
 
-from ev_recorded import RECORDED_CONTROLS, RECORDED_PROMPT, REPO_ROOT, project_ev_result
-from fleet_handoff import applied_values
+from ev_recorded import LIVE_PROMPT, RECORDED_CONTROLS, RECORDED_PROMPT, REPO_ROOT, project_ev_result
+from fleet_handoff import applied_values, normalize_controls
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from backend.ev_dispatch import DEFAULT_VAN2_CHARGE_PCT, VAN2_CHARGE_PCTS
 
 CONTROL_ID = "van_2_initial_charge_pct"
-PLAN_ID = "ev-fleet-dispatch-live-v1"
+LEGACY_PLAN_ID = "ev-fleet-dispatch-live-v1"
+PLAN_ID = "ev-fleet-dispatch-live-v2"
+LOCAL_PLAN_IDS = frozenset((LEGACY_PLAN_ID, PLAN_ID))
+LIVE_CONTROLS = normalize_controls([{
+    "id": CONTROL_ID,
+    "label": "Van 2 starting charge",
+    "type": "integer",
+    "unit": "%",
+    "default": DEFAULT_VAN2_CHARGE_PCT,
+    "minimum": VAN2_CHARGE_PCTS.start,
+    "maximum": VAN2_CHARGE_PCTS[-1],
+    "step": VAN2_CHARGE_PCTS.step,
+    "rerun_mode": "rebuild",
+}])
 SOLVER_TIMEOUT_SECONDS = 120
 
 
@@ -53,22 +71,27 @@ def run_solver(charge):
 
 
 def local_handoff(prompt, values, previous, attempt_id):
-    if prompt != RECORDED_PROMPT:
+    if previous is not None and previous["plan_id"] == LEGACY_PLAN_ID:
+        expected_prompt, controls, plan_id = RECORDED_PROMPT, RECORDED_CONTROLS, LEGACY_PLAN_ID
+    else:
+        expected_prompt, controls, plan_id = LIVE_PROMPT, LIVE_CONTROLS, PLAN_ID
+    if prompt != expected_prompt:
         raise ValueError("The built-in solver supports the EV example prompt.")
     if not local_solver_available():
         raise SolverUnavailable("Install quantum-playground/requirements.txt to enable the built-in solver.")
 
-    defaults = {control["id"]: control["default"] for control in RECORDED_CONTROLS}
-    selected = applied_values(RECORDED_CONTROLS, defaults, values)
+    defaults = {control["id"]: control["default"] for control in controls}
+    selected = applied_values(controls, defaults, values)
     identity = {
         "run_id": previous["run_id"] if previous is not None else str(uuid4()),
-        "plan_id": PLAN_ID,
+        "plan_id": plan_id,
         "attempt_id": attempt_id,
     }
     try:
         return project_ev_result(
             run_solver(selected[CONTROL_ID]), identity, provenance="live",
             explanation="Verified against exact classical enumeration.",
+            prompt=prompt, controls=controls,
         )
     except (KeyError, TypeError):
         raise SolverFailed("The EV solver returned incomplete schedule data.") from None

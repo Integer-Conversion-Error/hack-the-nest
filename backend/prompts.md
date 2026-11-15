@@ -42,6 +42,7 @@ Prompts in this file:
 - `build.contract`: the rules every build must follow (`main.py`,
   `results.json`, Quantum Rings). Shared by the builder and the plan
   reviewer. Placeholders `{max_qubits}` and `{worker_seconds}`.
+- `build.ev_fleet`: additional result fields for an EV dashboard workspace.
 - `build.user`: the problem, the approved plan, and the files already in the
   workspace. Placeholders `{problem}`, `{plan}`, and `{files}`.
 - `build.retry`: appended when a later check sends the work back to Build.
@@ -83,6 +84,8 @@ testing) work from your problem statement, so it must stand on its own.
 Rules:
 - Preserve every number, unit, coordinate, count and name exactly as given.
   Do not round, convert or drop anything.
+- Preserve the default, bounds and increment of each user-editable numeric
+  range. Keep the default as an input the user can change.
 - Restate the problem; do not solve it.
 - Choose the quantum method that best fits the problem, and say why. The
   choice is yours. Users describe their problem in everyday terms and are
@@ -199,9 +202,12 @@ them with the request before planning.
   scenario inputs and objective rates that the user can meaningfully explore.
   For each, give a stable key, label, type, default, valid values or bounds, and
   recalculation mode. Include a unit where it clarifies the value and a group
-  when related controls belong together, such as Costs. Cover the qubit and
-  time limits for supported inputs. Keep each default within the allowed values
-  and record meaningful assumptions.
+  when related controls belong together, such as Costs. For a requested numeric
+  range, use inclusive `minimum` and `maximum` with the requested `step` and
+  default. Use type `integer` for whole-number increments on whole-number
+  inputs. Use `allowed_values` for discrete choices.
+  Cover the qubit and time limits for every permitted input and record
+  meaningful assumptions.
 
 Return `needs_clarification` with focused questions when a missing or conflicting
 fact changes feasibility or the objective. Return `unsupported` with a reason
@@ -240,8 +246,9 @@ hard constraint has an enforcement and verification step. Review the decoded
 result checks, edge cases, and the reference's inputs and search space. For
 sampling-based designs, verify feasibility filtering and ranking by the original
 objective. For penalty encodings, check the proposed bound. Check control
-defaults, allowed values, and recalculation behavior. Any alternative must meet
-the same hard constraints. For the supported inputs, the total width including
+defaults, allowed values, and recalculation behavior. A requested numeric range
+must support its interior values and preserve the requested bounds and step.
+Any alternative must meet the same hard constraints. The total width including
 auxiliary qubits must fit {max_qubits}, and the work must fit the
 {worker_seconds}-second worker limit.
 
@@ -315,7 +322,11 @@ anything in the plan you could not implement.
   person and no plot windows.
 - Accepts one flag per plan control, named `--<control key>`, defaulting to
   the control's default and rejecting values outside its allowed values or
-  range.
+  range. Accept both --key value and --key=value (Python argparse supports both).
+  Boolean control flags take True or False as a value rather than acting as
+  presence-only switches. For a numeric range, support all values allowed by
+  its bounds and step. Carry the effective value through dependent solver
+  inputs and independent verification.
 - Finishes within {worker_seconds} seconds. A circuit of a few qubits takes
   about 0.1 to 0.3 seconds per run, so cap the number of circuit runs.
 - Uses at most {max_qubits} qubits.
@@ -349,6 +360,48 @@ Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
   set of angles.
 - `numpy` and `scipy` are installed. Use only these, the standard library,
   `QuantumRingsLib`, and `qr_runtime`.
+
+## build.ev_fleet
+
+This workspace feeds the EV dashboard. The input must describe an EV fleet
+optimization on a street grid, with one to four vans and an objective in USD.
+Plan the delivered schedule and output fields alongside the solver. If the
+problem cannot be represented as that scene, report it as unsupported in Plan.
+
+In each successful run, including a changed control value, write the actual
+effective values of all Plan controls in the results.json controls object.
+Pass the effective inputs to both the solver and its independent verifier.
+In addition to the standard results.json fields, emit:
+
+- A top-level simulation object with kind "ev_fleet", grid {width, height,
+  block_km}, depot [x, y], chargers [{id, position}], deliveries [{id, position,
+  deadline_min}], start_hour, duration_min, battery_capacity_kwh, reserve_pct,
+  and vans. The grid represents 2 to 50 intersections on each axis. Positions
+  are pairs of zero-based integer coordinates in the grid. The start hour is
+  local time expressed as a number of hours from midnight. All minute values
+  in the simulation are elapsed from the start. Give each station and delivery
+  a distinct ID within its type.
+- Each van has id, initial_battery_kwh, delivery_ids, and events. Vary the
+  initial battery when it is controlled. When the plan exposes
+  van_2_initial_charge_pct, Van 2 must have ID "V2". Each van begins at the
+  depot. Include its return drive when required by the problem.
+- Each event has type ("drive", "wait", "charge", or "deliver"), start_min,
+  end_min, position at the start, battery_start_kwh, and battery_end_kwh.
+  Events within a van are chronological, fit in the simulation duration, and
+  agree with the prior event's ending position and charge. A drive has a path
+  of consecutive adjacent grid intersections including both endpoints.
+  Charge events have charger_id, and waiting events at a charger may have it.
+  Deliver events have delivery_id. Each assigned delivery appears exactly
+  once in the schedule.
+- solution.verification contains feasible and violations computed by
+  independently rechecking the selected schedule and its cost from the
+  effective inputs. A successful verified schedule has feasible true and an
+  empty violations list.
+- solution.cost_breakdown maps cost components, for example driving,
+  electricity, waiting, and late, to finite USD numbers. The total is
+  objective.value with unit "USD". Report only the components in the
+  breakdown. Report the classical cost over the same inputs as
+  reference.objective_value or reference.value when a reference is available.
 
 ## build.user
 
@@ -480,7 +533,8 @@ Check that:
 - The measured result and the reference are consistent with each other. If
   they differ, the results must say so and not hide it.
 - Each run with a different control value used that value, and the results
-  changed the way the problem says they should.
+  reflect its effect on the inputs and calculations. When the same selected
+  decisions remain valid at a different value, verify them using the new value.
 - The results contain what the problem statement lists as expected output.
 
 Report an issue only when you can name the file, the requirement from the
@@ -563,8 +617,9 @@ Check that:
   with its own.
 - The decision variables in the plan cover the decisions the problem asks
   for.
-- Each control changes an input the problem allows to change, with values
-  the problem allows.
+- Each control changes an input the problem allows to change. Controls for
+  requested numeric ranges preserve the default, bounds, step and all
+  permitted interior values.
 - The selected solver fits the qubit and time limits for the stated inputs,
   and the plan verifies the decoded solution independently.
 - The plan delivers what the problem lists as expected output, as data a

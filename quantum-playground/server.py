@@ -11,10 +11,11 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from ev_live import SolverUnavailable, SolverFailed, local_solver_available, local_handoff
-from ev_recorded import RECORDED_CONTROLS, RECORDED_PROMPT, recorded_handoff
+from ev_live import LOCAL_PLAN_IDS, SolverUnavailable, SolverFailed, local_solver_available, local_handoff
+from ev_recorded import LIVE_PROMPT, RECORDED_CONTROLS, RECORDED_PROMPT, REPO_ROOT, recorded_handoff
 from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
+from pipeline_live import pipeline_handoff, planner_configured
 
 ROOT = Path(__file__).resolve().parent
 VIEWS = {}
@@ -105,6 +106,7 @@ def run_plan(data):
     else:
         attempt_id = str(uuid4())
         base = backend_url()
+        use_pipeline = planner_configured() if previous is None else previous["plan_id"] not in LOCAL_PLAN_IDS
         if base:
             payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
             if previous is None:
@@ -116,6 +118,8 @@ def run_plan(data):
                     previous_attempt_id=previous["attempt_id"],
                 )
             handoff = request_handoff(base, payload)
+        elif use_pipeline:
+            handoff = pipeline_handoff(prompt, values, previous, attempt_id)
         else:
             handoff = local_handoff(prompt, values, previous, attempt_id)
     result = normalize_handoff(
@@ -164,11 +168,18 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(404, {"error": "No Pygame frame received yet."})
             return self.send_png(frame)
         if url.path == "/api/example":
-            return self.send_json(200, {"prompt": RECORDED_PROMPT, "variables": RECORDED_CONTROLS})
+            return self.send_json(200, {
+                "prompt": RECORDED_PROMPT, "live_prompt": LIVE_PROMPT, "variables": RECORDED_CONTROLS,
+            })
         if url.path == "/api/config":
             external = bool(backend_url())
-            local = not external and local_solver_available()
-            return self.send_json(200, {"backend_configured": external or local, "local_backend_configured": local})
+            pipeline = not external and planner_configured()
+            local = not external and not pipeline and local_solver_available()
+            return self.send_json(200, {
+                "backend_configured": external or pipeline or local,
+                "pipeline_backend_configured": pipeline,
+                "local_backend_configured": local,
+            })
         return super().do_GET()
 
     def send_frame(self, params):
@@ -256,6 +267,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env")
     port = int(os.environ.get("PORT", 8000))
     print(f"Fleet Lab: http://127.0.0.1:{port}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

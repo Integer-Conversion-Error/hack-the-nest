@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from . import validate_van2_charge_pct
+
 
 @dataclass(frozen=True)
 class GridConfig:
@@ -348,8 +350,7 @@ def _simulate_single_option(
 
 
 def build_van_specs(van2_charge_pct: int) -> list[VanSpec]:
-    if van2_charge_pct not in (20, 35):
-        raise ValueError(f"van2_charge_pct must be 20 or 35, got {van2_charge_pct}")
+    validate_van2_charge_pct(van2_charge_pct)
     return [
         VanSpec(
             van_id=1,

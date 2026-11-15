@@ -5,11 +5,16 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const chargeKey = 'van_2_initial_charge_pct';
+const chargeSliderId = 'variable-' + chargeKey + '-slider';
 const examplePrompt = 'EV fleet dispatch example\n';
+const liveExamplePrompt = 'EV fleet dispatch example with a charge range\n';
 const variables = [{
   id: chargeKey, label: 'Van 2 starting charge', type: 'integer',
   allowed_values: [35, 20], default: 35, unit: '%', rerun_mode: 'rebuild',
 }];
+const chargeRange = {
+  ...variables[0], allowed_values: null, minimum: 20, maximum: 35, step: 1,
+};
 const depot = [2, 2];
 const delivery = { id: 'D1', position: [2, 1], deadline_min: 80 };
 const drive = {
@@ -53,12 +58,19 @@ function fixture(charge = 35, attempt = '1', mode = 'reference') {
   };
 }
 
+function liveFixture(charge, attempt, prompt = liveExamplePrompt) {
+  const data = fixture(charge, attempt, 'live');
+  data.problem.original_prompt = prompt;
+  data.variables = [chargeRange];
+  return data;
+}
+
 const html = fs.readFileSync('web/index.html', 'utf8');
 const json = (body, ok = true) => ({ ok, json: async () => body });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const preventDefault = () => {};
 
-function boot(config) {
+function boot(config, liveExample = liveExamplePrompt) {
   const registry = new Map();
   const posts = [];
   const drawings = [];
@@ -105,7 +117,7 @@ function boot(config) {
     },
     fetch: async (path, options) => {
       if (path === '/api/config') return json(config);
-      if (path === '/api/example') return json({ prompt: examplePrompt, variables });
+      if (path === '/api/example') return json({ prompt: examplePrompt, live_prompt: liveExample, variables });
       assert.equal(path, '/api/run', 'browser playback sends no frame requests');
       return new Promise(resolve => posts.push({ payload: JSON.parse(options.body), respond: resolve }));
     },
@@ -116,10 +128,11 @@ function boot(config) {
   return {
     get, posts, drawings, listeners, inspect,
     advance: now => animationFrame(now),
-    chooseCharge(index) {
-      const options = [0, 1].map(i => get('variable-' + chargeKey + '-' + i));
-      options.forEach((option, i) => { option.checked = i === index; });
-      options[index].onchange();
+    chooseCharge(value) {
+      const slider = get(chargeSliderId);
+      slider.value = String(value);
+      slider.oninput();
+      slider.onchange();
     },
     async respond(body, ok) {
       posts.at(-1).respond(json(body, ok));
@@ -146,14 +159,15 @@ async function testReferenceAndRecorded() {
 
   ui.mode('reference');
   await ui.respond(fixture());
-  assert.equal(get('variable-' + chargeKey + '-0').checked, true);
-  assert.equal(get('variable-' + chargeKey + '-1').type, 'radio');
+  assert.equal(get(chargeSliderId).value, '1');
+  assert.equal(get(chargeSliderId).type, 'range');
+  assert.equal(get(chargeSliderId).attrs['aria-valuetext'], '35%');
   assert.equal(get('fleet-map').hidden, false);
   assert.equal(get('original-prompt').open, false);
   get('scrub').value = '60';
   get('scrub').oninput();
   get('fleet').children[1].onclick();
-  ui.chooseCharge(1);
+  ui.chooseCharge(0);
   assert.equal(posts.length, 2, 'reference drafts wait for Apply');
   get('rerun').onclick();
   assert.deepEqual(posts[2].payload, { mode: 'reference', view_id: 'view-1', variables: { [chargeKey]: 20 } });
@@ -165,7 +179,7 @@ async function testReferenceAndRecorded() {
 
   await ui.respond({ error: 'Worker timed out.' }, false);
   assert.equal(get('error').textContent, 'Worker timed out.');
-  assert.equal(get('variable-' + chargeKey + '-1').checked, true);
+  assert.equal(get(chargeSliderId).attrs['aria-valuetext'], '20%');
   get('rerun').onclick();
   await ui.respond({ ...fixture(20, '2'), plan_id: 'another-plan' });
   assert.match(get('error').textContent, /did not match/);
@@ -200,62 +214,112 @@ async function testLocalSolver() {
   const ui = boot({ backend_configured: true, local_backend_configured: true });
   const { get, posts, drawings } = ui;
   await flush();
-  assert.deepEqual(posts[0].payload, { mode: 'live', prompt: examplePrompt });
+  assert.deepEqual(posts[0].payload, { mode: 'live', prompt: liveExamplePrompt });
   assert.equal(get('prompt').readOnly, true);
-  await ui.respond(fixture(35, 'local-1', 'live'));
+  await ui.respond(liveFixture(35, 'local-1'));
   assert.equal(get('run-badge').textContent, 'Live · Quantum Rings');
-  ui.chooseCharge(1);
+  const chargeSlider = get(chargeSliderId);
+  assert.deepEqual([chargeSlider.min, chargeSlider.max, chargeSlider.step], ['20', '35', '1']);
+  chargeSlider.value = '27';
+  chargeSlider.oninput();
+  assert.equal(get('variable-' + chargeKey).value, '27');
+  assert.equal(chargeSlider.attrs['aria-valuetext'], '27%');
+  assert.equal(posts.length, 1, 'previewing the slider commits no solver request');
+  chargeSlider.onchange();
   assert.deepEqual(posts[1].payload, {
-    mode: 'live', view_id: 'view-local-1', variables: { [chargeKey]: 20 },
+    mode: 'live', view_id: 'view-local-1', variables: { [chargeKey]: 27 },
   });
   assert.equal(get('score').textContent, '$15.78');
   assert.equal(get('fleet-map').hidden, false);
   await ui.respond({ error: 'Solver unavailable.' }, false);
-  assert.equal(get('rerun').textContent, 'Retry solver');
+  assert.equal(get('rerun').disabled, false, 'the failed change can be applied again');
   get('rerun').onclick();
   assert.deepEqual(posts[2].payload, posts[1].payload);
-  const updated = fixture(20, 'local-2', 'live');
+  const updated = liveFixture(27, 'local-2');
   updated.simulation.duration_min = 120.009;
   await ui.respond(updated);
+  assert.equal(drawings.at(-1).simulation.vans[1].initial_battery_kwh, 5.4);
   get('fleet-map').onkeydown({ key: 'End', preventDefault });
   assert.equal(drawings.at(-1).minute, 120.009);
   assert.equal(get('clock').textContent, '10:00');
-  assert.equal(get('rerun').hidden, true);
+  assert.equal(get('rerun').disabled, true);
 }
 
 async function testPlannerControls() {
-  const ui = boot({ backend_configured: true });
+  const ui = boot({ backend_configured: true, pipeline_backend_configured: true });
   const { get, posts } = ui;
   await flush();
+  assert.deepEqual(posts[0].payload, { mode: 'recorded', prompt: examplePrompt });
   await ui.respond(fixture(35, 'recorded', 'recorded'));
-  ui.mode('live');
-  const planned = fixture(35, 'planned', 'live');
-  planned.variables = [...variables,
+
+  get('mode').value = 'live';
+  get('mode').onchange();
+  assert.equal(posts.length, 1, 'switching modes leaves planning for an explicit run');
+  assert.equal(get('original-prompt').open, false);
+  assert.equal(get('prompt').readOnly, false);
+  assert.equal(get('generate').textContent, 'Plan and run');
+  assert.equal(get('prompt').value, liveExamplePrompt);
+  get('prompt').value = 'Draft to replace';
+  get('load-example').onclick();
+  assert.equal(get('prompt').value, liveExamplePrompt);
+
+  const prompt = 'Optimize fleet dispatch with a charging price control';
+  get('prompt').value = prompt;
+  get('prompt-form').onsubmit({ preventDefault });
+  assert.deepEqual(posts[1].payload, { mode: 'live', prompt });
+  assert.equal(get('status').textContent, 'Planning and running solver…');
+
+  const planned = liveFixture(35, 'planned', prompt);
+  planned.variables = [{ ...chargeRange, group: 'Battery' },
     { id: 'price', label: 'Charging price', type: 'number', minimum: 0, maximum: 2,
       step: 0.05, default: 0.2, unit: '$/kWh', group: 'Costs', rerun_mode: 'rebuild' },
     { id: 'automation', label: 'Allow automation', type: 'boolean', default: false, rerun_mode: 'bind' },
   ];
   planned.effective_values = { [chargeKey]: 35, price: 0.2, automation: false };
   await ui.respond(planned);
+  const [battery, costs] = get('variables').children;
+  assert.equal(battery.children[0].textContent, 'Battery');
+  assert.equal(battery.open, true);
+  assert.equal(costs.children[0].textContent, 'Costs');
+  assert.equal(costs.open, false);
+  ui.chooseCharge(28);
+  assert.deepEqual(posts[2].payload, {
+    mode: 'live', view_id: 'view-planned', variables: { [chargeKey]: 28, price: 0.2, automation: false },
+  });
+  const recalculated = liveFixture(28, 'range-rerun', prompt);
+  recalculated.variables = planned.variables;
+  recalculated.effective_values = posts[2].payload.variables;
+  await ui.respond(recalculated);
+  assert.equal(ui.drawings.at(-1).simulation.vans[1].initial_battery_kwh, 5.6);
+
   const slider = get('variable-price-slider');
   assert.equal(slider.type, 'range');
   assert.equal(slider.value, '0.2');
   slider.value = '0.25';
   slider.oninput();
   slider.onchange();
+  ui.chooseCharge(24);
   get('variable-automation').checked = true;
   get('variable-automation').onchange();
-  assert.equal(posts.length, 2, 'multiple plan controls are applied together');
+  assert.equal(posts.length, 3, 'other draft values wait for Apply even after a charge commit');
   get('rerun').onclick();
-  assert.deepEqual(posts[2].payload, {
-    mode: 'live', view_id: 'view-planned', variables: { [chargeKey]: 35, price: 0.25, automation: true },
+  assert.deepEqual(posts[3].payload, {
+    mode: 'live', view_id: 'view-range-rerun', variables: { [chargeKey]: 24, price: 0.25, automation: true },
   });
+}
+
+async function testLiveExampleFallback() {
+  const ui = boot({ backend_configured: true, local_backend_configured: true }, null);
+  await flush();
+  assert.deepEqual(ui.posts[0].payload, { mode: 'live', prompt: examplePrompt });
+  await ui.respond(fixture(35, 'legacy', 'live'));
 }
 
 async function main() {
   await testReferenceAndRecorded();
   await testLocalSolver();
   await testPlannerControls();
+  await testLiveExampleFallback();
   console.log('PASS: canvas playback, verified result swaps, and typed planner controls');
 }
 

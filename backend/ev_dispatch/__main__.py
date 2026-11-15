@@ -8,10 +8,14 @@ import json
 from pathlib import Path
 import sys
 
+from . import DEFAULT_VAN2_CHARGE_PCT, VAN2_CHARGE_PCTS
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--van-2-initial-charge", type=int, choices=(20, 35), default=35)
+    parser.add_argument(
+        "--van-2-initial-charge", type=int, choices=VAN2_CHARGE_PCTS, default=DEFAULT_VAN2_CHARGE_PCT,
+    )
     parser.add_argument("--engine", choices=("auto", "local", "quantum-rings"), default="auto")
     parser.add_argument("--env-file", type=Path)
     args = parser.parse_args(argv)

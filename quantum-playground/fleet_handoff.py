@@ -78,7 +78,7 @@ def normalize_controls(controls):
             and is_text(control.get("label")) and kind in ("integer", "number", "boolean", "string")
             and control_type_matches(kind, default)
             and control.get("rerun_mode") in ("bind", "rebuild", "resample")
-            and (unit is None or isinstance(unit, str)) and (group is None or is_text(group)),
+            and (unit is None or isinstance(unit, str)) and (group is None or isinstance(group, str)),
             "Invalid approved control definition.",
         )
         minimum, maximum, step = (control.get(field) for field in ("minimum", "maximum", "step"))
@@ -112,8 +112,9 @@ def normalize_controls(controls):
             "unit": unit or "",
             "rerun_mode": control["rerun_mode"],
         }
-        if group is not None:
-            definition["group"] = group.strip()
+        group = group.strip() if group is not None else ""
+        if group:
+            definition["group"] = group
         require(control_accepts(definition, default), f"Invalid default for {control['label']}.")
         normalized.append(definition)
         seen.add(key)

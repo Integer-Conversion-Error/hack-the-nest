@@ -3,13 +3,19 @@ import json
 import os
 import threading
 import unittest
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.util import find_spec
+from math import isclose
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from textwrap import dedent
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
-from ev_recorded import RECORDING_DIR
+from ev_recorded import LIVE_PROMPT, RECORDING_DIR
 from ev_reference import PROMPT, reference_handoff
 from server import Handler
 
@@ -44,6 +50,9 @@ def with_attempt(handoff, attempt_id):
 
 class HandoffTests(unittest.TestCase):
     def setUp(self):
+        planner_env = patch.dict(os.environ, {"GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""})
+        planner_env.start()
+        self.addCleanup(planner_env.stop)
         self.dashboard_url = self.serve(QuietDashboard)
 
     def serve(self, handler):
@@ -158,6 +167,7 @@ class HandoffTests(unittest.TestCase):
             with self.request("/api/example") as response:
                 example = json.load(response)
             self.assertEqual(example["prompt"], PROMPT)
+            self.assertEqual(example["live_prompt"], LIVE_PROMPT)
             self.assertEqual([control["id"] for control in example["variables"]], [CONTROL_ID])
             self.assertEqual(example["variables"][0]["allowed_values"], [35, 20])
             first = self.run_plan("reference", prompt=example["prompt"])
@@ -176,24 +186,34 @@ class HandoffTests(unittest.TestCase):
 
     def test_builtin_solver_runs_again_when_the_charge_changes(self):
         final = json.loads((RECORDING_DIR / "handoff.json").read_text(encoding="utf-8"))["results"]
-        tests = json.loads((RECORDING_DIR / "test.json").read_text(encoding="utf-8"))
-        alternate = next(run["results"] for run in tests["runs"] if run["controls"].get(CONTROL_ID) == 20)
         with (
-            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}),
+            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": "", "QR_KEY": "", "QR_ACCOUNT": "",
+                                    "PYTHON_DOTENV_DISABLED": "1"}),
             patch("ev_live.local_solver_available", return_value=True),
             patch("server.local_solver_available", return_value=True),
-            patch("ev_live.run_solver", side_effect=[final, alternate]) as worker,
         ):
+            from ev_live import run_solver
+
+            alternate = run_solver(22)
+            worker_patch = patch("ev_live.run_solver", side_effect=[final, alternate])
             with self.request("/api/config") as response:
                 self.assertTrue(json.load(response)["local_backend_configured"])
             self.assert_run_error("live", 400, prompt="A different dispatch problem")
-            first = self.run_plan("live", prompt=PROMPT)
-            updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+            with worker_patch as worker:
+                first = self.run_plan("live", prompt=LIVE_PROMPT)
+                for invalid in (19, 22.5, 36):
+                    self.assert_run_error("live", 400, view_id=first["view_id"], variables={CONTROL_ID: invalid})
+                updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 22})
 
-        self.assertEqual([call.args for call in worker.call_args_list], [(35,), (20,)])
+        self.assertEqual([call.args for call in worker.call_args_list], [(35,), (22,)])
         self.assertEqual(first["provenance"], "live")
         self.assertEqual(updated["provenance"], "live")
-        self.assertEqual(updated["effective_values"], {CONTROL_ID: 20})
+        self.assertEqual(updated["effective_values"], {CONTROL_ID: 22})
+        control, = first["variables"]
+        self.assertEqual((control["minimum"], control["maximum"], control["step"]), (20, 35, 1))
+        self.assertEqual(updated["simulation"]["vans"][1]["initial_battery_kwh"], 4.4)
+        self.assertFalse(any(event["type"] == "charge" for event in first["simulation"]["vans"][1]["events"]))
+        self.assertTrue(any(event["type"] == "charge" for event in updated["simulation"]["vans"][1]["events"]))
         self.assertEqual(first["run_id"], updated["run_id"])
         self.assertEqual(first["plan_id"], updated["plan_id"])
         self.assertNotEqual(first["attempt_id"], updated["attempt_id"])
@@ -320,6 +340,157 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(len(set(timed_out_attempts + retry_attempts)), 3)
         self.assertEqual(accepted["attempt_id"], retry_attempts[-1])
 
+    @unittest.skipUnless(find_spec("pydantic"), "The planner dependencies are required.")
+    def test_native_pipeline_applies_a_planned_tariff_and_verifies_each_attempt(self):
+        from backend.final_check import FinalCheck
+        from backend.plan import PlanningResult, save_plan
+        from backend.semantics import SemanticIssue, SemanticReview
+        from backend.workspace import init_workspace, open_workspace
+
+        tariff = "electricity_price"
+        prompt = PROMPT + "\nLet me vary the electricity price from $0.10 to $0.50 per kWh in $0.10 steps."
+        fixture = reference_handoff({})["result"]
+        fixed_cost = sum(value for name, value in fixture["evaluation"]["costs"].items() if name != "electricity")
+        reviewed_tariffs = []
+
+        def parse(workspace, **_kwargs):
+            problem = (RECORDING_DIR / "problem.json").read_text(encoding="utf-8")
+            workspace.resolve("problem.json").write_text(problem, encoding="utf-8")
+
+        def plan(workspace, *_args, **_kwargs):
+            planning = PlanningResult(
+                problem_title="EV fleet electricity price", model="fixture", attempts=1,
+                max_qubits=5, worker_seconds=5,
+                research={"status": "unavailable", "summary": "Fixture plan"},
+                review={"verdict": "approve"},
+                plan={
+                    "summary": "Reprice charging for the verified fleet schedule.",
+                    "objective": "Minimize dispatch cost.",
+                    "constraints": [], "assumptions": [],
+                    "controls": [{
+                        "key": tariff, "type": "number", "label": "Electricity price",
+                        "default": 0.20, "minimum": 0.10, "maximum": 0.50, "step": 0.10,
+                        "group": " Costs ", "unit": "$/kWh", "rerun_mode": "rebuild",
+                    }],
+                    "selected_solver": "Fleet scheduler",
+                    "solver_examples": [{
+                        "name": "Fleet scheduler", "method": "QAOA", "classical_steps": [],
+                        "quantum_steps": ["Measure the chosen schedule."], "encoding": "Route selectors",
+                        "qubits": {"decision_qubits": 5, "auxiliary_qubits": 0},
+                        "verification": ["Recompute charging costs from the schedule."],
+                        "reference_method": "Enumerate feasible schedules.",
+                        "build_steps": ["Price charging with the requested electricity rate."],
+                    }],
+                },
+            )
+            save_plan(workspace, planning)
+            return planning
+
+        def build(workspace, *_args, **_kwargs):
+            workspace.resolve("replay.json").write_text(json.dumps(fixture), encoding="utf-8")
+            workspace.resolve("main.py").write_text(dedent("""
+                import argparse
+                import json
+                from pathlib import Path
+
+                parser = argparse.ArgumentParser()
+                parser.add_argument("--electricity_price", type=float, default=0.20)
+                price = parser.parse_args().electricity_price
+                replay = json.loads(Path("replay.json").read_text(encoding="utf-8"))
+                simulation = replay["simulation"]
+                energy = sum(event["energy_kwh"] for van in simulation["vans"]
+                             for event in van["events"] if event["type"] == "charge")
+                costs = replay["evaluation"]["costs"]
+                # Emulate a stale tariff calculation to exercise rejected verification.
+                costs["electricity"] = energy * (0.20 if price == 0.40 else price)
+                cost = sum(costs.values())
+                result = {
+                    "status": "ok", "controls": {"electricity_price": price},
+                    "objective": {"value": cost, "unit": "USD"},
+                    "solution": {"cost_breakdown": costs,
+                                 "verification": {"feasible": True, "violations": []}},
+                    "simulation": simulation, "reference": {"objective_value": cost},
+                    "quantum": {"qubits": 5, "decision_qubits": 5, "counts": {"00101": 16}},
+                    "runtime_seconds": 0,
+                }
+                Path("results.json").write_text(json.dumps(result), encoding="utf-8")
+            """), encoding="utf-8")
+
+        def review(_workspace, runs, **_kwargs):
+            prices = []
+            issues = []
+            for run in runs:
+                price = run.controls.get(tariff, 0.20)
+                prices.append(price)
+                result = run.results
+                charged = sum(event["battery_end_kwh"] - event["battery_start_kwh"]
+                              for van in result["simulation"]["vans"] for event in van["events"]
+                              if event["type"] == "charge")
+                if (result["controls"][tariff] != price
+                        or not isclose(result["solution"]["cost_breakdown"]["electricity"], charged * price)
+                        or not isclose(result["objective"]["value"], fixed_cost + charged * price)):
+                    issues.append(SemanticIssue(
+                        file="results", requirement="Use the effective tariff.",
+                        problem="The electricity cost uses a different tariff.", fix="Recalculate the cost.",
+                    ))
+            reviewed_tariffs.append(prices)
+            return SemanticReview(
+                verdict="falls_short" if issues else "matches",
+                summary="Checked the requested tariff against energy and cost.",
+                checks_done=["Recomputed charging costs from battery changes."], issues=issues, model="fixture",
+            )
+
+        approves = FinalCheck(name="Fixture review", returns_to="build", verdict="matches",
+                              summary="Approved the finite fleet plan.", issues=[])
+        views = {}
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.dict(os.environ, {"QUANTUM_BACKEND_URL": "", "GEMINI_API_KEY": "fixture-key"}),
+                patch("server.VIEWS", views),
+                patch("pipeline_live.planner_session", return_value=nullcontext(object())),
+                patch("backend.workspace.init_workspace", side_effect=lambda *args, **kwargs: init_workspace(
+                    *args, root=root, **kwargs,
+                )),
+                patch("backend.workspace.open_workspace", side_effect=lambda workspace_id: open_workspace(
+                    workspace_id, root=root,
+                )),
+                patch("backend.pipeline.parse_problem_statement", side_effect=parse),
+                patch("backend.pipeline.run_planning", side_effect=plan) as planner,
+                patch("backend.pipeline.run_build_phase", side_effect=build),
+                patch("backend.final_check.CHECKS", (lambda *_args: approves,)),
+                patch("backend.testing.evaluate_semantics", side_effect=review),
+                patch("backend.semantics.evaluate_semantics", side_effect=review),
+            ):
+                with self.request("/api/config") as response:
+                    self.assertTrue(json.load(response)["pipeline_backend_configured"])
+                first = self.run_plan("live", prompt=prompt)
+                workspace = open_workspace(first["plan_id"], root=root)
+                baseline = {name: workspace.resolve(name).read_bytes() for name in ("results.json", "handoff.json")}
+
+                updated = self.run_plan("live", view_id=first["view_id"], variables={tariff: 0.30})
+                message = self.assert_run_error("live", 422, view_id=updated["view_id"], variables={tariff: 0.40})
+                self.assertIn("independent review", message)
+                self.assertEqual(views, {view["view_id"]: view for view in (first, updated)})
+                for name, before in baseline.items():
+                    self.assertEqual(workspace.resolve(name).read_bytes(), before)
+                self.assertEqual(list(root.iterdir()), [workspace.path])
+
+        self.assertEqual(planner.call_count, 1)
+        self.assertEqual(first["problem"]["original_prompt"], prompt)
+        self.assertEqual(first["effective_values"], {tariff: 0.20})
+        control, = first["variables"]
+        self.assertEqual(
+            (control["id"], control["minimum"], control["maximum"], control["step"], control["group"]),
+            (tariff, 0.10, 0.50, 0.10, "Costs"),
+        )
+        self.assertEqual(updated["run_id"], first["run_id"])
+        self.assertEqual(updated["plan_id"], first["plan_id"])
+        self.assertNotEqual(updated["attempt_id"], first["attempt_id"])
+        self.assertEqual(updated["effective_values"], {tariff: 0.30})
+        self.assertAlmostEqual(updated["evaluation"]["costs"]["electricity"], 1.50)
+        self.assertAlmostEqual(updated["evaluation"]["objective_value"], first["evaluation"]["objective_value"] + 0.50)
+        self.assertEqual(reviewed_tariffs, [[0.20, 0.30], [0.30], [0.40]])
 
     def test_recalculation_rejects_a_stale_schedule_with_matching_values(self):
         initial = verified_handoff({})

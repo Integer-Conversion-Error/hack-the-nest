@@ -13,7 +13,8 @@ SCENARIO = "ev-fleet-dispatch-optimization"
 RECORDING_DIR = (
     REPO_ROOT / "example-backend-final-result" / "20261115-071610-ev-fleet-dispatch-optimization-6252"
 )
-RECORDED_PROMPT = (REPO_ROOT / "example-user-prompts" / f"{SCENARIO}.md").read_text(encoding="utf-8")
+RECORDED_PROMPT = (RECORDING_DIR / "prompt.md").read_text(encoding="utf-8")
+LIVE_PROMPT = (REPO_ROOT / "example-user-prompts" / f"{SCENARIO}.md").read_text(encoding="utf-8")
 
 
 def _read_json(name):
@@ -157,7 +158,8 @@ def recorded_handoff(values, previous=None):
     )
 
 
-def project_ev_result(output, identity, *, provenance, explanation, source=None):
+def project_ev_result(output, identity, *, provenance, explanation, source=None,
+                      prompt=RECORDED_PROMPT, controls=RECORDED_CONTROLS):
     """Map the checked solver output to the existing EV display contract."""
     require(
         isinstance(output, dict) and output.get("status") == "ok" and output.get("error") is None,
@@ -179,9 +181,9 @@ def project_ev_result(output, identity, *, provenance, explanation, source=None)
         "problem": {
             "title": _GO_HANDOFF["problem"]["title"],
             "statement": _GO_HANDOFF["problem"]["summary"],
-            "original_prompt": RECORDED_PROMPT,
+            "original_prompt": prompt,
         },
-        "controls": RECORDED_CONTROLS,
+        "controls": controls,
         "result": {
             **identity,
             "status": "verified",
