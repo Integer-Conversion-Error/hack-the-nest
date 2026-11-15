@@ -343,7 +343,8 @@ anything in the plan you could not implement.
 - `reference`: the exact or bounded classical result and how it was computed,
   kept separate from the measured result. Null if the plan has none.
 - `quantum`: `method`, `qubits`, `shots`, `circuit_runs`, the final measured
-  `counts`, the `best_bitstring`, and the share of shots on it.
+  `counts`, the `best_bitstring`, the share of shots on it, and
+  `circuit_diagram`: the dict returned by `qr_runtime.save_circuit_diagram`.
 - `runtime_seconds`.
 
 Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
@@ -358,6 +359,18 @@ Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
   `rx(theta, q)`, `rz(phi, q)`, `rzz(theta, q1, q2)`, `cx(control, target)`,
   and `measure_all()`. Angles are plain floats; build a new circuit for each
   set of angles.
+- Once per run, after the final circuit is built, call
+  `qr_runtime.save_circuit_diagram(circuit, qubit_labels, section_labels)`.
+  It saves `circuit.png` in the workspace and returns a dict with the file
+  name, qubit count, depth and gate counts. `qubit_labels` is a list with one
+  short, distinct name per qubit saying what the qubit decides, in the user's
+  terms. Do not draw circuits yourself or import `qiskit` or `matplotlib`.
+- So the diagram shows the stages of the algorithm, call `circuit.barrier()`
+  (no arguments) before each stage after the first, such as each cost layer,
+  each mixer layer, an oracle, and the final measurement. `section_labels` is
+  a list with one short name per barrier, in order, naming the stage that
+  follows it, such as `["cost 1", "mixer 1", "cost 2", "mixer 2", "measure"]`.
+  Barriers do not change the measured results.
 - `numpy` and `scipy` are installed. Use only these, the standard library,
   `QuantumRingsLib`, and `qr_runtime`.
 

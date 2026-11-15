@@ -1,8 +1,8 @@
 """Test steps 1 and 2: run main.py and evaluate the build result.
 
 The solver runs in its own Python process, inside the workspace folder, with a
-time limit. The run passes if it exits cleanly and writes a results.json that
-follows the layout in prompts.md (build.contract). Otherwise the issues and the
+time limit. The run passes if it exits cleanly, writes a results.json that
+follows the layout in prompts.md (build.contract), and saves circuit.png. Otherwise the issues and the
 end of the program's output go back to Build.
 
     run = run_solver(workspace)                                       # plan defaults
@@ -25,6 +25,7 @@ from backend.prompt_loader import load_prompt
 from backend.workspace import Workspace
 
 RESULTS_JSON = "results.json"
+CIRCUIT_DIAGRAM = "circuit.png"  # saved by qr_runtime.save_circuit_diagram
 REQUIRED_KEYS = ("status", "controls", "objective", "solution", "reference", "quantum", "runtime_seconds")
 OUTPUT_TAIL_LINES = 40
 
@@ -74,7 +75,7 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _result_issues(results: dict, controls: dict, max_qubits: int) -> list[str]:
+def _result_issues(results: dict, controls: dict, max_qubits: int, diagram_exists: bool) -> list[str]:
     """Check a results.json that was written and parsed."""
     issues = []
     missing = [key for key in REQUIRED_KEYS if key not in results]
@@ -101,6 +102,12 @@ def _result_issues(results: dict, controls: dict, max_qubits: int) -> list[str]:
             issues.append(f"The run used {qubits} qubits, above the limit of {max_qubits}.")
         if not isinstance(quantum.get("counts"), dict) or not quantum["counts"]:
             issues.append(f"{RESULTS_JSON} needs quantum.counts with the measured outcomes of the final circuit.")
+        diagram = quantum.get("circuit_diagram")
+        if not isinstance(diagram, dict) or diagram.get("file") != CIRCUIT_DIAGRAM or not diagram_exists:
+            issues.append(
+                f"The run must save {CIRCUIT_DIAGRAM} with qr_runtime.save_circuit_diagram(final_circuit, qubit_labels) "
+                f"and put the returned dict in {RESULTS_JSON} under quantum.circuit_diagram."
+            )
 
     used = results.get("controls")
     for key, value in controls.items():
@@ -131,7 +138,9 @@ def run_solver(
     command = "python " + " ".join(arguments)
 
     results_path = workspace.resolve(RESULTS_JSON)
+    diagram_path = workspace.resolve(CIRCUIT_DIAGRAM)
     results_path.unlink(missing_ok=True)  # never read the output of an earlier run
+    diagram_path.unlink(missing_ok=True)
 
     if not workspace.resolve(ENTRY_POINT).is_file():
         return RunOutcome(
@@ -167,7 +176,7 @@ def run_solver(
             issues.append(f"{RESULTS_JSON} is not valid JSON: {error}")
         else:
             if isinstance(results, dict):
-                issues += _result_issues(results, controls, max_qubits)
+                issues += _result_issues(results, controls, max_qubits, diagram_path.is_file())
             else:
                 issues.append(f"{RESULTS_JSON} must contain a JSON object.")
                 results = None
