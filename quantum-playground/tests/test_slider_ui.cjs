@@ -108,39 +108,48 @@ class Element {
 }
 
 const get = id => registry.get(id);
-for (const [, id] of fs.readFileSync('web/index.html', 'utf8').matchAll(/id="([^"]+)"/g)) {
-  const element = new Element('div');
-  element.id = id;
-}
-get('mode').value = 'recorded';
-get('speed').value = '4';
 const posts = [];
 const frames = [];
 const pageEvents = new Map();
 const json = (body, ok = true) => ({ok, json: async () => body});
-const context = vm.createContext({
-  console, setTimeout, clearTimeout, URLSearchParams,
-  URL: {createObjectURL: () => 'blob:test-frame', revokeObjectURL() {}},
-  requestAnimationFrame() {},
-  window: {addEventListener: (event, listener) => pageEvents.set(event, listener)},
-  document: {
-    getElementById: get,
-    createElement: tag => new Element(tag),
-    querySelectorAll: selector => [...registry.values()].flatMap(element => element.querySelectorAll(selector)),
-  },
-  fetch: async (path, options) => {
-    if (path.startsWith('/api/pygame-frame?')) {
-      frames.push(new URLSearchParams(path.split('?')[1]));
-      return {ok: true, headers: {get: () => JSON.stringify(scene)}, blob: async () => ({})};
-    }
-    if (path === '/api/config') return json({backend_configured: true});
-    if (path === '/api/example') return json({prompt, variables});
-    assert.equal(path, '/api/run');
-    return new Promise(resolve => posts.push({payload: JSON.parse(options.body), respond: resolve}));
-  },
-});
-for (const name of ['fleet.js', 'live-updates.js', 'pygame-input.js', 'app.js']) {
-  vm.runInContext(fs.readFileSync('web/' + name, 'utf8'), context);
+const html = fs.readFileSync('web/index.html', 'utf8');
+let context;
+
+function boot(config) {
+  registry.clear();
+  posts.length = 0;
+  frames.length = 0;
+  pageEvents.clear();
+  for (const [, id] of html.matchAll(/id="([^"]+)"/g)) {
+    const element = new Element('div');
+    element.id = id;
+  }
+  get('mode').value = 'recorded';
+  get('speed').value = '4';
+  context = vm.createContext({
+    console, setTimeout, clearTimeout, URLSearchParams,
+    URL: {createObjectURL: () => 'blob:test-frame', revokeObjectURL() {}},
+    requestAnimationFrame() {},
+    window: {addEventListener: (event, listener) => pageEvents.set(event, listener)},
+    document: {
+      getElementById: get,
+      createElement: tag => new Element(tag),
+      querySelectorAll: selector => [...registry.values()].flatMap(element => element.querySelectorAll(selector)),
+    },
+    fetch: async (path, options) => {
+      if (path.startsWith('/api/pygame-frame?')) {
+        frames.push(new URLSearchParams(path.split('?')[1]));
+        return {ok: true, headers: {get: () => JSON.stringify(scene)}, blob: async () => ({})};
+      }
+      if (path === '/api/config') return json(config);
+      if (path === '/api/example') return json({prompt, variables});
+      assert.equal(path, '/api/run');
+      return new Promise(resolve => posts.push({payload: JSON.parse(options.body), respond: resolve}));
+    },
+  });
+  for (const name of ['fleet.js', 'live-updates.js', 'pygame-input.js', 'app.js']) {
+    vm.runInContext(fs.readFileSync('web/' + name, 'utf8'), context);
+  }
 }
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -153,7 +162,7 @@ async function waitFor(predicate, label) {
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-async function main() {
+async function testRecordedAndExternalModes() {
   await waitFor(() => posts.length === 1, 'initial request');
   assert.deepEqual(posts[0].payload, {mode: 'recorded', prompt});
   posts[0].respond(json(recordedFixture(35, 'recorded-35')));
@@ -278,7 +287,6 @@ async function main() {
   get('mode').value = 'live';
   get('mode').onchange();
   get('prompt').value = 'A new draft.\n';
-  assert.equal(get('submitted-prompt').textContent, prompt, 'draft and applied prompts stay separate');
   get('prompt-form').onsubmit({preventDefault() {}});
   assert.deepEqual(posts[4].payload, {mode: 'live', prompt: 'A new draft.\n'});
   const live = fixture(35, '3');
@@ -309,7 +317,67 @@ async function main() {
   console.log('PASS: recorded outcomes, explicit recalculation, failed and mismatched results, replay controls, and provenance');
 }
 
+async function testLocalSolver() {
+  await waitFor(() => posts.length === 1, 'initial live request');
+  assert.deepEqual(posts[0].payload, {mode: 'live', prompt});
+  assert.equal(get('prompt').readOnly, true);
+  assert.equal(get('mode').value, 'live');
+  assert.equal(get('status').textContent, 'Running solver…');
+
+  const live = (charge, attempt) => ({...fixture(charge, attempt), mode: 'live', provenance: 'live'});
+  posts[0].respond(json(live(35, 'local-1')));
+  await waitFor(() => frames.at(-1)?.get('view_id') === 'view-local-1' && !get('pygame-frame').hidden,
+    'first live map');
+
+  const control = get('variable-van_2_initial_charge_pct');
+  assert.equal(get('rerun').hidden, true);
+  control.value = '20';
+  control.onchange();
+  assert.deepEqual(posts[1].payload, {
+    mode: 'live', view_id: 'view-local-1', variables: {van_2_initial_charge_pct: 20},
+  });
+  assert.equal(get('score').textContent, '$15.78');
+  assert.equal(get('pygame-frame').hidden, false);
+  assert.match(get('applied-settings').textContent, /35%/);
+  assert.equal(get('applied-settings').hidden, false);
+
+  posts[1].respond(json({error: 'Solver unavailable.'}, false));
+  await flush();
+  assert.equal(get('error').textContent, 'Solver unavailable.');
+  assert.equal(get('score').textContent, '$15.78');
+  assert.equal(control.value, '20');
+  assert.equal(get('pygame-frame').hidden, false);
+  assert.equal(get('rerun').hidden, false);
+  assert.equal(get('rerun').textContent, 'Retry solver');
+
+  get('rerun').onclick();
+  assert.deepEqual(posts[2].payload, posts[1].payload);
+  posts[2].respond(json(live(20, 'local-2')));
+  await waitFor(() => frames.at(-1)?.get('view_id') === 'view-local-2' && !get('pygame-frame').hidden,
+    'recalculated live map');
+  assert.equal(get('score').textContent, '$58.37');
+  assert.equal(get('applied-settings').hidden, true);
+  assert.equal(get('error').hidden, true);
+  assert.equal(get('rerun').hidden, true);
+}
+
+async function main() {
+  boot({backend_configured: true});
+  try {
+    await testRecordedAndExternalModes();
+  } finally {
+    vm.runInContext('stopVisualizer()', context);
+  }
+
+  boot({backend_configured: true, local_backend_configured: true});
+  try {
+    await testLocalSolver();
+  } finally {
+    vm.runInContext('stopVisualizer()', context);
+  }
+}
+
 main().catch(error => {
   console.error(error);
   process.exitCode = 1;
-}).finally(() => vm.runInContext('stopVisualizer()', context));
+});

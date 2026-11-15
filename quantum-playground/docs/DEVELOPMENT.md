@@ -6,7 +6,7 @@ From the repository root, install the frontend requirements and start `python qu
 
 - **Recorded backend run** starts at 35% Van 2 charge with the final GO output in `handoff.json`. Choosing 20% loads the successful test output from `test.json`. Both settings replay their own submitted schedule and histogram.
 - **Exact reference** shows the offline classical schedules for the same two inputs.
-- **Live backend** sends the original prompt to the configured backend. After the backend returns a verified plan, **Apply and recalculate** uses its approved controls and plan identity. While a request is pending, the visible cost, applied settings, and map describe the last accepted result.
+- **Live backend** starts a built-in EV solve when you change Van 2's starting charge. The existing map stays visible during the solve. With `QUANTUM_BACKEND_URL` set, the dashboard sends the original prompt and control changes to the external service instead.
 - Click a van to highlight its route. Click the charger for bookings or a delivery for its completion time and deadline. The timeline shows drive, wait, charge, and delivery events. Click a block to seek to its start.
 - Click the frame to focus it. Use Space to play or pause, Left/Right to seek five minutes, Shift with an arrow to seek fifteen minutes, Home/End for the operating-window boundaries, V/C/D to cycle through vans, chargers, or deliveries, and Escape to clear selection.
 - View costs and circuit evidence in the result details or download the displayed result as JSON.

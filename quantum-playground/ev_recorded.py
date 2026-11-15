@@ -1,4 +1,4 @@
-"""Project the recorded backend EV runs into the dashboard replay schema."""
+"""Project recorded and live EV solver results into a dashboard replay."""
 
 import json
 from datetime import datetime
@@ -144,25 +144,34 @@ def _replay(solution, counts):
 def recorded_handoff(values, previous=None):
     """Load a verified recorded result for the requested settings."""
     recorded, filename, source_label = _recording(values)
-    require(
-        recorded["status"] == "ok" and recorded["error"] is None,
-        "The recorded backend run did not succeed.",
-    )
-    solution = recorded["solution"]
-    verification = solution["verification"]
-    require(
-        verification["feasible"] is True and not verification["violations"],
-        "The recorded backend schedule did not pass feasibility checks.",
-    )
-    cost = solution["cost_breakdown"]
-    quantum = recorded["quantum"]
-    simulation = _replay(solution, quantum["counts"])
     workspace_id = _GO_HANDOFF["workspace_id"]
     identity = {
         "run_id": previous["run_id"] if previous is not None else str(uuid4()),
         "plan_id": previous["plan_id"] if previous is not None else workspace_id,
         "attempt_id": str(uuid4()),
     }
+    return project_ev_result(
+        recorded, identity, provenance="recorded",
+        explanation=f"{source_label} from workspace {workspace_id}.",
+        source={"workspace_id": workspace_id, "file": filename, "label": source_label},
+    )
+
+
+def project_ev_result(output, identity, *, provenance, explanation, source=None):
+    """Map the checked solver output to the existing EV display contract."""
+    require(
+        isinstance(output, dict) and output.get("status") == "ok" and output.get("error") is None,
+        "The EV solver run did not succeed.",
+    )
+    solution = output["solution"]
+    verification = solution["verification"]
+    require(
+        verification["feasible"] is True and not verification["violations"],
+        "The EV schedule did not pass feasibility checks.",
+    )
+    cost = solution["cost_breakdown"]
+    quantum = output["quantum"]
+    simulation = _replay(solution, quantum["counts"])
     return {
         "schema_version": 1,
         **identity,
@@ -176,14 +185,14 @@ def recorded_handoff(values, previous=None):
         "result": {
             **identity,
             "status": "verified",
-            "provenance": "recorded",
-            "source": {"workspace_id": workspace_id, "file": filename, "label": source_label},
-            "effective_values": recorded["controls"],
+            "provenance": provenance,
+            **({"source": source} if source is not None else {}),
+            "effective_values": output["controls"],
             "simulation": simulation,
             "evaluation": {
                 "feasible": verification["feasible"],
-                "objective_value": recorded["objective"]["value"],
-                "reference_value": recorded["reference"]["objective_value"],
+                "objective_value": output["objective"]["value"],
+                "reference_value": output["reference"]["objective_value"],
                 "gap": verification["optimality_gap_usd"],
                 "costs": {
                     "driving": cost["driving_cost"],
@@ -203,7 +212,6 @@ def recorded_handoff(values, previous=None):
                 "actual_qubits": quantum["qubits"],
             },
             "assumptions": _PROBLEM["assumptions"],
-            "explanation": f"{source_label} from the workspace {workspace_id}. "
-                           f"The exact reference uses {recorded['reference']['method'].lower()}.",
+            "explanation": explanation,
         },
     }

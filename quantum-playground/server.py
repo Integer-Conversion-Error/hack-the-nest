@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from ev_live import SolverUnavailable, SolverFailed, local_solver_available, local_handoff
 from ev_recorded import RECORDED_CONTROLS, RECORDED_PROMPT, recorded_handoff
 from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
@@ -32,10 +33,7 @@ def backend_url():
     return os.environ.get("QUANTUM_BACKEND_URL", "").strip().rstrip("/")
 
 
-def request_handoff(payload):
-    base = backend_url()
-    if not base:
-        raise RequestError(503, "Set QUANTUM_BACKEND_URL to use the live backend.")
+def request_handoff(base, payload):
     try:
         request = Request(
             base + "/api/run",
@@ -106,16 +104,20 @@ def run_plan(data):
         handoff = reference_handoff(values, previous)
     else:
         attempt_id = str(uuid4())
-        payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
-        if previous is None:
-            payload["prompt"] = prompt
+        base = backend_url()
+        if base:
+            payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
+            if previous is None:
+                payload["prompt"] = prompt
+            else:
+                payload.update(
+                    run_id=previous["run_id"],
+                    plan_id=previous["plan_id"],
+                    previous_attempt_id=previous["attempt_id"],
+                )
+            handoff = request_handoff(base, payload)
         else:
-            payload.update(
-                run_id=previous["run_id"],
-                plan_id=previous["plan_id"],
-                previous_attempt_id=previous["attempt_id"],
-            )
-        handoff = request_handoff(payload)
+            handoff = local_handoff(prompt, values, previous, attempt_id)
     result = normalize_handoff(
         handoff, mode, prompt, previous,
         expected_values=values if previous is not None else None,
@@ -164,7 +166,9 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/example":
             return self.send_json(200, {"prompt": RECORDED_PROMPT, "variables": RECORDED_CONTROLS})
         if url.path == "/api/config":
-            return self.send_json(200, {"backend_configured": bool(backend_url())})
+            external = bool(backend_url())
+            local = not external and local_solver_available()
+            return self.send_json(200, {"backend_configured": external or local, "local_backend_configured": local})
         return super().do_GET()
 
     def send_frame(self, params):
@@ -238,7 +242,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(404, {"error": "Unknown endpoint."})
         except RequestError as exc:
             return self.send_json(exc.status, {"error": str(exc)})
-        except InvalidHandoff as exc:
+        except SolverUnavailable as exc:
+            return self.send_json(503, {"error": str(exc)})
+        except TimeoutError as exc:
+            return self.send_json(504, {"error": str(exc)})
+        except (InvalidHandoff, SolverFailed) as exc:
             return self.send_json(502, {"error": str(exc)})
         except UnverifiedResult as exc:
             return self.send_json(422, {"error": str(exc)})

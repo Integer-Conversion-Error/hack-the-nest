@@ -5,7 +5,6 @@
 <header>
   <a class="brand" href="/">◈ <span>FLEET LAB</span></a>
   <div class="header-right">
-    <span id="connection" class="connection">Connecting…</span>
     <select id="mode" aria-label="Run mode" disabled>
       <option value="recorded" selected>Recorded backend run</option>
       <option value="reference">Exact classical reference</option>
@@ -18,29 +17,26 @@
 <div class="workspace">
 <aside class="sidebar">
 <section class="panel input-panel">
-  <div class="panel-heading"><h2>Original prompt</h2><button class="text-button" id="load-example" type="button" disabled>Load example</button></div>
-  <form id="prompt-form">
-    <label class="sr-only" for="prompt">Original prompt</label>
-    <textarea id="prompt" required maxlength="10000" placeholder="What would you like to optimize?"></textarea>
-    <p id="mode-note" class="hint"></p>
-    <button class="primary" id="generate" type="submit" disabled>Load recorded example</button>
-  </form>
-  <div class="problem-block">
-    <h3>Problem statement</h3>
-    <h4 id="problem-title"></h4>
-    <p id="statement"></p>
-  </div>
   <div class="settings-block" id="settings" hidden>
-    <h3>Adjust the plan</h3>
     <div id="variables"></div>
-    <p id="applied-settings" class="hint"></p>
+    <p id="applied-settings" class="hint" hidden></p>
     <button class="secondary" id="rerun" type="button" disabled>Load recorded result</button>
   </div>
   <div id="run-status">
     <p id="status" role="status" aria-live="polite">Connecting…</p>
     <p id="error" role="alert" hidden></p>
   </div>
-  <details class="source-details"><summary>Prompt used for this plan</summary><p id="submitted-prompt"></p></details>
+  <div class="run-action" id="run-action" hidden>
+    <button class="primary" id="generate" type="submit" form="prompt-form" disabled>Load recorded example</button>
+  </div>
+  <details class="prompt-details" id="original-prompt">
+    <summary>Original prompt</summary>
+    <form id="prompt-form" novalidate>
+      <label class="sr-only" for="prompt">Original prompt</label>
+      <textarea id="prompt" required maxlength="10000" placeholder="What would you like to optimize?"></textarea>
+      <button class="text-button" id="load-example" type="button" hidden disabled>Load example</button>
+    </form>
+  </details>
 </section>
 </aside>
 <div class="main-column">

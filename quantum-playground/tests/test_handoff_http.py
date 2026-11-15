@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
+from ev_recorded import RECORDING_DIR
 from ev_reference import PROMPT, reference_handoff
 from server import Handler
 
@@ -149,7 +150,9 @@ class HandoffTests(unittest.TestCase):
             self.assertEqual(charging, {"V1": [(60, 90)], "V2": [(30, 60)]})
 
     def test_reference_dispatch_and_recalculation_work_without_backend(self):
-        with patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}):
+        with patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}), patch(
+            "server.local_solver_available", return_value=False
+        ):
             with self.request("/api/config") as response:
                 self.assertFalse(json.load(response)["backend_configured"])
             with self.request("/api/example") as response:
@@ -171,12 +174,40 @@ class HandoffTests(unittest.TestCase):
         self.assertIsNone(second["quantum"]["actual_qubits"])
         self.assertFalse(second["simulation"].get("counts"))
 
+    def test_builtin_solver_runs_again_when_the_charge_changes(self):
+        final = json.loads((RECORDING_DIR / "handoff.json").read_text(encoding="utf-8"))["results"]
+        tests = json.loads((RECORDING_DIR / "test.json").read_text(encoding="utf-8"))
+        alternate = next(run["results"] for run in tests["runs"] if run["controls"].get(CONTROL_ID) == 20)
+        with (
+            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}),
+            patch("ev_live.local_solver_available", return_value=True),
+            patch("server.local_solver_available", return_value=True),
+            patch("ev_live.run_solver", side_effect=[final, alternate]) as worker,
+        ):
+            with self.request("/api/config") as response:
+                self.assertTrue(json.load(response)["local_backend_configured"])
+            self.assert_run_error("live", 400, prompt="A different dispatch problem")
+            first = self.run_plan("live", prompt=PROMPT)
+            updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+
+        self.assertEqual([call.args for call in worker.call_args_list], [(35,), (20,)])
+        self.assertEqual(first["provenance"], "live")
+        self.assertEqual(updated["provenance"], "live")
+        self.assertEqual(updated["effective_values"], {CONTROL_ID: 20})
+        self.assertEqual(first["run_id"], updated["run_id"])
+        self.assertEqual(first["plan_id"], updated["plan_id"])
+        self.assertNotEqual(first["attempt_id"], updated["attempt_id"])
+        self.assertEqual(updated["simulation"]["counts"], alternate["quantum"]["counts"])
+        self.assertEqual(updated["evaluation"]["objective_value"], alternate["objective"]["value"])
+
     def test_live_posts_once_per_attempt_and_renders_each_accepted_view(self):
         first_handoff = verified_handoff({})
         updated_handoff = verified_handoff({CONTROL_ID: 20}, first_handoff["result"], provenance="recorded")
         backend_calls = self.configure_backend(first_handoff, updated_handoff)
         with self.request("/api/config") as response:
-            self.assertTrue(json.load(response)["backend_configured"])
+            config = json.load(response)
+            self.assertTrue(config["backend_configured"])
+            self.assertFalse(config["local_backend_configured"])
 
         first = self.run_plan("live", prompt=PROMPT)
         updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})

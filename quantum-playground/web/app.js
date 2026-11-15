@@ -9,23 +9,21 @@ const provenanceLabels = {
 const runModes = {
   recorded: {
     action: 'Load recorded example',
-    note: 'Replay the backend schedules and measured outcomes.',
     pending: 'Loading the recorded result…',
   },
   reference: {
     action: 'Load exact reference',
-    note: 'Replay the approved EV plan using the exact classical solution.',
     pending: 'Loading the exact reference…',
   },
   live: {
     action: 'Run backend',
-    note: 'Submit a prompt to the backend and wait for a verified result.',
     pending: 'Waiting for a verified backend result…',
   },
 };
 
 let inspected = null, pygameScene = null, pygameSceneView = null, scrubbing = null;
-let result = null, sim = null, busy = false, initialized = false, backendConfigured = false;
+let result = null, sim = null, busy = false, initialized = false;
+let backendConfigured = false, localBackendConfigured = false;
 let playing = false, minute = 0, last = 0, frameTimer = null, selectedVan = null;
 let examplePrompt = '', livePrompt = '';
 const controlInputs = new Map();
@@ -41,6 +39,13 @@ const money = amount => Number.isFinite(amount) ? '$' + amount.toFixed(2) : '—
 function error(message) {
   $('error').textContent = message;
   $('error').hidden = false;
+  $('run-status').hidden = false;
+}
+
+function setStatus(message) {
+  $('status').textContent = message;
+  $('status').hidden = !message;
+  $('run-status').hidden = !message && $('error').hidden;
 }
 
 function controlLabel(control, value) {
@@ -63,33 +68,50 @@ function controls(definitions, applied) {
       input.append(option);
     }
     input.value = String(applied[spec.id]);
-    input.onchange = updateButtons;
+    input.onchange = controlChanged;
     controlInputs.set(spec.id, input);
-    summary.push(spec.label + ' · ' + controlLabel(spec, applied[spec.id]));
+    summary.push(controlLabel(spec, applied[spec.id]));
     wrap.append(label, input);
     $('variables').append(wrap);
   }
   $('settings').hidden = !definitions.length;
-  $('applied-settings').textContent = 'Applied settings — ' + summary.join(', ');
+  $('applied-settings').textContent = 'Applied · ' + summary.join(', ');
 }
 
 function values() {
   return Object.fromEntries(Array.from(controlInputs, ([id, input]) => [id, Number(input.value)]));
 }
 
+function usesLocalSolver() {
+  return localBackendConfigured && $('mode').value === 'live';
+}
+
 function updateButtons() {
   const selectedMode = $('mode').value;
   const isLive = selectedMode === 'live';
+  const localLive = usesLocalSolver();
   const canRun = !isLive || backendConfigured;
+  const canEditPrompt = isLive && !localLive;
+  const hasCurrentResult = result?.mode === selectedMode;
+  const canApply = hasCurrentResult && controlInputs.size > 0;
+  const hasChanges = canApply
+    && Object.entries(values()).some(([id, value]) => result.effective_values[id] !== value);
+
   $('generate').disabled = !initialized || busy || !canRun;
-  $('load-example').hidden = !isLive;
+  $('run-action').hidden = !initialized || !canRun || busy || (hasCurrentResult && !canEditPrompt);
+  $('load-example').hidden = !canEditPrompt;
   $('load-example').disabled = !initialized || busy;
   $('mode').disabled = !initialized || busy;
-  $('prompt').readOnly = !isLive || busy;
-  const canApply = result?.mode === selectedMode && controlInputs.size > 0;
-  const hasChanges = Object.entries(values()).some(([id, value]) => result?.effective_values[id] !== value);
-  $('rerun').disabled = busy || !canApply || !hasChanges;
+  $('prompt').readOnly = !canEditPrompt || busy;
+  $('applied-settings').hidden = !hasChanges;
+  $('rerun').disabled = busy || !hasChanges;
+  $('rerun').hidden = localLive && (busy || !hasChanges || $('error').hidden);
   for (const input of controlInputs.values()) input.disabled = busy || !canApply;
+}
+
+function controlChanged() {
+  updateButtons();
+  if (usesLocalSolver() && !$('rerun').disabled) submitControlChanges();
 }
 
 async function request(path, data) {
@@ -151,17 +173,17 @@ const updater = createLatestUpdater({
     $('change-summary').textContent = payload.view_id && Number.isFinite(delta)
       ? (delta === 0 ? 'Cost unchanged' : 'Cost ' + (delta > 0 ? 'increased' : 'decreased') + ' by ' + money(Math.abs(delta)))
       : '';
-    $('status').textContent = provenanceLabels[data.provenance] + ' ready';
+    setStatus('');
   },
   onError: e => {
     error(e.message);
-    $('status').textContent = result ? 'Showing the last verified result' : 'Run failed';
+    setStatus(result ? 'Showing the last result' : '');
   }
 });
 
 function queueRun(payload, status) {
   $('error').hidden = true;
-  $('status').textContent = status;
+  setStatus(status);
   updater.schedule(payload, payload);
 }
 
@@ -169,11 +191,12 @@ function initialRun() {
   const mode = $('mode').value;
   const prompt = mode === 'live' ? $('prompt').value : examplePrompt;
   if (!prompt.trim()) {
+    $('original-prompt').open = true;
     $('prompt').reportValidity();
     return;
   }
   if ($('generate').disabled) return;
-  queueRun({mode, prompt}, runModes[mode].pending);
+  queueRun({mode, prompt}, usesLocalSolver() ? 'Running solver…' : runModes[mode].pending);
 }
 
 $('prompt-form').onsubmit = event => {
@@ -181,23 +204,28 @@ $('prompt-form').onsubmit = event => {
   initialRun();
 };
 
-$('rerun').onclick = () => {
+function submitControlChanges() {
   if ($('rerun').disabled) return;
-  const pending = result.mode === 'recorded' ? 'Loading the recorded result' : 'Recalculating';
-  queueRun({mode: result.mode, view_id: result.view_id, variables: values()}, pending + ' · showing the last verified result');
-};
+  const pending = usesLocalSolver()
+    ? 'Running solver…'
+    : result.mode === 'recorded' ? 'Loading the recorded result…' : 'Recalculating…';
+  queueRun({mode: result.mode, view_id: result.view_id, variables: values()}, pending);
+}
+$('rerun').onclick = submitControlChanges;
 
 function updateMode() {
   const mode = $('mode').value;
-  $('prompt').value = mode === 'live' ? livePrompt : examplePrompt;
-  $('generate').textContent = runModes[mode].action;
-  $('mode-note').textContent = runModes[mode].note;
-  $('rerun').textContent = mode === 'recorded' ? 'Load recorded result' : 'Apply and recalculate';
+  const localLive = usesLocalSolver();
+  $('prompt').value = mode === 'live' && !localLive ? livePrompt : examplePrompt;
+  $('generate').textContent = localLive ? 'Run solver' : runModes[mode].action;
+  $('rerun').textContent = localLive ? 'Retry solver' : mode === 'recorded' ? 'Load recorded result' : 'Apply and recalculate';
   updateButtons();
 }
 
 $('mode').onchange = () => {
   if (!$('prompt').readOnly) livePrompt = $('prompt').value;
+  $('error').hidden = true;
+  setStatus('');
   updateMode();
 };
 $('load-example').onclick = () => { $('prompt').value = examplePrompt; };
@@ -210,10 +238,13 @@ function render(data, {preserve = false} = {}) {
   minute = preserve ? Math.min(saved.minute, sim.duration_min) : 0;
   setPlaying(preserve && saved.playing && minute < sim.duration_min);
 
-  $('problem-title').textContent = data.problem?.title || 'Dispatch request';
-  $('statement').textContent = data.problem?.statement || '';
-  $('submitted-prompt').textContent = data.problem?.original_prompt || '';
-  $('run-badge').textContent = provenanceLabels[data.provenance];
+  const engineLabel = {
+    'quantum-rings': 'Quantum Rings',
+    'numpy-statevector': 'Local simulator',
+  }[data.quantum?.engine];
+  $('run-badge').textContent = data.provenance === 'live' && engineLabel
+    ? 'Live · ' + engineLabel
+    : provenanceLabels[data.provenance];
   controls(data.variables || [], data.effective_values || {});
 
   $('circuits').replaceChildren();
@@ -295,7 +326,7 @@ function startVisualizer(){
     if(revision!==viewRevision||!pygameView)return;
     let delay=150;const frameStarted=Date.now(),viewId=result?.view_id;
     try{
-      if(!result||!sim){$('frame-status').textContent='Build a plan to see the map.';return;}
+      if(!result||!sim){$('frame-status').textContent=busy?'Waiting for a result…':'Run a plan to see the map.';return;}
       const resolution=PygameInput.resolutionFor($('pygame-view').getBoundingClientRect(),window.devicePixelRatio||1);
       const replayMinute = String(minute);
       const key=`${viewId}:${replayMinute}:${selectedVan||''}:${playing}:${$('speed').value}:${resolution}`;
@@ -397,7 +428,7 @@ window.addEventListener('pageshow', event => {
   if (event.persisted) startVisualizer();
 });
 $('export').onclick=()=>{if(!result)return;const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'})),a=node('a');a.href=url;a.download=`ev-dispatch-${result.run_id}-${result.attempt_id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-$('feedback').onclick=async()=>{if(!result)return;const feedback=prompt('Feedback is saved for this server session. What should change?');if(!feedback)return;try{await request('/api/feedback',{view_id:result.view_id,feedback});$('status').textContent='Feedback saved locally for this server session';}catch(e){error(e.message);}};
+$('feedback').onclick=async()=>{if(!result)return;const feedback=prompt('Feedback is saved for this server session. What should change?');if(!feedback)return;try{await request('/api/feedback',{view_id:result.view_id,feedback});setStatus('Feedback saved locally');}catch(e){error(e.message);}};
 async function init() {
   try {
     const [config, example] = await Promise.all(
@@ -409,16 +440,17 @@ async function init() {
     );
     examplePrompt = example.prompt;
     livePrompt = examplePrompt;
-    backendConfigured = config.backend_configured;
+    localBackendConfigured = Boolean(config.local_backend_configured);
+    backendConfigured = localBackendConfigured || Boolean(config.backend_configured);
     $('live-mode').disabled = !backendConfigured;
-    $('connection').textContent = backendConfigured ? 'Backend configured' : 'Local replays';
+    if (localBackendConfigured) $('mode').value = 'live';
     initialized = true;
     updateMode();
     startVisualizer();
     initialRun();
   } catch (e) {
     error('Unable to load the local service. Start the dashboard server and refresh.');
-    $('connection').textContent = 'Service unavailable';
+    setStatus('');
   }
 }
 

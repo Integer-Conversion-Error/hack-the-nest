@@ -1,6 +1,8 @@
 # Verified EV handoff
 
-The dashboard calls the backend host at `QUANTUM_BACKEND_URL`. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. The `backend.pipeline` CLI runs the workflow and writes `handoff.json` in the workspace after GO. Its file uses `workspace_id`, `decision`, and `results`. The live HTTP adapter needs to translate that file into the versioned response below, including attempt identity and the timed EV schedule. See the [solver skill](../../agent-prompts/skills/backend/run-quantum-solver/SKILL.md) and [verification skill](../../agent-prompts/skills/backend/verify-and-handoff/SKILL.md).
+The built-in EV solver runs locally when the dashboard dependencies are installed. It accepts the EV example prompt and rebuilds the QUBO for each selected charge. The worker reports fresh circuit measurements and passes the chosen schedule through independent verification before the dashboard updates.
+
+Set `QUANTUM_BACKEND_URL` to use an external backend host instead. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. The `backend.pipeline` CLI runs the workflow and writes `handoff.json` in the workspace after GO. Its file uses `workspace_id`, `decision`, and `results`. The live HTTP adapter needs to translate that file into the versioned response below, including attempt identity and the timed EV schedule. See the [solver skill](../../agent-prompts/skills/backend/run-quantum-solver/SKILL.md) and [verification skill](../../agent-prompts/skills/backend/verify-and-handoff/SKILL.md).
 
 Set the URL in the dashboard server environment. For example, in PowerShell:
 
