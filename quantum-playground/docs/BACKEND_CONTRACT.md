@@ -37,8 +37,10 @@ A successful response is a v1 `VisualizationHandoff` with these fields.
 | `run_id`, `plan_id`, `attempt_id` | The host run and plan IDs and the requested attempt ID, repeated exactly in `result`. An Apply response keeps the run and plan IDs. A completion for an earlier attempt is rejected. |
 | `scene_type` | `"ev_fleet"` |
 | `problem` | `title`, a concise `statement`, and the exact `original_prompt`. |
-| `controls` | Approved numeric enum controls using the plan's `key` (or `id`), `label`, `allowed_values`, `default`, and `rerun_mode`. An optional `unit` is appended to displayed choice values. Keep the definitions stable for the same plan ID. |
+| `controls` | Approved Plan controls with `key` (or `id`), `label`, `type`, `default`, and `rerun_mode`. Specify `allowed_values` for discrete choices, or `minimum`, `maximum`, and optional `step` for a numeric range. A boolean can omit choices. Optional `unit` and `group` affect display. Keep the definitions stable for the same plan ID. |
 | `result` | The verified `RunResult` described below. |
+
+The Plan phase selects controls that the proposed implementation can apply. The dashboard renders the controls approved for that run and posts their typed values. For a cost control, use those values in both the solver and independent verifier before sending the new schedule. The built-in EV example approves Van 2 starting charge at 20% and 35%.
 
 The result includes the three IDs, `status: "verified"`, and `provenance: "live"` for a fresh execution or `"recorded"` for previously verified execution data. `effective_values` gives the complete control values used for the attempt. The initial values match the approved defaults. Apply results match the requested values.
 
@@ -52,7 +54,7 @@ The dashboard validates handoff identity, approved settings, and replay consiste
 
 ## Local recordings and integration checks
 
-The default dashboard mode projects the [recorded backend workspace](../../example-backend-final-result/20261115-071610-ev-fleet-dispatch-optimization-6252) into the same replay model. It uses `problem.json` for the map and operating constraints, the final GO `handoff.json` result for 35%, and the successful 20% run in `test.json`. The player preserves each result's measured counts, timed route, and comparison with the exact reference. The downloaded view identifies its source workspace and file.
+Recorded backend mode projects the [recorded backend workspace](../../example-backend-final-result/20261115-071610-ev-fleet-dispatch-optimization-6252) into the same replay model. It uses `problem.json` for the map and operating constraints, the final GO `handoff.json` result for 35%, and the successful 20% run in `test.json`. The player preserves each result's measured counts, timed route, and comparison with the exact reference. The downloaded view identifies its source workspace and file.
 
 The optional exact classical replays from the [EV solver plan](../../example-solver-plans/ev-fleet-dispatch-optimization.md) use `status: "reference"` and `provenance: "classical_reference"`. Their measurement counts are empty.
 

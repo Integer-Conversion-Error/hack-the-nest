@@ -195,10 +195,13 @@ them with the request before planning.
   measured outcome and classical reference separate. For penalty encodings,
   give a defensible penalty bound and describe an encoding check when the
   instance is small enough to enumerate.
-- Select controls the proposed implementation can apply, if any. For each, give
-  a stable key, label, type, default, valid values or bounds, and recalculation
-  mode. Cover the qubit and time limits for supported inputs. Keep each default
-  within the allowed values and record meaningful assumptions.
+- Select controls the proposed implementation can apply, if any. Consider
+  scenario inputs and objective rates that the user can meaningfully explore.
+  For each, give a stable key, label, type, default, valid values or bounds, and
+  recalculation mode. Include a unit where it clarifies the value and a group
+  when related controls belong together, such as Costs. Cover the qubit and
+  time limits for supported inputs. Keep each default within the allowed values
+  and record meaningful assumptions.
 
 Return `needs_clarification` with focused questions when a missing or conflicting
 fact changes feasibility or the objective. Return `unsupported` with a reason

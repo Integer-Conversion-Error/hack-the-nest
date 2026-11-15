@@ -2,6 +2,7 @@
 
 import math
 import re
+from fractions import Fraction
 
 
 class InvalidHandoff(ValueError):
@@ -30,6 +31,34 @@ def is_text(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def control_type_matches(kind, value):
+    if kind == "integer":
+        return type(value) is int and is_number(value)
+    if kind == "number":
+        return is_number(value)
+    if kind == "boolean":
+        return type(value) is bool
+    return kind == "string" and type(value) is str
+
+
+def control_accepts(control, value):
+    kind = control["type"]
+    if not control_type_matches(kind, value):
+        return False
+    choices = control["allowed_values"]
+    if choices is not None:
+        return value in choices
+    if kind == "boolean":
+        return True
+    minimum, maximum, step = (control[field] for field in ("minimum", "maximum", "step"))
+    if not minimum <= value <= maximum:
+        return False
+    if step is None:
+        return True
+    offset = Fraction(str(value)) - Fraction(str(minimum))
+    return offset % Fraction(str(step)) == 0
+
+
 def normalize_controls(controls):
     require(isinstance(controls, list), "The handoff must include approved controls.")
     normalized = []
@@ -39,23 +68,54 @@ def normalize_controls(controls):
         key = control.get("key", control.get("id"))
         choices = control.get("allowed_values")
         default = control.get("default")
+        kind = control.get("type")
+        if kind is None and isinstance(choices, list) and is_number(default):
+            # Legacy numeric enums allowed integer and decimal requests.
+            kind = "number"
+        unit, group = control.get("unit"), control.get("group")
         require(
             isinstance(key, str) and re.fullmatch(r"[a-z][a-z0-9_]*", key) and key not in seen
-            and is_text(control.get("label")) and isinstance(choices, list) and choices
-            and all(is_number(value) for value in choices) and len(set(choices)) == len(choices)
-            and is_number(default) and default in choices
+            and is_text(control.get("label")) and kind in ("integer", "number", "boolean", "string")
+            and control_type_matches(kind, default)
             and control.get("rerun_mode") in ("bind", "rebuild", "resample")
-            and isinstance(control.get("unit", ""), str),
-            "The EV dashboard expects unique numeric enum controls with an allowed default.",
+            and (unit is None or isinstance(unit, str)) and (group is None or is_text(group)),
+            "Invalid approved control definition.",
         )
-        normalized.append({
+        minimum, maximum, step = (control.get(field) for field in ("minimum", "maximum", "step"))
+        bounds = (minimum, maximum, step)
+        if choices is not None:
+            require(
+                isinstance(choices, list) and choices
+                and all(control_type_matches(kind, value) for value in choices)
+                and len(set(choices)) == len(choices) and all(value is None for value in bounds),
+                f"Invalid allowed values for {control['label']}.",
+            )
+        elif kind == "boolean":
+            require(all(value is None for value in bounds), f"Invalid bounds for {control['label']}.")
+        else:
+            require(
+                kind in ("integer", "number")
+                and control_type_matches(kind, minimum) and control_type_matches(kind, maximum)
+                and minimum <= maximum
+                and (step is None or (control_type_matches(kind, step) and step > 0)),
+                f"Invalid numeric range for {control['label']}.",
+            )
+        definition = {
             "id": key,
             "label": control["label"],
+            "type": kind,
             "allowed_values": choices,
             "default": default,
-            "unit": control.get("unit", ""),
+            "minimum": minimum,
+            "maximum": maximum,
+            "step": step,
+            "unit": unit or "",
             "rerun_mode": control["rerun_mode"],
-        })
+        }
+        if group is not None:
+            definition["group"] = group.strip()
+        require(control_accepts(definition, default), f"Invalid default for {control['label']}.")
+        normalized.append(definition)
         seen.add(key)
     return normalized
 
@@ -69,10 +129,10 @@ def applied_values(controls, values, overrides):
     for control in controls:
         key = control["id"]
         value = overrides.get(key, values[key])
-        choices = control["allowed_values"]
-        if not is_number(value) or value not in choices:
+        if not control_accepts(control, value):
             raise ValueError(f"Invalid value for {control['label']}.")
-        applied[key] = choices[choices.index(value)]
+        choices = control["allowed_values"]
+        applied[key] = choices[choices.index(value)] if choices is not None else value
     return applied
 
 
@@ -228,7 +288,7 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
     effective = result.get("effective_values")
     require(
         isinstance(effective, dict) and set(effective) == set(defaults)
-        and all(is_number(effective[c["id"]]) and effective[c["id"]] in c["allowed_values"] for c in controls)
+        and all(control_accepts(control, effective[control["id"]]) for control in controls)
         and effective == (defaults if expected_values is None else expected_values),
         "The result's effective values do not match the requested settings.",
     )
@@ -238,9 +298,10 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
     van_2_charge = effective.get("van_2_initial_charge_pct")
     if van_2_charge is not None:
         van_2 = next((van for van in simulation["vans"] if van["id"] == "V2"), None)
+        require(is_number(van_2_charge) and 0 <= van_2_charge <= 100, "Invalid Van 2 charge percentage.")
         expected_battery = simulation["battery_capacity_kwh"] * (van_2_charge / 100)
         require(
-            van_2 is not None and 0 <= van_2_charge <= 100
+            van_2 is not None
             and math.isclose(van_2["initial_battery_kwh"], expected_battery, abs_tol=1e-7),
             "Van 2's starting battery does not match the applied charge.",
         )
