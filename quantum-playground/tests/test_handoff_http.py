@@ -33,6 +33,14 @@ def verified_handoff(values, previous=None, provenance="live"):
     return handoff
 
 
+
+def with_attempt(handoff, attempt_id):
+    response = copy.deepcopy(handoff)
+    response["attempt_id"] = attempt_id
+    response["result"]["attempt_id"] = attempt_id
+    return response
+
+
 class HandoffTests(unittest.TestCase):
     def setUp(self):
         self.dashboard_url = self.serve(QuietDashboard)
@@ -54,7 +62,13 @@ class HandoffTests(unittest.TestCase):
             def do_POST(self):
                 request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 calls.append((self.path, request))
-                response = next(pending, None)
+                template = next(pending, None)
+                if callable(template):
+                    response = template(request)
+                elif template is not None:
+                    response = with_attempt(template, request["attempt_id"])
+                else:
+                    response = None
                 body = json.dumps(response if response is not None else {"error": "Unexpected backend call"}).encode()
                 self.send_response(200 if response is not None else 500)
                 self.send_header("Content-Type", "application/json")
@@ -87,6 +101,7 @@ class HandoffTests(unittest.TestCase):
                 self.assertEqual(response.code, expected_status)
             body = json.load(response)
             self.assertTrue(body["error"])
+            return body["error"]
 
     def read_frame(self, view_id):
         params = urlencode({"view_id": view_id, "minute": 60})
@@ -128,9 +143,12 @@ class HandoffTests(unittest.TestCase):
         first = self.run_plan("live", prompt=PROMPT)
         updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
         self.assertEqual(backend_calls, [
-            ("/api/run", {"schema_version": 1, "prompt": PROMPT, "values": {}}),
+            ("/api/run", {
+                "schema_version": 1, "attempt_id": first["attempt_id"], "prompt": PROMPT, "values": {},
+            }),
             ("/api/run", {
                 "schema_version": 1,
+                "attempt_id": updated["attempt_id"],
                 "run_id": first["run_id"],
                 "plan_id": first["plan_id"],
                 "previous_attempt_id": first["attempt_id"],
@@ -139,7 +157,7 @@ class HandoffTests(unittest.TestCase):
         ])
         self.assertEqual(first["provenance"], "live")
         self.assertEqual(updated["provenance"], "recorded")
-        self.assertEqual(updated["attempt_id"], updated_handoff["attempt_id"])
+        self.assertNotEqual(updated["attempt_id"], first["attempt_id"])
         self.assertEqual(updated["effective_values"], {CONTROL_ID: 20})
         self.assertEqual(updated["circuits"], updated_handoff["result"]["circuits"])
         self.assertNotEqual(first["view_id"], updated["view_id"])
@@ -166,11 +184,14 @@ class HandoffTests(unittest.TestCase):
 
         no_go = copy.deepcopy(valid)
         no_go["result"].update(status="no_go", message="No feasible measurement.")
-        different_attempt = copy.deepcopy(valid)
-        different_attempt["result"]["attempt_id"] = first_handoff["attempt_id"]
-        reused_attempt = copy.deepcopy(valid)
-        reused_attempt["attempt_id"] = first_handoff["attempt_id"]
-        reused_attempt["result"]["attempt_id"] = first_handoff["attempt_id"]
+        def mismatched_identity(request):
+            response = with_attempt(valid, request["attempt_id"])
+            response["result"]["attempt_id"] = request["previous_attempt_id"]
+            return response
+
+        def reuse_previous_attempt(request):
+            return with_attempt(valid, request["previous_attempt_id"])
+
         different_values = verified_handoff({CONTROL_ID: 35}, first_handoff["result"])
         different_controls = copy.deepcopy(valid)
         different_controls["controls"][0]["allowed_values"].append(25)
@@ -182,14 +203,17 @@ class HandoffTests(unittest.TestCase):
 
         failures = {
             "no go": no_go,
-            "mismatched attempt": different_attempt,
-            "reused attempt": reused_attempt,
+            "mismatched attempt": mismatched_identity,
+            "reused attempt": reuse_previous_attempt,
             "mismatched values": different_values,
             "changed approved controls": different_controls,
             "unsupported scene": bad_scene,
             "unknown delivery entity": unknown_delivery,
         }
-        calls = self.configure_backend(first_handoff, *failures.values(), valid, first_handoff)
+        def reuse_initial_attempt(_request):
+            return with_attempt(first_handoff, calls[0][1]["attempt_id"])
+
+        calls = self.configure_backend(first_handoff, *failures.values(), valid, reuse_initial_attempt)
         first = self.run_plan("live", prompt=PROMPT)
         for problem in failures:
             with self.subTest(problem=problem):
@@ -201,6 +225,31 @@ class HandoffTests(unittest.TestCase):
         with patch("pygame_renderer.render_png", return_value=b"fixture png") as render:
             self.assertEqual(self.read_frame(first["view_id"]), b"fixture png")
             self.assertEqual(render.call_args.args[0]["vans"][1]["initial_battery_kwh"], 7)
+
+
+    def test_retry_rejects_a_result_for_the_timed_out_attempt(self):
+        initial = verified_handoff({})
+        updated = verified_handoff({CONTROL_ID: 20}, initial["result"])
+        timed_out_attempts = []
+
+        def time_out(request, *, timeout):
+            timed_out_attempts.append(json.loads(request.data)["attempt_id"])
+            raise TimeoutError()
+
+        def late_result(_request):
+            return with_attempt(updated, timed_out_attempts[0])
+
+        calls = self.configure_backend(initial, late_result, updated)
+        first = self.run_plan("live", prompt=PROMPT)
+        request = {"view_id": first["view_id"], "variables": {CONTROL_ID: 20}}
+        with patch("server.urlopen", side_effect=time_out):
+            self.assert_run_error("live", 504, **request)
+
+        self.assertIn("pending attempt", self.assert_run_error("live", 502, **request))
+        accepted = self.run_plan("live", **request)
+        retry_attempts = [payload["attempt_id"] for _, payload in calls[1:]]
+        self.assertEqual(len(set(timed_out_attempts + retry_attempts)), 3)
+        self.assertEqual(accepted["attempt_id"], retry_attempts[-1])
 
 
 if __name__ == "__main__":

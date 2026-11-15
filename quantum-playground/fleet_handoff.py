@@ -182,7 +182,7 @@ def validate_replay(sim):
     return len(delivered)
 
 
-def normalize_handoff(handoff, mode, prompt, previous=None, expected_values=None):
+def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=None, expected_attempt_id=None):
     require(isinstance(handoff, dict) and type(handoff.get("schema_version")) is int
             and handoff["schema_version"] == 1, "Expected a VisualizationHandoff with schema_version 1.")
     result = handoff.get("result")
@@ -192,6 +192,8 @@ def normalize_handoff(handoff, mode, prompt, previous=None, expected_values=None
         all(is_text(value) and result.get(key) == value for key, value in identity.items()),
         "The handoff and result IDs do not match.",
     )
+    if expected_attempt_id is not None:
+        require(identity["attempt_id"] == expected_attempt_id, "The handoff does not match the pending attempt.")
     if previous is not None:
         require(
             identity["run_id"] == previous["run_id"] and identity["plan_id"] == previous["plan_id"]

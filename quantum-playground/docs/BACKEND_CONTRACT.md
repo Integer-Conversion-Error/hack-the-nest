@@ -11,16 +11,16 @@ python quantum-playground/server.py
 
 ## Host request
 
-Implement `POST /api/run` with an `application/json` body. An initial request carries the original prompt and lets the host resolve the plan defaults.
+Implement `POST /api/run` with an `application/json` body. The dashboard supplies a fresh `attempt_id` for each request, including retries. The host uses that ID for the execution and returns it in the handoff. An initial request carries the original prompt and lets the host resolve the plan defaults.
 
 ```json
-{"schema_version":1,"prompt":"Dispatch the fleet using these inputs...","values":{}}
+{"schema_version":1,"attempt_id":"attempt-1","prompt":"Dispatch the fleet using these inputs...","values":{}}
 ```
 
-Apply requests carry the last accepted backend identities and the complete set of requested values for the approved controls. Load the original prompt and approved plan from the run, validate the control values, and create a fresh attempt under the same plan. The EV plan uses `rerun_mode: rebuild` for `van_2_initial_charge_pct`. Rebuild the options and circuit, execute, then independently verify the selected result and recompute its exact reference.
+Apply requests carry the last accepted backend identities and the complete set of requested values for the approved controls. Load the original prompt and approved plan from the run, validate the control values, and start the requested attempt under the same plan. The EV plan uses `rerun_mode: rebuild` for `van_2_initial_charge_pct`. Rebuild the options and circuit, execute, then independently verify the selected result and recompute its exact reference.
 
 ```json
-{"schema_version":1,"run_id":"ev-run-1","plan_id":"ev-plan-1","previous_attempt_id":"attempt-1","values":{"van_2_initial_charge_pct":20}}
+{"schema_version":1,"attempt_id":"attempt-2","run_id":"ev-run-1","plan_id":"ev-plan-1","previous_attempt_id":"attempt-1","values":{"van_2_initial_charge_pct":20}}
 ```
 
 The host enforces its workspace limits. The dashboard waits up to 300 seconds for the response. For clarification, unsupported problems, timeouts, and NO-GO, return an appropriate HTTP error and a JSON `error` string with the actionable next step. An identified result with a status other than `verified` is also rejected. Its `message` is displayed when supplied.
@@ -32,7 +32,7 @@ A successful response is a v1 `VisualizationHandoff` with these fields.
 | Field | Contents |
 | --- | --- |
 | `schema_version` | `1` |
-| `run_id`, `plan_id`, `attempt_id` | The host IDs, repeated exactly in `result`. An Apply response keeps the run and plan IDs and returns a fresh attempt ID. |
+| `run_id`, `plan_id`, `attempt_id` | The host run and plan IDs and the requested attempt ID, repeated exactly in `result`. An Apply response keeps the run and plan IDs. A completion for an earlier attempt is rejected. |
 | `scene_type` | `"ev_fleet"` |
 | `problem` | `title`, a concise `statement`, and the exact `original_prompt`. |
 | `controls` | Approved numeric enum controls using the plan's `key` (or `id`), `label`, `allowed_values`, `default`, and `rerun_mode`. An optional `unit` is appended to displayed choice values. Keep the definitions stable for the same plan ID. |

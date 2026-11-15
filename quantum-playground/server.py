@@ -98,10 +98,12 @@ def run_plan(data):
         if mode == "reference" and prompt != PROMPT:
             raise ValueError("Load the EV example prompt to run the reference.")
 
+    attempt_id = None
     if mode == "reference":
         handoff = reference_handoff(values, previous)
     else:
-        payload = {"schema_version": 1, "values": values}
+        attempt_id = str(uuid4())
+        payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
         if previous is None:
             payload["prompt"] = prompt
         else:
@@ -111,7 +113,11 @@ def run_plan(data):
                 previous_attempt_id=previous["attempt_id"],
             )
         handoff = request_handoff(payload)
-    result = normalize_handoff(handoff, mode, prompt, previous, values if previous is not None else None)
+    result = normalize_handoff(
+        handoff, mode, prompt, previous,
+        expected_values=values if previous is not None else None,
+        expected_attempt_id=attempt_id,
+    )
     result["view_id"] = str(uuid4())
     try:
         json.dumps(result, allow_nan=False)
