@@ -400,16 +400,112 @@ async function testResumedPipelineClarification() {
   assert.equal(posts.length, 0, 'a reload polls instead of launching a duplicate run');
   assert.equal(polls[0].path, '/api/pipeline-runs/resume-me');
   await ui.poll({ id: 'resume-me', status: 'failed', stage: 'plan', attempt: 1,
-    error: 'Add these details to the original prompt and run again. Where are the deliveries?' });
+    error: 'Add these details to the original prompt and run again. Where are the deliveries?',
+    history: [{ id: 1, stage: 'plan', attempt: 1, status: 'failed',
+      steps: [{ id: 1, label: 'Clarify delivery locations', status: 'failed', detail: 'Where are the deliveries?' }] }]
+  });
   assert.equal(get('prompt-screen').hidden, false);
   assert.equal(get('progress-screen').hidden, true);
   assert.equal(get('results-screen').hidden, true);
   assert.match(get('composer-error').textContent, /Where are the deliveries\?/);
   assert.equal(get('problem-prompt').value, prompt);
   assert.equal(storage.size, 0);
+  assert.equal(get('failed-pipeline-progress').hidden, false);
+  get('failed-pipeline-progress').onclick();
+  assert.equal(get('progress-screen').hidden, false);
+  assert.equal(get('progress-return').textContent, 'Back to problem');
+  assert.equal(get('pipeline-status').textContent, get('composer-error').textContent);
+  get('progress-return').onclick();
+  assert.equal(get('problem-prompt').value, prompt);
+  assert.equal(get('prompt-screen').hidden, false);
   get('problem-prompt').value = prompt + ' The deliveries are at (1, 2) and (4, 2).';
   ui.submit();
   assert.deepEqual(posts[0].payload, { prompt: get('problem-prompt').value });
+  assert.equal(get('pipeline-visits').children.length, 0, 'a fresh run starts a new stage history');
+}
+
+async function testDetailedPipelineProgress() {
+  const ui = boot({ pipeline_backend_configured: true });
+  const { get } = ui;
+  await flush();
+  const prompt = 'Schedule the electric vans and check the deadline for each delivery.';
+  get('problem-prompt').value = prompt;
+  ui.submit();
+  const id = 'inspection';
+  await ui.respond({ id, status: 'queued', stage: null, attempt: 0, history: [] });
+  const history = [
+    { id: 1, stage: 'init', attempt: 1, status: 'completed',
+      steps: [{ id: 1, label: 'Read problem statement', status: 'completed' }] },
+    { id: 2, stage: 'plan', attempt: 1, status: 'completed',
+      steps: [{ id: 2, label: 'Review solver plan', status: 'completed' }] },
+    { id: 3, stage: 'build', attempt: 1, status: 'running',
+      steps: [{ id: 3, label: 'Write solver', status: 'running' }] },
+  ];
+  await ui.poll({ id, status: 'running', stage: 'build', attempt: 1, history });
+  const visits = get('pipeline-visits');
+  const toggle = get('pipeline-detail-toggle');
+  const firstBuild = visits.children[2].children[0];
+  assert.equal(get('pipeline-stages').hidden, true);
+  assert.equal(firstBuild.open, true, 'fine details are visible by default');
+  assert.equal(toggle.hidden, false);
+  assert.equal(toggle.textContent, 'Hide all steps');
+  toggle.onclick();
+  assert.equal(firstBuild.open, false);
+  assert.equal(toggle.textContent, 'Show all steps');
+
+  const firstStep = firstBuild.children[1].children[0];
+  const repair = 'Van 4 missed its delivery deadline.\nRecheck the service time.';
+  const revisedHistory = [
+    ...history.slice(0, 2),
+    { ...history[2], status: 'completed', steps: [{ ...history[2].steps[0], status: 'completed' }] },
+    { id: 4, stage: 'test', attempt: 1, status: 'revising',
+      steps: [{ id: 4, label: 'Check schedule constraints', status: 'failed', detail: repair }] },
+    { id: 5, stage: 'build', attempt: 2, status: 'completed',
+      steps: [{ id: 5, label: 'Update time-window constraints', status: 'completed' }] },
+    { id: 6, stage: 'test', attempt: 2, status: 'running',
+      steps: [{ id: 6, label: 'Check schedule constraints', status: 'running' }] },
+  ];
+  await ui.poll({ id, status: 'running', stage: 'test', attempt: 2, history: revisedHistory });
+  const disclosures = visits.children.map(row => row.children[0]);
+  assert.deepEqual(disclosures.map(element => element.children[0].children[0].children[0].textContent),
+    ['Parse prompt', 'Plan solution', 'Build solver', 'Run solver', 'Build solver', 'Run solver']);
+  assert.equal(visits.children[2].children[0], firstBuild, 'polling preserves the existing disclosure and focus');
+  assert.equal(firstBuild.children[1].children[0], firstStep, 'updates use the same step element');
+  assert.equal(firstStep.children[1].textContent, 'Done');
+  const [firstTest, retryBuild, retryTest] = disclosures.slice(3);
+  assert.equal(firstTest.children[0].children[1].textContent, 'Revision needed');
+  assert.equal(firstTest.children[1].children[0].children[2].textContent, repair);
+  assert.equal(retryBuild.children[0].children[0].children[1].textContent, 'Attempt 2');
+  assert.equal(retryTest.children[0].attrs['aria-current'], 'step');
+  assert.ok(disclosures.every(element => !element.open), 'new visits inherit the hide-all preference');
+  toggle.onclick();
+  assert.ok(disclosures.every(element => element.open), 'the details for every attempt can be shown at once');
+  toggle.onclick();
+  assert.ok(disclosures.every(element => !element.open));
+  assert.equal(visits.hidden, false, 'hiding details keeps all stage attempts visible');
+  firstTest.open = true;
+  firstTest.ontoggle();
+  assert.equal(toggle.textContent, 'Hide all steps');
+  assert.equal(firstBuild.open, false, 'any attempt can be inspected independently');
+
+  const complete = [
+    ...revisedHistory.slice(0, 5),
+    { ...revisedHistory[5], status: 'completed', steps: [{ ...revisedHistory[5].steps[0], status: 'completed' }] },
+    { id: 7, stage: 'verify', attempt: 1, status: 'completed',
+      steps: [{ id: 7, label: 'Approve verified result', status: 'completed' }] },
+  ];
+  await ui.poll({ id, status: 'completed', stage: 'verify', attempt: 1, history: complete,
+    result: liveFixture(35, 'detailed', prompt) });
+  assert.equal(get('results-screen').hidden, false);
+  assert.equal(get('result-pipeline-progress').hidden, false);
+  get('result-pipeline-progress').onclick();
+  assert.equal(get('progress-screen').hidden, false);
+  assert.equal(get('progress-return').textContent, 'Back to results');
+  assert.equal(get('pipeline-status').textContent, 'Pipeline complete.');
+  assert.equal(firstTest.open, true);
+  assert.equal(visits.children.length, 7);
+  get('progress-return').onclick();
+  assert.equal(get('results-screen').hidden, false);
 }
 
 async function testExternalBackend() {
@@ -528,6 +624,7 @@ async function main() {
   await testReferenceAndRecorded();
   await testLocalSolver();
   await testPlannerControls();
+  await testDetailedPipelineProgress();
   await testResumedPipelineClarification();
   await testExternalBackend();
   await testLiveExampleFallback();

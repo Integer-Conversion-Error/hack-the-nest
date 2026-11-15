@@ -31,6 +31,7 @@ PIPELINE_LOCK = Lock()
 MAX_ACTIVE_PIPELINE_RUNS = 2
 MAX_PIPELINE_RUNS = 32
 ACTIVE_PIPELINE_STATUSES = {"queued", "running"}
+PIPELINE_STAGES = ("init", "plan", "build", "test", "verify")
 SAMPLE_PROMPTS = (
     {"id": "ev-charge-range", "label": "EV dispatch · charge range", "prompt": LIVE_PROMPT},
     {"id": "ev-charge-options", "label": "EV dispatch · two charge settings", "prompt": RECORDED_PROMPT},
@@ -151,7 +152,7 @@ def reopen_workspace(run_id):
     return register_view(result)
 
 
-def run_plan(data, *, on_stage=None):
+def run_plan(data, *, on_stage=None, on_progress=None):
     mode = data.get("mode", "recorded")
     if mode not in ("recorded", "reference", "live"):
         raise ValueError("Unknown run mode.")
@@ -201,11 +202,13 @@ def run_plan(data, *, on_stage=None):
                 )
             handoff = request_handoff(base, payload)
         elif on_stage is not None:
-            handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage)
+            handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage, on_progress=on_progress)
         elif use_pipeline:
             handoff = pipeline_handoff(prompt, values, previous, attempt_id)
         else:
             handoff = local_handoff(prompt, values, previous, attempt_id)
+    if on_progress is not None:
+        on_progress("Publish the verified schedule", status="running")
     result = normalize_handoff(
         handoff, mode, prompt, previous,
         expected_values=values if previous is not None else None,
@@ -213,11 +216,18 @@ def run_plan(data, *, on_stage=None):
     )
     if local_workspace:
         result["workspace_origin"] = "local"
-    return register_view(result, previous)
+    view = register_view(result, previous)
+    if on_progress is not None:
+        on_progress("Publish the verified schedule", status="completed")
+    return view
 
 
 def pipeline_run_snapshot(run):
     snapshot = {key: run[key] for key in ("id", "status", "stage", "attempt")}
+    snapshot["history"] = [
+        {**visit, "steps": [dict(step) for step in visit["steps"]]}
+        for visit in run["history"]
+    ]
     if run["status"] == "completed":
         snapshot["result"] = run["result"]
     elif run["status"] == "failed":
@@ -235,16 +245,59 @@ def read_pipeline_run(run_id):
 
 def complete_pipeline_run(run):
     attempts = {}
+    history = run["history"]
+
+    def finish_visit(status):
+        if not history:
+            return
+        visit = history[-1]
+        visit["status"] = status
+        for step in visit["steps"]:
+            if step["status"] == "running":
+                step["status"] = "completed" if status == "completed" else "failed"
 
     def update_stage(stage):
         with PIPELINE_LOCK:
+            if history:
+                advancing = PIPELINE_STAGES.index(stage) > PIPELINE_STAGES.index(history[-1]["stage"])
+                finish_visit("completed" if advancing else "revising")
             attempts[stage] = attempts.get(stage, 0) + 1
             run.update(stage=stage, attempt=attempts[stage])
+            history.append({
+                "id": len(history) + 1, "stage": stage, "attempt": attempts[stage],
+                "status": "running", "steps": [],
+            })
+
+    protected = sorted(
+        {os.getenv(key, "").strip() for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "QR_KEY", "QR_ACCOUNT")} - {""},
+        key=len, reverse=True,
+    )
+
+    def update_progress(label, *, status="info", detail=None):
+        if detail:
+            for value in protected:
+                detail = detail.replace(value, "[redacted]")
+            if len(detail) > 2400:
+                detail = detail[:2399] + "…"
+        with PIPELINE_LOCK:
+            steps = history[-1]["steps"]
+            step = None
+            if status in ("completed", "failed"):
+                step = next((step for step in reversed(steps)
+                             if step["label"] == label and step["status"] == "running"), None)
+            if step is None:
+                step = {"id": len(steps) + 1, "label": label}
+                steps.append(step)
+            step["status"] = status
+            if detail:
+                step["detail"] = detail
 
     with PIPELINE_LOCK:
         run["status"] = "running"
     try:
-        result = run_plan({"mode": "live", "prompt": run["prompt"]}, on_stage=update_stage)
+        result = run_plan(
+            {"mode": "live", "prompt": run["prompt"]}, on_stage=update_stage, on_progress=update_progress,
+        )
     except (RequestError, SolverUnavailable, InvalidHandoff, SolverFailed, UnverifiedResult) as exc:
         outcome = {"status": "failed", "error": str(exc)}
     except TimeoutError:
@@ -256,6 +309,7 @@ def complete_pipeline_run(run):
         # Publish a stable copy even if feedback is later added to the live view.
         outcome = {"status": "completed", "result": dict(result)}
     with PIPELINE_LOCK:
+        finish_visit(outcome["status"])
         run.update(outcome)
 
 
@@ -274,7 +328,7 @@ def start_pipeline_run(prompt):
                             if run["status"] not in ACTIVE_PIPELINE_STATUSES)
             del PIPELINE_RUNS[finished]
         run_id = str(uuid4())
-        run = {"id": run_id, "status": "queued", "stage": None, "attempt": 0, "prompt": prompt}
+        run = {"id": run_id, "status": "queued", "stage": None, "attempt": 0, "prompt": prompt, "history": []}
         PIPELINE_RUNS[run_id] = run
         snapshot = pipeline_run_snapshot(run)
         try:

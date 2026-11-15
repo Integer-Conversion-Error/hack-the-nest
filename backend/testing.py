@@ -32,6 +32,7 @@ from backend.build import BuildError
 from backend.build_phase import BuildNotApproved, run_build_phase
 from backend.plan import PLAN_JSON, PlanControl, load_plan
 from backend.problem_statement import ENV_FILE
+from backend.progress import ProgressCallback, progress_step, report
 from backend.prompt_loader import PromptError
 from backend.runner import RESULTS_JSON, RunOutcome, run_solver
 from backend.semantics import SemanticReview, evaluate_semantics
@@ -135,13 +136,14 @@ def test_once(
     model: str | None = None,
     client=None,
     on_event: Callable[[str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
 ) -> TestRound:
     """Steps 1 to 3 without going back to Build. Saves test.json and returns the round."""
     say = on_event or (lambda message: None)
 
     def run(controls: dict | None = None) -> RunOutcome:
-        outcome = run_solver(workspace, controls, validate_results=validate_results)
+        outcome = run_solver(workspace, controls, validate_results=validate_results, on_progress=on_progress)
         verdict = "passed" if outcome.passed else "FAILED: " + " ".join(outcome.issues)
         say(f"    {outcome.command} ({outcome.seconds} s): {verdict}")
         return outcome
@@ -149,20 +151,32 @@ def test_once(
     say("--- Test: running main.py")
     runs = [run()]
     if runs[0].passed:
-        runs += [run(variant) for variant in control_variants(workspace)]
+        with progress_step(on_progress, "Select alternate settings to test") as step:
+            variants = control_variants(workspace)
+            step.completed(f"Selected {len(variants)} alternate settings to test.")
+        runs += [run(variant) for variant in variants]
         if len(runs) > 1 and all(r.passed for r in runs):
             # Keep the same default result that Test checked, without running the circuit again.
-            workspace.resolve(RESULTS_JSON).write_text(
-                json.dumps(runs[0].results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
-            )
+            with progress_step(on_progress, "Restore the default result"):
+                workspace.resolve(RESULTS_JSON).write_text(
+                    json.dumps(runs[0].results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+                )
     round_ = TestRound(runs=runs)
 
     if all(r.passed for r in runs):
         say("--- Test: evaluating semantics against the problem statement")
-        round_.semantics = evaluate_semantics(workspace, runs, model=model, client=client)
+        with progress_step(on_progress, "Check the solution against the problem") as step:
+            round_.semantics = evaluate_semantics(workspace, runs, model=model, client=client, on_progress=on_progress)
+            if round_.semantics.matches:
+                step.completed(round_.semantics.summary)
+            else:
+                step.failed(round_.semantics.summary)
+        for check in round_.semantics.checks_done:
+            report(on_progress, "Semantic check", detail=check)
         say(f"    {round_.semantics.verdict}: {round_.semantics.summary}")
 
-    workspace.resolve(TEST_JSON).write_text(round_.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    with progress_step(on_progress, "Save the test report"):
+        workspace.resolve(TEST_JSON).write_text(round_.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return round_
 
 
@@ -174,6 +188,7 @@ def run_test_phase(
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     on_event: Callable[[str], None] | None = None,
     on_stage: Callable[[Literal["build", "test"]], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
 ) -> TestPhaseResult:
     """Test the built solver, sending it back to Build with the issues until it passes.
@@ -191,22 +206,34 @@ def run_test_phase(
             on_stage("test")
         say(f"=== Test round {round_number} of {max_rounds}")
         round_ = test_once(
-            workspace, model=model, client=client, on_event=on_event, validate_results=validate_results,
+            workspace, model=model, client=client, on_event=on_event,
+            on_progress=on_progress, validate_results=validate_results,
         )
         if round_.passed:
             say("=== Test passed. Ready for Final Go/No-Go.")
+            report(on_progress, "Approve the solver tests", status="completed")
             return TestPhaseResult(workspace_id=workspace.id, rounds=round_number, last_round=round_)
 
         feedback = round_.feedback()
         if feedback == previous_feedback:
+            report(
+                on_progress, "Testing stopped", status="failed",
+                detail="The latest rebuild left the same issues.",
+            )
             raise TestNotPassed("A trip back to Build left the same issues, so Test stopped.", round_)
         previous_feedback = feedback
         if round_number < max_rounds:
+            failed_run = next((run for run in round_.runs if not run.passed), None)
+            issues = "\n".join(failed_run.issues) if failed_run else feedback
+            report(on_progress, "Return to Build", detail=issues)
             if on_stage is not None:
                 on_stage("build")
             say(f"=== Test failed. Going back to Build with:\n{feedback}")
-            run_build_phase(workspace, feedback, model=model, client=client, on_event=on_event)
+            run_build_phase(
+                workspace, feedback, model=model, client=client, on_event=on_event, on_progress=on_progress,
+            )
 
+    report(on_progress, "Testing stopped", status="failed", detail=f"No approval after {max_rounds} test rounds.")
     raise TestNotPassed(f"The solver still fails Test after {max_rounds} rounds.", round_)
 
 

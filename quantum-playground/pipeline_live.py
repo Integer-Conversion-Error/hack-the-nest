@@ -96,7 +96,10 @@ def project_result(artifact, output, prompt, identity):
     }
 
 
-def pipeline_handoff(prompt, values, previous, attempt_id, *, on_stage: Callable[[str], None] | None = None):
+def pipeline_handoff(
+    prompt, values, previous, attempt_id, *,
+    on_stage: Callable[[str], None] | None = None, on_progress=None,
+):
     """Plan a new dispatch, or run and verify fresh values in a copy of the approved workspace."""
     try:
         from pydantic import ValidationError
@@ -115,8 +118,23 @@ def pipeline_handoff(prompt, values, previous, attempt_id, *, on_stage: Callable
 
     try:
         if previous is None:
+            initial_stage = True
+
+            def stage_entered(stage):
+                nonlocal initial_stage
+                # Workspace creation and the first prompt parse are one Init attempt.
+                if on_stage is not None and (not initial_stage or stage != "init"):
+                    on_stage(stage)
+                initial_stage = False
+
+            if on_progress is not None:
+                if on_stage is not None:
+                    on_stage("init")
+                on_progress("Prepare the dispatch workspace", status="running")
             with planner_session() as client:
                 workspace = init_workspace(prompt, name="fleet", scene_type="ev_fleet")
+                if on_progress is not None:
+                    on_progress("Prepare the dispatch workspace", status="completed")
                 identity = {"run_id": str(uuid4()), "plan_id": workspace.id, "attempt_id": attempt_id}
 
                 def validate_results(output, overrides):
@@ -133,7 +151,8 @@ def pipeline_handoff(prompt, values, previous, attempt_id, *, on_stage: Callable
                     normalize_handoff(handoff, "live", prompt, expected_values=expected)
 
                 artifact = run_pipeline(
-                    workspace, client=client, on_stage=on_stage, validate_results=validate_results,
+                    workspace, client=client, on_stage=stage_entered if on_progress is not None else on_stage,
+                    on_progress=on_progress, validate_results=validate_results,
                 )
             if artifact["decision"] != "GO":
                 raise UnverifiedResult("The pipeline did not approve the fleet plan.")

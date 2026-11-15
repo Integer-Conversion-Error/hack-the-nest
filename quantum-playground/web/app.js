@@ -38,6 +38,7 @@ let playing = false, minute = 0, last = null, selectedVan = null;
 let examplePrompt = '', liveExamplePrompt = '';
 let samplePrompts = new Map();
 let screen = 'prompt';
+let pipelineSnapshot = null, pipelineReturnScreen = null;
 let historyRequest = 0;
 let selectedRun = null, selectedRunButton = null;
 let controlPanel = null;
@@ -135,6 +136,8 @@ function updateButtons() {
   picker.disabled = disabled || !samplePrompts.size;
   $('load-example').disabled = picker.disabled || !samplePrompts.has(picker.value);
   $('recorded-example').disabled = disabled;
+  $('failed-pipeline-progress').disabled = disabled;
+  $('result-pipeline-progress').disabled = disabled;
   $('run-history').disabled = busy;
   $('new-problem').disabled = disabled;
   $('mode').disabled = disabled;
@@ -233,6 +236,8 @@ function showResult(data, payload) {
   $('mode').value = data.mode;
   $('results-heading').textContent = data.problem?.title || 'EV fleet dispatch';
   $('prompt').textContent = data.problem?.original_prompt || '';
+  $('result-pipeline-progress').hidden = !(pipelineSnapshot?.status === 'completed' &&
+    pipelineSnapshot.history?.length && pipelineSnapshot.result?.plan_id === data.plan_id);
   if (!payload.view_id) $('original-prompt').open = false;
   showScreen('results');
   render(data, {preserve: !!payload.view_id});
@@ -258,11 +263,19 @@ const stageRows = PipelineProgress.stages.map(stage => {
   $('pipeline-stages').append(row);
   return { row, state };
 });
+const pipelineHistory = PipelineProgress.createHistoryView(
+  $('pipeline-visits'), $('pipeline-detail-toggle'), node, writeText);
 
 function showProgress(title, status, native = false) {
   $('progress-heading').textContent = title;
+  $('progress-return').hidden = true;
   $('pipeline-stages').hidden = !native;
-  if (native) updatePipelineProgress();
+  $('pipeline-visits').hidden = true;
+  $('pipeline-detail-toggle').hidden = true;
+  if (native) {
+    pipelineHistory.reset();
+    updatePipelineProgress();
+  }
   writeText($('pipeline-status'), status);
   showScreen('progress');
 }
@@ -271,13 +284,44 @@ function updatePipelineProgress(snapshot) {
   const stages = PipelineProgress.stages;
   const index = stages.findIndex(stage => stage.id === snapshot?.stage);
   const attempt = snapshot?.attempt > 1 ? ' · Attempt ' + snapshot.attempt : '';
-  for (const [i, { row, state }] of stageRows.entries()) {
-    row.setAttribute('data-state', i < index ? 'complete' : i === index ? 'running' : 'pending');
-    row.setAttribute('aria-current', i === index ? 'step' : 'false');
-    writeText(state, i < index ? 'Complete' : i === index ? 'In progress' + attempt : 'Pending');
+  const history = snapshot?.history ?? [];
+  $('pipeline-stages').hidden = Boolean(history.length);
+  pipelineHistory.render(history);
+  if (!history.length) {
+    for (const [i, { row, state }] of stageRows.entries()) {
+      row.setAttribute('data-state', i < index ? 'complete' : i === index ? 'running' : 'pending');
+      row.setAttribute('aria-current', i === index ? 'step' : 'false');
+      writeText(state, i < index ? 'Complete' : i === index ? 'In progress' + attempt : 'Pending');
+    }
   }
-  writeText($('pipeline-status'), stages[index]?.activity || 'Waiting for the pipeline to start…');
+  const activity = stages[index]?.activity;
+  const status = snapshot?.status === 'completed' ? 'Pipeline complete.'
+    : snapshot?.status === 'failed' ? snapshot.error || 'The pipeline could not produce a verified result.'
+    : (history.length ? activity?.replace(/…$/, attempt + '…') : activity) || 'Waiting for the pipeline to start…';
+  writeText($('pipeline-status'), status);
 }
+
+function openPipelineProgress() {
+  if (busy || !pipelineSnapshot?.history?.length) return;
+  setPlaying(false);
+  pipelineReturnScreen = screen;
+  $('progress-heading').textContent = 'Pipeline progress';
+  const back = $('progress-return');
+  writeText(back, screen === 'results' ? 'Back to results' : 'Back to problem');
+  back.hidden = false;
+  updatePipelineProgress(pipelineSnapshot);
+  showScreen('progress');
+}
+
+$('failed-pipeline-progress').onclick = openPipelineProgress;
+$('result-pipeline-progress').onclick = openPipelineProgress;
+$('progress-return').onclick = () => {
+  const previous = pipelineReturnScreen;
+  if (!previous) return;
+  pipelineReturnScreen = null;
+  showScreen(previous);
+  $(previous === 'results' ? 'result-pipeline-progress' : 'failed-pipeline-progress').focus();
+};
 
 function pendingRun() {
   try {
@@ -300,6 +344,8 @@ function savePendingRun(run) {
 
 async function startPipeline(prompt, id) {
   busy = true;
+  pipelineSnapshot = null;
+  $('failed-pipeline-progress').hidden = true;
   composerError('');
   $('error').hidden = true;
   showProgress('Pipeline progress', id ? 'Reconnecting to your run…' : 'Submitting your problem…', true);
@@ -312,6 +358,7 @@ async function startPipeline(prompt, id) {
           id = job.id;
           savePendingRun({ id, prompt });
         }
+        pipelineSnapshot = job;
         updatePipelineProgress(job);
       },
       onDisconnect: () => writeText($('pipeline-status'), 'Connection interrupted. Reconnecting to your run…'),
@@ -319,6 +366,7 @@ async function startPipeline(prompt, id) {
     if (snapshot.status === 'failed') throw Error(snapshot.error || 'The pipeline could not produce a verified result.');
     showResult(snapshot.result, { mode: 'live', prompt });
   } catch (e) {
+    $('failed-pipeline-progress').hidden = !pipelineSnapshot?.history?.length;
     showScreen('prompt');
     composerError(e.status === 404 ? 'This pipeline run is no longer available. Submit your problem to run again.' : e.message);
   } finally {

@@ -485,10 +485,15 @@ class HandoffTests(unittest.TestCase):
 
         approves = FinalCheck(name="Fixture review", returns_to="build", verdict="matches",
                               summary="Approved the finite fleet plan.", issues=[])
+        needs_repair = FinalCheck(
+            name="Fixture review", returns_to="build", verdict="falls_short",
+            summary="Found an issue in the solver.", issues=["Recheck the charging cost calculation."],
+        )
+        final_reviews = iter([needs_repair, needs_repair, approves])
 
-        def verify(*_args):
+        def verify(*_args, **_kwargs):
             pause_stage("verify")
-            return approves
+            return next(final_reviews)
 
         views = {}
         with TemporaryDirectory() as directory:
@@ -506,19 +511,23 @@ class HandoffTests(unittest.TestCase):
                 patch("backend.pipeline.parse_problem_statement", side_effect=parse),
                 patch("backend.pipeline.run_planning", side_effect=plan) as planner,
                 patch("backend.pipeline.run_build_phase", side_effect=build),
-                patch("backend.final_check.CHECKS", (verify,)),
+                patch("backend.final_check.CHECKS", (("Review the fixture", verify),)),
                 patch("backend.testing.evaluate_semantics", side_effect=review),
                 patch("backend.semantics.evaluate_semantics", side_effect=review),
             ):
                 with self.request("/api/config") as response:
                     self.assertTrue(json.load(response)["pipeline_backend_configured"])
-                job_id = self.start_pipeline(prompt)["id"]
+                queued = self.start_pipeline(prompt)
+                self.assertEqual(queued["history"], [])
+                job_id = queued["id"]
                 try:
-                    for stage in stages:
+                    for index, stage in enumerate(stages):
                         self.assertTrue(reached[stage].wait(4), f"Pipeline did not reach {stage}.")
                         snapshot = self.read_pipeline(job_id)
                         self.assertEqual((snapshot["status"], snapshot["stage"], snapshot["attempt"]),
                                          ("running", stage, 1))
+                        self.assertEqual([visit["stage"] for visit in snapshot["history"]], list(stages[:index + 1]))
+                        self.assertEqual(snapshot["history"][-1]["status"], "running")
                         self.assertNotIn("result", snapshot)
                         if stage == "init":
                             self.assertEqual(self.start_pipeline(prompt)["id"], job_id)
@@ -528,6 +537,21 @@ class HandoffTests(unittest.TestCase):
                         event.set()
                     snapshot = self.wait_for_pipeline(job_id)
                 self.assertEqual(snapshot["status"], "completed", snapshot)
+                self.assertEqual(
+                    [(visit["stage"], visit["attempt"], visit["status"]) for visit in snapshot["history"]],
+                    [(stage, 1, "completed") for stage in stages[:-1]] + [
+                        ("verify", 1, "revising"), ("build", 2, "completed"),
+                        ("test", 2, "completed"), ("verify", 2, "completed"),
+                    ],
+                )
+                first_verification = snapshot["history"][4]
+                self.assertTrue(any(
+                    "Recheck the charging cost calculation." in step.get("detail", "")
+                    for step in first_verification["steps"]
+                ), first_verification)
+                final_step = snapshot["history"][-1]["steps"][-1]
+                self.assertEqual((final_step["label"], final_step["status"]),
+                                 ("Publish the verified schedule", "completed"))
                 first = snapshot["result"]
                 workspace = open_workspace(first["plan_id"], root=root)
                 baseline = {name: workspace.resolve(name).read_bytes() for name in ("results.json", "handoff.json")}
@@ -554,12 +578,13 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(updated["effective_values"], {tariff: 0.30})
         self.assertAlmostEqual(updated["evaluation"]["costs"]["electricity"], 1.50)
         self.assertAlmostEqual(updated["evaluation"]["objective_value"], first["evaluation"]["objective_value"] + 0.50)
-        self.assertEqual(reviewed_tariffs, [[0.20, 0.30], [0.30], [0.40]])
+        self.assertEqual(reviewed_tariffs, [[0.20, 0.30], [0.20, 0.30], [0.30], [0.40]])
 
     def test_pipeline_input_failure_remains_visible_in_its_stage(self):
-        def needs_input(_request, *, on_stage):
+        def needs_input(_request, *, on_stage, on_progress):
             on_stage("init")
             on_stage("plan")
+            on_progress("Review the prompt", status="running", detail="Fixture credential fixture-key")
             raise UnverifiedResult("Which depot is the starting point?")
 
         with (
@@ -571,6 +596,10 @@ class HandoffTests(unittest.TestCase):
         runner.assert_called_once()
         self.assertEqual((snapshot["status"], snapshot["stage"], snapshot["attempt"]), ("failed", "plan", 1))
         self.assertEqual(snapshot["error"], "Which depot is the starting point?")
+        self.assertEqual(snapshot["history"][-1]["status"], "failed")
+        self.assertEqual(snapshot["history"][-1]["steps"], [
+            {"id": 1, "label": "Review the prompt", "status": "failed", "detail": "Fixture credential [redacted]"},
+        ])
         self.assertNotIn("result", snapshot)
 
     def test_history_browses_disk_workspaces_and_reopens_a_verified_schedule(self):

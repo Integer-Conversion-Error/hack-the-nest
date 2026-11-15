@@ -43,15 +43,23 @@
       </div>
     </form>
     <div class="preview-actions">
+      <button class="text-button" id="failed-pipeline-progress" type="button" aria-controls="progress-screen" hidden>View pipeline progress</button>
       <button class="text-button" id="recorded-example" type="button" disabled>View recorded run</button>
     </div>
   </section>
 
   <section class="run-entry" id="progress-screen" aria-labelledby="progress-heading" hidden>
-    <h1 id="progress-heading" tabindex="-1">Pipeline progress</h1>
+    <div class="progress-heading">
+      <h1 id="progress-heading" tabindex="-1">Pipeline progress</h1>
+      <button class="secondary" id="progress-return" type="button" hidden>Back to results</button>
+    </div>
     <div class="panel progress-panel">
-      <p id="pipeline-status" class="pipeline-status" role="status" aria-atomic="true">Submitting your problem…</p>
+      <div class="progress-actions">
+        <p id="pipeline-status" class="pipeline-status" role="status" aria-atomic="true">Submitting your problem…</p>
+        <button class="text-button" id="pipeline-detail-toggle" type="button" aria-controls="pipeline-visits" hidden>Hide all steps</button>
+      </div>
       <ol id="pipeline-stages" class="pipeline-stages" role="list" aria-label="Pipeline stages"></ol>
+      <ol id="pipeline-visits" class="pipeline-visits" role="list" aria-label="Pipeline stage history" hidden></ol>
     </div>
   </section>
 
@@ -85,7 +93,10 @@
   </section>
 
   <section id="results-screen" aria-labelledby="results-heading" hidden>
-  <h1 id="results-heading" tabindex="-1">EV fleet dispatch</h1>
+  <div class="results-title">
+    <h1 id="results-heading" tabindex="-1">EV fleet dispatch</h1>
+    <button class="secondary" id="result-pipeline-progress" type="button" aria-controls="progress-screen" hidden>Pipeline progress</button>
+  </div>
   <div class="workspace">
     <aside class="sidebar" aria-label="Scenario controls">
       <section class="panel input-panel">

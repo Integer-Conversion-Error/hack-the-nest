@@ -24,6 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.progress import ProgressCallback, progress_step
 from backend.prompt_loader import PromptError, load_prompt
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -114,6 +115,8 @@ def parse_problem_statement(
     feedback: str | None = None,
     model: str | None = None,
     client=None,
+    *,
+    on_progress: ProgressCallback | None = None,
 ) -> ProblemStatement:
     """Turn the workspace's prompt.md into problem.json and PROBLEM.md, and return the result.
 
@@ -139,23 +142,32 @@ def parse_problem_statement(
         previous = previous_path.read_text(encoding="utf-8") if previous_path.is_file() else "(none saved)"
         contents += "\n\n" + load_prompt("problem_statement.retry", previous=previous, feedback=feedback)
 
-    response = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=ProblemStatement,
-        ),
-    )
+    label = "Revise the problem statement" if feedback else "Interpret the original prompt"
+    with progress_step(on_progress, label):
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=ProblemStatement,
+            ),
+        )
 
-    problem = response.parsed
-    if not isinstance(problem, ProblemStatement):
-        reason = response.candidates[0].finish_reason if response.candidates else "no candidates"
-        raise ProblemStatementError(f"Gemini returned no valid problem statement (finish reason: {reason}).")
+    with progress_step(on_progress, "Check the problem statement") as step:
+        problem = response.parsed
+        if not isinstance(problem, ProblemStatement):
+            step.failed("The model did not return a usable problem statement.")
+            reason = response.candidates[0].finish_reason if response.candidates else "no candidates"
+            raise ProblemStatementError(f"Gemini returned no valid problem statement (finish reason: {reason}).")
+        if problem.is_optimization_problem:
+            step.completed(f"{problem.title} · Proposed method: {problem.quantum.method}")
+        else:
+            step.failed(problem.rejection_reason or "The prompt could not be used for this pipeline.")
 
-    workspace.resolve(PROBLEM_JSON).write_text(problem.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    workspace.resolve(PROBLEM_MD).write_text(render_markdown(problem), encoding="utf-8")
+    with progress_step(on_progress, "Save the problem statement"):
+        workspace.resolve(PROBLEM_JSON).write_text(problem.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        workspace.resolve(PROBLEM_MD).write_text(render_markdown(problem), encoding="utf-8")
     return problem
 
 

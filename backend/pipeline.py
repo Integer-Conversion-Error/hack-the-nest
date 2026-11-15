@@ -33,6 +33,7 @@ from backend.build_review import BUILD_REVIEW_JSON, BuildReview
 from backend.final_check import FinalDecision, describe, run_final_checks
 from backend.plan import PLAN_JSON, load_plan
 from backend.planning import ClarificationRequired, PlanningError, run_planning
+from backend.progress import ProgressCallback, progress_step, report
 from backend.problem_statement import (
     ENV_FILE,
     PROBLEM_JSON,
@@ -109,12 +110,14 @@ def run_pipeline(
     max_final_rounds: int = DEFAULT_MAX_FINAL_ROUNDS,
     on_event: Callable[[str], None] | None = None,
     on_stage: Callable[[PipelineStage], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
 ) -> dict:
     """Take a workspace from wherever it is to a GO handoff. Returns the handoff.
 
     answers: the user's replies to planning's clarifying questions, if any.
     on_stage: reports every stage entry, including returns to earlier stages.
+    on_progress: reports step changes and the reason for any return to an earlier stage.
     validate_results: an optional check of the result and requested overrides, raising ValueError on failure.
     Raises NoGo, PipelineError, or the stage's own error when a stage cannot finish.
     """
@@ -127,23 +130,24 @@ def run_pipeline(
 
     def plan(feedback: str | None = None) -> None:
         enter("plan", "##### Plan")
-        result = run_planning(workspace, feedback, answers=answers, client=client)
+        result = run_planning(workspace, feedback, answers=answers, client=client, on_progress=on_progress)
         say(f"Selected solver: {result.plan.selected.name} (approved after {result.attempts} attempt(s))")
 
     def build(feedback: str | None = None) -> None:
         enter("build", "##### Build")
-        run_build_phase(workspace, feedback, client=client, on_event=on_event)
+        run_build_phase(workspace, feedback, client=client, on_event=on_event, on_progress=on_progress)
 
     def test() -> None:
         say("##### Test")
         run_test_phase(
-            workspace, client=client, on_event=on_event, on_stage=on_stage, validate_results=validate_results,
+            workspace, client=client, on_event=on_event, on_stage=on_stage,
+            on_progress=on_progress, validate_results=validate_results,
         )
 
     # --- Forward pass, skipping stages whose output already exists
     if not workspace.resolve(PROBLEM_JSON).is_file():
         enter("init", "##### Init: parsing the prompt into a problem statement")
-        parse_problem_statement(workspace, client=client)
+        parse_problem_statement(workspace, client=client, on_progress=on_progress)
     problem = load_problem_statement(workspace)
     if not problem.is_optimization_problem:
         raise PipelineError(f"The prompt was rejected: {problem.rejection_reason}")
@@ -158,19 +162,28 @@ def run_pipeline(
     # --- Final Go/No-Go, going back to the stage a failed check points at
     for round_number in range(1, max_final_rounds + 1):
         enter("verify", f"##### Final Go/No-Go (round {round_number} of {max_final_rounds})")
-        decision = run_final_checks(workspace, client=client)
+        decision = run_final_checks(workspace, client=client, on_progress=on_progress)
         say(describe(decision))
         if decision.go:
-            handoff = write_handoff(workspace, decision)
+            report(on_progress, "Approve the result", status="completed")
+            with progress_step(on_progress, "Save the verified handoff"):
+                handoff = write_handoff(workspace, decision)
             say(f"##### GO. Wrote {workspace.resolve(HANDOFF_JSON)}")
             return handoff
         if round_number == max_final_rounds:
+            report(
+                on_progress, "Verification stopped", status="failed",
+                detail=f"No approval after {max_final_rounds} verification rounds.",
+            )
             break
 
         issues = decision.feedback()
+        target = {"init": "prompt parsing", "plan": "planning", "build": "Build"}.get(decision.failed_stage, "Build")
+        failed_check = next((check for check in decision.checks if not check.passed), None)
+        report(on_progress, f"Return to {target}", detail=issues or (failed_check.summary if failed_check else None))
         if decision.failed_stage == "init":
             enter("init", "##### Init: revising the problem statement")
-            parse_problem_statement(workspace, feedback=issues, client=client)
+            parse_problem_statement(workspace, feedback=issues, client=client, on_progress=on_progress)
             if not load_problem_statement(workspace).is_optimization_problem:
                 raise PipelineError("The revised problem statement was rejected.")
             plan(load_prompt("final.problem_changed", issues=issues))

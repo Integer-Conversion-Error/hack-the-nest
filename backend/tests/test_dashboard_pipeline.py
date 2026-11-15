@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.build import build_contract
-from backend.final_check import FinalCheck, FinalDecision
+from backend.final_check import FinalCheck, FinalDecision, run_final_checks
 from backend.pipeline import run_pipeline
 from backend.plan import PLAN_JSON, PlanControl
 from backend.runner import RESULTS_JSON, run_solver
@@ -57,10 +57,17 @@ class DashboardPipelineTests(unittest.TestCase):
             self.assertEqual(overrides, {"electricity_rate": 0.25})
             raise ValueError("Missing EV simulation.")
 
-        outcome = run_solver(self.workspace, {"electricity_rate": 0.25}, validate_results=validate)
+        steps = []
+        outcome = run_solver(
+            self.workspace, {"electricity_rate": 0.25}, validate_results=validate,
+            on_progress=lambda label, *, status, detail: steps.append((label, status, detail)),
+        )
 
         self.assertFalse(outcome.passed)
         self.assertEqual(outcome.issues, ["Missing EV simulation."])
+        self.assertIn(("Run solver with alternate settings", "running", "electricity_rate = 0.25"), steps)
+        self.assertIn(("Check solver output", "completed", None), steps)
+        self.assertEqual(steps[-1], ("Check the dashboard result", "failed", "Missing EV simulation."))
 
     def test_stage_updates_follow_build_repairs_and_final_review_retries(self):
         problem = SimpleNamespace(
@@ -77,6 +84,15 @@ class DashboardPipelineTests(unittest.TestCase):
             FinalDecision(decision="GO", failed_stage=None, checks=[], model="test"),
         ]
         stages = []
+        trace = []
+
+        def enter(stage):
+            stages.append(stage)
+            trace.append(("stage", stage))
+
+        def progress(label, *, status, detail):
+            trace.append((stages[-1], label, status, detail))
+
         with (
             patch("backend.pipeline.parse_problem_statement"),
             patch("backend.pipeline.load_problem_statement", return_value=problem),
@@ -87,13 +103,45 @@ class DashboardPipelineTests(unittest.TestCase):
             patch("backend.pipeline.run_final_checks", side_effect=decisions),
             patch("backend.pipeline.write_handoff", return_value={"decision": "GO"}),
         ):
-            result = run_pipeline(self.workspace, on_stage=stages.append)
+            result = run_pipeline(self.workspace, on_stage=enter, on_progress=progress)
 
         self.assertEqual(result["decision"], "GO")
         self.assertEqual(stages, [
             "init", "plan", "build", "test", "build", "test", "verify",
             "init", "plan", "build", "test", "verify",
         ])
+        self.assertIn(("test", "Check the solution against the problem", "failed", "Revise"), trace)
+        return_to_build = next(i for i, event in enumerate(trace) if event[:2] == ("test", "Return to Build"))
+        self.assertEqual(trace[return_to_build + 1], ("stage", "build"))
+        return_to_init = trace.index(("verify", "Return to prompt parsing", "info", "- Check departure time"))
+        self.assertEqual(trace[return_to_init + 1], ("stage", "init"))
+        self.assertEqual(trace[-1], ("verify", "Save the verified handoff", "completed", None))
+
+    def test_failed_final_check_reports_both_attempts_before_sending_work_back(self):
+        failed_review = SimpleNamespace(text=json.dumps({
+            "verdict": "falls_short",
+            "summary": "The departure time differs.",
+            "issues": [{"requirement": "Leave at 8.", "problem": "The statement says 9.", "fix": "Use 8."}],
+        }))
+        steps = []
+        with (
+            patch("backend.final_check.load_problem_statement"),
+            patch("backend.final_check.generate", return_value=failed_review) as judge,
+        ):
+            decision = run_final_checks(
+                self.workspace, client=object(),
+                on_progress=lambda label, *, status, detail: steps.append((label, status, detail)),
+            )
+
+        self.assertEqual(decision.failed_stage, "init")
+        self.assertEqual(judge.call_count, 2)
+        failures = [(label, detail) for label, status, detail in steps if status == "failed"]
+        self.assertEqual([label for label, _ in failures], [
+            "Check the problem statement against the prompt",
+            "Check the problem statement against the prompt (confirmation)",
+        ])
+        for _, detail in failures:
+            self.assertIn("The statement says 9.", detail)
 
     def test_test_phase_keeps_the_validated_default_result_after_a_range_probe(self):
         replayed = []

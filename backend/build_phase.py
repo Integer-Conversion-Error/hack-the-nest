@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from backend.build import ENTRY_POINT, BuildError, run_build
 from backend.build_review import BuildReview, compare_with_plan
 from backend.problem_statement import ENV_FILE
+from backend.progress import ProgressCallback, report
 from backend.prompt_loader import PromptError
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -54,6 +55,7 @@ def run_build_phase(
     client=None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     on_event: Callable[[str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> BuildPhaseResult:
     """Build, compare with the plan, and repeat until they match.
 
@@ -68,11 +70,15 @@ def run_build_phase(
     previous_feedback = None
     for round_number in range(1, max_rounds + 1):
         say(f"--- Build round {round_number} of {max_rounds}: writing files")
-        built = run_build(workspace, feedback, model=model, client=client, on_event=on_event)
+        report(on_progress, f"Build round {round_number} of {max_rounds}")
+        built = run_build(
+            workspace, feedback, model=model, client=client, on_event=on_event, on_progress=on_progress,
+        )
 
         say(f"--- Build round {round_number}: comparing with the plan")
-        review = compare_with_plan(workspace, model=model, client=client)
+        review = compare_with_plan(workspace, model=model, client=client, on_progress=on_progress)
         if review.matches:
+            report(on_progress, "Approve the solver for testing", status="completed")
             say("--- Matches the plan. Ready for the Test phase.")
             return BuildPhaseResult(
                 workspace_id=workspace.id,
@@ -85,9 +91,19 @@ def run_build_phase(
         feedback = review.feedback()
         say(f"--- Falls short of the plan. Sending back to Build:\n{feedback}")
         if feedback == previous_feedback:
+            report(on_progress, "Stop build revisions", status="failed", detail="The same issues remained after a revision.")
             raise BuildNotApproved("A round of fixes left the same issues, so Build stopped.", review)
         previous_feedback = feedback
+        if round_number < max_rounds:
+            report(
+                on_progress, "Revise the solver",
+                detail=f"The build review found issues. Returning to file editing for round {round_number + 1}.",
+            )
 
+    report(
+        on_progress, "Stop build revisions", status="failed",
+        detail=f"The solver still has issues after {max_rounds} build rounds.",
+    )
     raise BuildNotApproved(f"The implementation still falls short of the plan after {max_rounds} rounds.", review)
 
 
