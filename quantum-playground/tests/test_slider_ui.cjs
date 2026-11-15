@@ -94,12 +94,13 @@ get('mode').value = 'reference';
 get('speed').value = '4';
 const posts = [];
 const frames = [];
+const pageEvents = new Map();
 const json = (body, ok = true) => ({ok, json: async () => body});
 const context = vm.createContext({
   console, setTimeout, clearTimeout, URLSearchParams,
   URL: {createObjectURL: () => 'blob:test-frame', revokeObjectURL() {}},
   requestAnimationFrame() {},
-  window: {addEventListener() {}},
+  window: {addEventListener: (event, listener) => pageEvents.set(event, listener)},
   document: {
     getElementById: get,
     createElement: tag => new Element(tag),
@@ -145,6 +146,12 @@ async function main() {
   assert.equal(get('score').textContent, '$15.78');
   assert.equal(get('end-time').textContent, '10:00');
   assert.equal(get('circuit-panel').hidden, true);
+
+  pageEvents.get('pagehide')({persisted: true});
+  const framesBeforeRestore = frames.length;
+  pageEvents.get('pageshow')({persisted: true});
+  await waitFor(() => frames.length > framesBeforeRestore && !get('pygame-frame').hidden, 'restored Pygame frame');
+  assert.equal(frames.at(-1).get('view_id'), 'view-1');
 
   get('scrub').value = '60';
   get('scrub').oninput();

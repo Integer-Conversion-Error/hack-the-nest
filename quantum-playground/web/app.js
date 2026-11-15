@@ -365,6 +365,9 @@ pygameImage.onkeydown=event=>{
 };
 function stopVisualizer(){pygameView=false;viewRevision++;clearTimeout(frameTimer);if(frameUrl){URL.revokeObjectURL(frameUrl);frameUrl=null;}}
 window.addEventListener('pagehide',stopVisualizer);
+window.addEventListener('pageshow', event => {
+  if (event.persisted) startVisualizer();
+});
 $('export').onclick=()=>{if(!result)return;const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'})),a=node('a');a.href=url;a.download=`ev-dispatch-${result.run_id}-${result.attempt_id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('feedback').onclick=async()=>{if(!result)return;const feedback=prompt('Feedback is saved for this server session. What should change?');if(!feedback)return;try{await request('/api/feedback',{view_id:result.view_id,feedback});$('status').textContent='Feedback saved locally for this server session';}catch(e){error(e.message);}};
 async function init() {
