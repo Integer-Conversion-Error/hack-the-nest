@@ -69,7 +69,7 @@ Run everything from the repository root.
 python -m backend.pipeline example-user-prompts/robotics-team-split.md
 ```
 
-A full run takes about 15 to 25 minutes. It prints each step as it goes and ends with:
+A full run takes about 5 to 25 minutes. It prints each step as it goes and ends with:
 
 ```
 GO: <problem title>
@@ -166,3 +166,10 @@ Expected output ends with `OK`. Dashboard tests are described in [quantum-playgr
 | `example-user-prompts/` | Sample problems |
 | `quantum-playground/` | The dashboard |
 | `workspaces/` | One folder per run (ignored by git) |
+
+## Credits
+Made by: 
+- Chenkai Mu
+- Ehan Hassan
+- Esad Kaya
+- Maegen Hill
