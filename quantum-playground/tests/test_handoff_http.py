@@ -10,13 +10,15 @@ from math import isclose
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
+from time import monotonic, sleep
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
-from ev_recorded import LIVE_PROMPT, RECORDING_DIR
+from ev_recorded import LIVE_PROMPT, RECORDING_DIR, REPO_ROOT
 from ev_reference import PROMPT, reference_handoff
+from fleet_handoff import UnverifiedResult
 from server import Handler
 
 
@@ -103,6 +105,24 @@ class HandoffTests(unittest.TestCase):
         with self.request("/api/run", {"mode": mode, **request}) as response:
             return json.load(response)
 
+    def start_pipeline(self, prompt):
+        with self.request("/api/pipeline-runs", {"prompt": prompt}) as response:
+            self.assertEqual(response.status, 202)
+            return json.load(response)
+
+    def read_pipeline(self, job_id):
+        with self.request(f"/api/pipeline-runs/{job_id}") as response:
+            return json.load(response)
+
+    def wait_for_pipeline(self, job_id):
+        deadline = monotonic() + 5
+        while monotonic() < deadline:
+            snapshot = self.read_pipeline(job_id)
+            if snapshot["status"] in {"completed", "failed"}:
+                return snapshot
+            sleep(0.02)
+        self.fail("The pipeline job did not finish.")
+
     def assert_run_error(self, mode, expected_status=None, **request):
         with self.assertRaises(HTTPError) as caught:
             self.run_plan(mode, **request)
@@ -170,6 +190,16 @@ class HandoffTests(unittest.TestCase):
             self.assertEqual(example["live_prompt"], LIVE_PROMPT)
             self.assertEqual([control["id"] for control in example["variables"]], [CONTROL_ID])
             self.assertEqual(example["variables"][0]["allowed_values"], [35, 20])
+            multi_control_examples = ["ev-charge-and-energy-prices", "ev-waiting-and-late-delivery",
+                                      "ev-battery-and-charger-limits", "ev-fleet-dispatch-full-scenario",
+                                      "ev-six-van-six-controls"]
+            self.assertEqual([(sample["id"], sample["prompt"]) for sample in example["samples"]], [
+                ("ev-charge-range", LIVE_PROMPT),
+                ("ev-charge-options", PROMPT),
+                ("ev-electricity-price", PROMPT + "\nLet me vary the electricity price from $0.10 to $0.50 per kWh in $0.10 steps."),
+                *((name, (REPO_ROOT / "example-user-prompts" / f"{name}.md").read_text(encoding="utf-8"))
+                  for name in multi_control_examples),
+            ])
             first = self.run_plan("reference", prompt=example["prompt"])
             second = self.run_plan("reference", view_id=first["view_id"], variables={CONTROL_ID: 20})
         self.assertEqual(first["provenance"], "classical_reference")
@@ -352,12 +382,22 @@ class HandoffTests(unittest.TestCase):
         fixture = reference_handoff({})["result"]
         fixed_cost = sum(value for name, value in fixture["evaluation"]["costs"].items() if name != "electricity")
         reviewed_tariffs = []
+        stages = ("init", "plan", "build", "test", "verify")
+        reached = {stage: threading.Event() for stage in stages}
+        proceed = {stage: threading.Event() for stage in stages}
+
+        def pause_stage(stage):
+            reached[stage].set()
+            if not proceed[stage].wait(5):
+                raise TimeoutError(f"The test did not release the {stage} stage.")
 
         def parse(workspace, **_kwargs):
+            pause_stage("init")
             problem = (RECORDING_DIR / "problem.json").read_text(encoding="utf-8")
             workspace.resolve("problem.json").write_text(problem, encoding="utf-8")
 
         def plan(workspace, *_args, **_kwargs):
+            pause_stage("plan")
             planning = PlanningResult(
                 problem_title="EV fleet electricity price", model="fixture", attempts=1,
                 max_qubits=5, worker_seconds=5,
@@ -387,6 +427,7 @@ class HandoffTests(unittest.TestCase):
             return planning
 
         def build(workspace, *_args, **_kwargs):
+            pause_stage("build")
             workspace.resolve("replay.json").write_text(json.dumps(fixture), encoding="utf-8")
             workspace.resolve("main.py").write_text(dedent("""
                 import argparse
@@ -417,6 +458,8 @@ class HandoffTests(unittest.TestCase):
             """), encoding="utf-8")
 
         def review(_workspace, runs, **_kwargs):
+            if not reached["test"].is_set():
+                pause_stage("test")
             prices = []
             issues = []
             for run in runs:
@@ -442,6 +485,11 @@ class HandoffTests(unittest.TestCase):
 
         approves = FinalCheck(name="Fixture review", returns_to="build", verdict="matches",
                               summary="Approved the finite fleet plan.", issues=[])
+
+        def verify(*_args):
+            pause_stage("verify")
+            return approves
+
         views = {}
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -458,13 +506,29 @@ class HandoffTests(unittest.TestCase):
                 patch("backend.pipeline.parse_problem_statement", side_effect=parse),
                 patch("backend.pipeline.run_planning", side_effect=plan) as planner,
                 patch("backend.pipeline.run_build_phase", side_effect=build),
-                patch("backend.final_check.CHECKS", (lambda *_args: approves,)),
+                patch("backend.final_check.CHECKS", (verify,)),
                 patch("backend.testing.evaluate_semantics", side_effect=review),
                 patch("backend.semantics.evaluate_semantics", side_effect=review),
             ):
                 with self.request("/api/config") as response:
                     self.assertTrue(json.load(response)["pipeline_backend_configured"])
-                first = self.run_plan("live", prompt=prompt)
+                job_id = self.start_pipeline(prompt)["id"]
+                try:
+                    for stage in stages:
+                        self.assertTrue(reached[stage].wait(4), f"Pipeline did not reach {stage}.")
+                        snapshot = self.read_pipeline(job_id)
+                        self.assertEqual((snapshot["status"], snapshot["stage"], snapshot["attempt"]),
+                                         ("running", stage, 1))
+                        self.assertNotIn("result", snapshot)
+                        if stage == "init":
+                            self.assertEqual(self.start_pipeline(prompt)["id"], job_id)
+                        proceed[stage].set()
+                finally:
+                    for event in proceed.values():
+                        event.set()
+                    snapshot = self.wait_for_pipeline(job_id)
+                self.assertEqual(snapshot["status"], "completed", snapshot)
+                first = snapshot["result"]
                 workspace = open_workspace(first["plan_id"], root=root)
                 baseline = {name: workspace.resolve(name).read_bytes() for name in ("results.json", "handoff.json")}
 
@@ -491,6 +555,114 @@ class HandoffTests(unittest.TestCase):
         self.assertAlmostEqual(updated["evaluation"]["costs"]["electricity"], 1.50)
         self.assertAlmostEqual(updated["evaluation"]["objective_value"], first["evaluation"]["objective_value"] + 0.50)
         self.assertEqual(reviewed_tariffs, [[0.20, 0.30], [0.30], [0.40]])
+
+    def test_pipeline_input_failure_remains_visible_in_its_stage(self):
+        def needs_input(_request, *, on_stage):
+            on_stage("init")
+            on_stage("plan")
+            raise UnverifiedResult("Which depot is the starting point?")
+
+        with (
+            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": "", "GEMINI_API_KEY": "fixture-key"}),
+            patch("server.run_plan", side_effect=needs_input) as runner,
+        ):
+            job_id = self.start_pipeline("An EV fleet with an unspecified depot.")["id"]
+            snapshot = self.wait_for_pipeline(job_id)
+        runner.assert_called_once()
+        self.assertEqual((snapshot["status"], snapshot["stage"], snapshot["attempt"]), ("failed", "plan", 1))
+        self.assertEqual(snapshot["error"], "Which depot is the starting point?")
+        self.assertNotIn("result", snapshot)
+
+    def test_history_browses_disk_workspaces_and_reopens_a_verified_schedule(self):
+        from backend.workspace import init_workspace
+
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {"QUANTUM_WORKSPACES_ROOT": directory}):
+            def create(prompt, created_at, **metadata):
+                workspace = init_workspace(prompt, **metadata)
+                meta = workspace.resolve("meta.json")
+                details = workspace.meta
+                details["created_at"] = created_at
+                meta.write_text(json.dumps(details), encoding="utf-8")
+                return workspace
+
+            unfinished = create("Schedule four vans without a depot.", "2026-11-13T12:00:00+00:00", scene_type="ev_fleet")
+            unfinished.resolve("PLAN.md").write_text("# Early plan", encoding="utf-8")
+            unfinished.resolve("private-context.txt").write_text("Scratch notes", encoding="utf-8")
+            generic = create("A separate graph problem from the CLI.", "2026-11-14T12:00:00+00:00")
+            generic.resolve("handoff.json").write_text(json.dumps({
+                "workspace_id": generic.id, "decision": "GO",
+                "problem": {"title": "Graph optimization", "summary": "Graph solver output."},
+                "results": {"status": "ok", "solution": {"vertices": [1, 2]}},
+            }), encoding="utf-8")
+
+            def save_verified(workspace, title, charge):
+                original = reference_handoff({CONTROL_ID: charge})
+                evaluation = original["result"]["evaluation"]
+                saved = {
+                    "workspace_id": workspace.id, "decision": "GO",
+                    "problem": {"title": title, "summary": "Verified fleet schedule."},
+                    "controls": original["controls"],
+                    "results": {
+                        "status": "ok", "controls": {CONTROL_ID: charge},
+                        "simulation": original["result"]["simulation"],
+                        "objective": {"unit": "USD", "value": evaluation["objective_value"]},
+                        "solution": {"verification": {"feasible": True, "violations": []},
+                                     "cost_breakdown": evaluation["costs"]},
+                        "quantum": {"qubits": 5, "decision_qubits": 5, "counts": {"00101": 16}},
+                    },
+                }
+                workspace.resolve("handoff.json").write_text(json.dumps(saved), encoding="utf-8")
+                return evaluation["objective_value"]
+
+            solved = create("Find the lowest-cost routes for the example EV fleet.",
+                            "2026-11-15T12:00:00+00:00", scene_type="ev_fleet")
+            earlier = create("Route the fleet with a lower starting charge.", "2026-11-14T22:00:00+00:00")
+            solved_cost = save_verified(solved, "Morning fleet routes", 35)
+            earlier_cost = save_verified(earlier, "Earlier EV run from the CLI", 20)
+            (Path(directory) / "unrelated-scratch").mkdir()
+
+            with (
+                patch("server.PIPELINE_RUNS", {}),
+                patch("server.VIEWS", {}) as views,
+                patch("server.pipeline_handoff") as provider,
+            ):
+                with self.request("/api/workspaces") as response:
+                    runs = json.load(response)["workspaces"]
+                self.assertEqual([(item["id"], item["status"], item["can_open"]) for item in runs], [
+                    (solved.id, "verified", True), (earlier.id, "verified", True), (generic.id, "saved", False),
+                    (unfinished.id, "incomplete", False),
+                ])
+                self.assertEqual(runs[0]["title"], "Morning fleet routes")
+                self.assertNotIn("prompt", runs[0])
+
+                with self.request(f"/api/workspaces/{generic.id}") as response:
+                    detail = json.load(response)
+                self.assertEqual(detail["prompt"], generic.prompt)
+                self.assertIn("handoff", [artifact["key"] for artifact in detail["artifacts"]])
+
+                with self.request(f"/api/workspaces/{unfinished.id}/artifacts/plan") as response:
+                    self.assertEqual(response.read(), b"# Early plan")
+                    self.assertIn("attachment", response.headers["Content-Disposition"])
+                    self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                with self.assertRaises(HTTPError) as forbidden:
+                    self.request(f"/api/workspaces/{unfinished.id}/artifacts/private-context.txt")
+                self.assertEqual(forbidden.exception.code, 404)
+                forbidden.exception.close()
+                with self.assertRaises(HTTPError) as incompatible:
+                    self.request(f"/api/workspaces/{generic.id}/open", {})
+                self.assertEqual(incompatible.exception.code, 422)
+                incompatible.exception.close()
+
+                for workspace, expected_cost in ((solved, solved_cost), (earlier, earlier_cost)):
+                    with self.request(f"/api/workspaces/{workspace.id}/open", {}) as response:
+                        result = json.load(response)
+                    self.assertEqual(result["plan_id"], workspace.id)
+                    self.assertEqual(result["problem"]["original_prompt"], workspace.prompt)
+                    self.assertEqual(result["evaluation"]["objective_value"], expected_cost)
+                    self.assertEqual(result["source"]["workspace_id"], workspace.id)
+                    self.assertEqual(views[result["view_id"]], result)
+                self.assertEqual(len(views), 2)
+                provider.assert_not_called()
 
     def test_recalculation_rejects_a_stale_schedule_with_matching_values(self):
         initial = verified_handoff({})

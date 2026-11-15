@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import copytree, ignore_patterns
@@ -95,7 +96,7 @@ def project_result(artifact, output, prompt, identity):
     }
 
 
-def pipeline_handoff(prompt, values, previous, attempt_id):
+def pipeline_handoff(prompt, values, previous, attempt_id, *, on_stage: Callable[[str], None] | None = None):
     """Plan a new dispatch, or run and verify fresh values in a copy of the approved workspace."""
     try:
         from pydantic import ValidationError
@@ -131,7 +132,9 @@ def pipeline_handoff(prompt, values, previous, attempt_id):
                     handoff = project_result(draft, output, prompt, identity)
                     normalize_handoff(handoff, "live", prompt, expected_values=expected)
 
-                artifact = run_pipeline(workspace, client=client, validate_results=validate_results)
+                artifact = run_pipeline(
+                    workspace, client=client, on_stage=on_stage, validate_results=validate_results,
+                )
             if artifact["decision"] != "GO":
                 raise UnverifiedResult("The pipeline did not approve the fleet plan.")
             return project_result(artifact, artifact["results"], prompt, identity)
@@ -139,7 +142,7 @@ def pipeline_handoff(prompt, values, previous, attempt_id):
         workspace = open_workspace(previous["plan_id"])
         identity = {"run_id": previous["run_id"], "plan_id": workspace.id, "attempt_id": attempt_id}
         artifact = json.loads(workspace.resolve(HANDOFF_JSON).read_text(encoding="utf-8"))
-        if (workspace.meta.get("scene_type") != "ev_fleet" or artifact.get("decision") != "GO"
+        if (workspace.meta.get("scene_type") not in (None, "ev_fleet") or artifact.get("decision") != "GO"
                 or artifact.get("workspace_id") != workspace.id):
             raise UnverifiedResult("The approved fleet plan is unavailable. Start a new dispatch.")
         with TemporaryDirectory(dir=workspace.path.parent, prefix=f"{workspace.id}-attempt-") as directory:

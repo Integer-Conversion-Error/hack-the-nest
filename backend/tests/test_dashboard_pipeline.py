@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.build import build_contract
+from backend.final_check import FinalCheck, FinalDecision
+from backend.pipeline import run_pipeline
 from backend.plan import PLAN_JSON, PlanControl
 from backend.runner import RESULTS_JSON, run_solver
 from backend.semantics import SemanticReview
@@ -59,6 +61,39 @@ class DashboardPipelineTests(unittest.TestCase):
 
         self.assertFalse(outcome.passed)
         self.assertEqual(outcome.issues, ["Missing EV simulation."])
+
+    def test_stage_updates_follow_build_repairs_and_final_review_retries(self):
+        problem = SimpleNamespace(
+            is_optimization_problem=True, title="Schedule the fleet", quantum=SimpleNamespace(method="QAOA"),
+        )
+        planning = SimpleNamespace(plan=SimpleNamespace(selected=SimpleNamespace(name="Fleet solver")), attempts=1)
+        failed_review = SemanticReview(verdict="falls_short", summary="Revise", checks_done=[], issues=[], model="test")
+        passed_review = SemanticReview(verdict="matches", summary="Ready", checks_done=[], issues=[], model="test")
+        failed_check = FinalCheck(
+            name="Problem", returns_to="init", verdict="falls_short", summary="Revise", issues=["Check departure time"],
+        )
+        decisions = [
+            FinalDecision(decision="NO_GO", failed_stage="init", checks=[failed_check], model="test"),
+            FinalDecision(decision="GO", failed_stage=None, checks=[], model="test"),
+        ]
+        stages = []
+        with (
+            patch("backend.pipeline.parse_problem_statement"),
+            patch("backend.pipeline.load_problem_statement", return_value=problem),
+            patch("backend.pipeline.run_planning", return_value=planning),
+            patch("backend.pipeline.run_build_phase"),
+            patch("backend.testing.run_build_phase"),
+            patch("backend.testing.evaluate_semantics", side_effect=[failed_review, passed_review, passed_review]),
+            patch("backend.pipeline.run_final_checks", side_effect=decisions),
+            patch("backend.pipeline.write_handoff", return_value={"decision": "GO"}),
+        ):
+            result = run_pipeline(self.workspace, on_stage=stages.append)
+
+        self.assertEqual(result["decision"], "GO")
+        self.assertEqual(stages, [
+            "init", "plan", "build", "test", "build", "test", "verify",
+            "init", "plan", "build", "test", "verify",
+        ])
 
     def test_test_phase_keeps_the_validated_default_result_after_a_range_probe(self):
         replayed = []

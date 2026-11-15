@@ -23,6 +23,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -46,6 +47,7 @@ from backend.workspace import Workspace, WorkspaceError, init_workspace, open_wo
 
 HANDOFF_JSON = "handoff.json"
 DEFAULT_MAX_FINAL_ROUNDS = 3  # the first decision plus up to two trips back
+PipelineStage = Literal["init", "plan", "build", "test", "verify"]
 
 
 class PipelineError(Exception):
@@ -106,32 +108,41 @@ def run_pipeline(
     client=None,
     max_final_rounds: int = DEFAULT_MAX_FINAL_ROUNDS,
     on_event: Callable[[str], None] | None = None,
+    on_stage: Callable[[PipelineStage], None] | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
 ) -> dict:
     """Take a workspace from wherever it is to a GO handoff. Returns the handoff.
 
     answers: the user's replies to planning's clarifying questions, if any.
+    on_stage: reports every stage entry, including returns to earlier stages.
     validate_results: an optional check of the result and requested overrides, raising ValueError on failure.
     Raises NoGo, PipelineError, or the stage's own error when a stage cannot finish.
     """
     say = on_event or (lambda message: None)
 
+    def enter(stage: PipelineStage, message: str) -> None:
+        if on_stage is not None:
+            on_stage(stage)
+        say(message)
+
     def plan(feedback: str | None = None) -> None:
-        say("##### Plan")
+        enter("plan", "##### Plan")
         result = run_planning(workspace, feedback, answers=answers, client=client)
         say(f"Selected solver: {result.plan.selected.name} (approved after {result.attempts} attempt(s))")
 
     def build(feedback: str | None = None) -> None:
-        say("##### Build")
+        enter("build", "##### Build")
         run_build_phase(workspace, feedback, client=client, on_event=on_event)
 
     def test() -> None:
         say("##### Test")
-        run_test_phase(workspace, client=client, on_event=on_event, validate_results=validate_results)
+        run_test_phase(
+            workspace, client=client, on_event=on_event, on_stage=on_stage, validate_results=validate_results,
+        )
 
     # --- Forward pass, skipping stages whose output already exists
     if not workspace.resolve(PROBLEM_JSON).is_file():
-        say("##### Init: parsing the prompt into a problem statement")
+        enter("init", "##### Init: parsing the prompt into a problem statement")
         parse_problem_statement(workspace, client=client)
     problem = load_problem_statement(workspace)
     if not problem.is_optimization_problem:
@@ -146,7 +157,7 @@ def run_pipeline(
 
     # --- Final Go/No-Go, going back to the stage a failed check points at
     for round_number in range(1, max_final_rounds + 1):
-        say(f"##### Final Go/No-Go (round {round_number} of {max_final_rounds})")
+        enter("verify", f"##### Final Go/No-Go (round {round_number} of {max_final_rounds})")
         decision = run_final_checks(workspace, client=client)
         say(describe(decision))
         if decision.go:
@@ -158,7 +169,7 @@ def run_pipeline(
 
         issues = decision.feedback()
         if decision.failed_stage == "init":
-            say("##### Init: revising the problem statement")
+            enter("init", "##### Init: revising the problem statement")
             parse_problem_statement(workspace, feedback=issues, client=client)
             if not load_problem_statement(workspace).is_optimization_problem:
                 raise PipelineError("The revised problem statement was rejected.")

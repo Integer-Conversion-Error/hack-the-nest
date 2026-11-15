@@ -377,7 +377,7 @@ Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
 ## build.ev_fleet
 
 This workspace feeds the EV dashboard. The input must describe an EV fleet
-optimization on a street grid, with one to four vans and an objective in USD.
+optimization on a street grid, with one to six vans and an objective in USD.
 Plan the delivered schedule and output fields alongside the solver. If the
 problem cannot be represented as that scene, report it as unsupported in Plan.
 

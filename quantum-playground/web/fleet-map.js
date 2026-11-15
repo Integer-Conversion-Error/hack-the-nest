@@ -139,7 +139,7 @@
     rounded(context, left - inset, top - inset, right - left + inset * 2,
       bottom - top + inset * 2, Math.min(3, inset), palette.parcel, palette.blockEdge);
 
-    const pavement = clamp(cell * 0.29, 2, 18);
+    const pavement = clamp(cell * 0.29, 0.75, 18);
     const blockInset = pavement * 0.7;
     const blockSize = cell - blockInset * 2;
     if (blockSize >= 6) {
@@ -170,7 +170,7 @@
     context.lineCap = 'round';
     context.lineJoin = 'round';
     context.strokeStyle = palette.curb;
-    context.lineWidth = pavement + 1.5;
+    context.lineWidth = pavement + clamp(cell * 0.1, 0.5, 1.5);
     context.stroke(streets);
     context.strokeStyle = palette.street;
     context.lineWidth = pavement;
@@ -184,10 +184,10 @@
     }
   }
 
-  function buildRoutes(vans, view) {
+  function buildRoutes(vans, view, spacing) {
     return vans.map((van, index) => {
       const route = new root.Path2D();
-      const offset = clamp(view.cell * 0.045, 0.5, 2.5) * (index - (vans.length - 1) / 2);
+      const offset = spacing * (index - (vans.length - 1) / 2);
       for (const drive of van.drives) {
         drive.path.forEach((position, step) => {
           const [x, y] = view.point(position);
@@ -200,16 +200,20 @@
   }
 
   function placeVehicles(positions, view, marker) {
+    if (positions.length <= 1) return positions;
+    const separationDistance = marker * 3.1;
+    // Leave room for the IDs and edge padding when the whole fleet shares a stop.
+    const maxOffset = Math.min(marker * 1.5 / Math.sin(Math.PI / positions.length),
+      Math.max(0, Math.min(view.left, view.top) - marker * 2));
+    const startAngle = -Math.PI / 2;
     return positions.map((point, index) => {
-      if (positions.length === 1) return point;
-      const separationDistance = marker * 3.1;
       let nearest = separationDistance;
       positions.forEach((other, otherIndex) => {
         if (index !== otherIndex) nearest = Math.min(nearest, Math.hypot(point[0] - other[0], point[1] - other[1]));
       });
       const strength = smooth(1 - nearest / separationDistance);
-      const angle = index * Math.PI * 2 / positions.length + Math.PI * 0.75;
-      const offset = strength * Math.min(marker * 1.4, view.cell * 0.24);
+      const angle = startAngle + index * Math.PI * 2 / positions.length;
+      const offset = strength * maxOffset;
       return [point[0] + Math.cos(angle) * offset, point[1] + Math.sin(angle) * offset];
     });
   }
@@ -229,7 +233,7 @@
     return { left, top, right: left + width, bottom: top + height };
   }
 
-  function drawStop(context, item, point, marker, target, view) {
+  function drawStop(context, item, point, marker, target, view, depot) {
     const [anchorX, anchorY] = point;
     const { kind, id, done, active } = item;
     const tint = active ? palette.charge : done ? palette.delivered
@@ -237,8 +241,17 @@
     const fill = active ? palette.chargeFill : done ? palette.deliveredFill : palette.surface;
     const badge = Math.max(5, marker * 0.87);
     const chargingPoint = kind === 'charger';
-    const side = anchorX > view.width / 2 ? -1 : 1;
-    const direction = anchorY < marker * 3.9 ? 1 : -1;
+    let side = anchorX > view.width / 2 ? -1 : 1;
+    let direction = anchorY < marker * 3.9 ? 1 : -1;
+    // Aim nearby charger labels away from the depot, where the vehicle markers gather.
+    if (chargingPoint) {
+      const dx = anchorX - depot[0];
+      const dy = anchorY - depot[1];
+      if (Math.hypot(dx, dy) <= Math.max(view.cell * 1.05, marker * 4)) {
+        if (Math.abs(dx) > 1 && Math.min(anchorX, view.width - anchorX) > marker * 4.7) side = Math.sign(dx);
+        if (Math.abs(dy) > 1 && Math.min(anchorY, view.height - anchorY) > marker * 2.5) direction = Math.sign(dy);
+      }
+    }
     const x = anchorX + (chargingPoint ? side * marker * 1.35 : 0);
     const y = anchorY + direction * marker * (chargingPoint ? 1.25 : 1.75);
     line(context, [[x, y], point], tint);
@@ -306,6 +319,7 @@
     let simulation = null;
     let vehicles = [];
     let routePaths = [];
+    let routeWidth = 1.65;
     let hitTargets = [];
     let view = null;
     let density = 0;
@@ -333,7 +347,10 @@
       canvas.height = background.height = Math.round(height * scale);
       baseContext.setTransform(scale, 0, 0, scale, 0, 0);
       drawBase(baseContext, simulation.grid, view);
-      routePaths = buildRoutes(vehicles, view);
+      // Fit all route lines into a share of the gap between street intersections.
+      const spacing = Math.min(2.5, view.cell * 0.42 / Math.max(1, vehicles.length - 1));
+      routePaths = buildRoutes(vehicles, view, spacing);
+      routeWidth = clamp(spacing * 0.9, 0.65, 1.65);
       return true;
     }
 
@@ -348,18 +365,32 @@
       context.lineCap = 'round';
       context.lineJoin = 'round';
 
-      routePaths.forEach((route, index) => {
-        const { van, color } = vehicles[index];
-        const selected = van.id === selectedVan;
-        const muted = selectedVan && !selected;
-        context.strokeStyle = color;
-        context.globalAlpha = muted ? 0.23 : selected ? 1 : 0.72;
-        context.lineWidth = selected ? 2.6 : 1.65;
+      const highlight = vehicles.findIndex(({ van }) => van.id === selectedVan);
+      const drawRoute = (route, index) => {
+        const selected = index === highlight;
+        context.strokeStyle = vehicles[index].color;
+        context.globalAlpha = selected ? 1 : highlight >= 0 ? 0.23 : 0.72;
+        context.lineWidth = selected ? Math.max(1.6, routeWidth * 1.6) : routeWidth;
         context.stroke(route);
+      };
+      routePaths.forEach((route, index) => {
+        if (index !== highlight) drawRoute(route, index);
       });
+      if (highlight !== -1) drawRoute(routePaths[highlight], highlight);
       context.globalAlpha = 1;
 
       const marker = clamp(view.cell * 0.18, 7, 15);
+      const positions = vehicles.map(({ van }) => view.point(root.FleetReplay.stateAt(van, minute, simulation.depot).position));
+      const displayPositions = placeVehicles(positions, view, marker);
+      displayPositions.forEach((point, index) => {
+        const origin = positions[index];
+        const distance = Math.hypot(point[0] - origin[0], point[1] - origin[1]);
+        if (distance <= marker) return;
+        context.globalAlpha = clamp((distance - marker) / marker, 0, 0.45);
+        line(context, [origin, point], vehicles[index].color);
+      });
+      context.globalAlpha = 1;
+
       const delivered = root.FleetReplay.deliveredAt(simulation, minute);
       const activeChargers = new Set();
       for (const { van } of vehicles) {
@@ -368,9 +399,10 @@
       }
 
       hitTargets = [];
+      const depot = view.point(simulation.depot);
       const stop = item => {
         const target = item.kind === 'depot' ? null : { kind: item.kind, id: item.id };
-        drawStop(context, item, view.point(item.position), marker, target, view);
+        drawStop(context, item, view.point(item.position), marker, target, view, depot);
         if (target) hitTargets.push(target);
       };
       stop({ kind: 'depot', position: simulation.depot });
@@ -381,8 +413,6 @@
         ...delivery, kind: 'delivery', done: delivered.has(delivery.id),
       }));
 
-      const positions = vehicles.map(({ van }) => view.point(root.FleetReplay.stateAt(van, minute, simulation.depot).position));
-      const displayPositions = placeVehicles(positions, view, marker);
       vehicles.forEach((vehicle, index) => {
         const [x, y] = displayPositions[index];
         const caption = drawVehicle(context, vehicle, [x, y], marker, minute, vehicle.van.id === selectedVan);
@@ -401,8 +431,11 @@
       for (const hit of hitTargets) {
         const { left, right, top, bottom } = hit.caption;
         const inCaption = x >= left && x <= right && y >= top && y <= bottom;
-        const distance = inCaption ? -1 : Math.hypot(x - hit.x, y - hit.y);
-        if (distance <= hit.radius && distance <= best) {
+        const toMarker = Math.hypot(x - hit.x, y - hit.y);
+        if (!inCaption && toMarker > hit.radius) continue;
+        const toCaption = inCaption ? Math.hypot(x - (left + right) / 2, y - (top + bottom) / 2) : Infinity;
+        const distance = Math.min(toMarker, toCaption);
+        if (distance < best) {
           nearest = hit;
           best = distance;
         }

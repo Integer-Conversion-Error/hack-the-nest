@@ -14,6 +14,7 @@ Usage from a terminal:
 
 import argparse
 import json
+import os
 import re
 import secrets
 import sys
@@ -43,11 +44,11 @@ class Workspace:
 
     @property
     def prompt(self) -> str:
-        return (self.path / PROMPT_FILE).read_text(encoding="utf-8")
+        return self.resolve(PROMPT_FILE).read_text(encoding="utf-8")
 
     @property
     def meta(self) -> dict:
-        return json.loads((self.path / META_FILE).read_text(encoding="utf-8"))
+        return json.loads(self.resolve(META_FILE).read_text(encoding="utf-8"))
 
     def resolve(self, relative_path: str) -> Path:
         """Turn an agent-supplied path into an absolute one, refusing anything outside the workspace."""
@@ -62,10 +63,18 @@ def _slugify(text: str, max_length: int = 40) -> str:
     return slug[:max_length].strip("-")
 
 
+def workspace_root(root: Path | None = None) -> Path:
+    """Use the workspace directory selected by the caller or local configuration."""
+    if root is None:
+        configured = os.getenv("QUANTUM_WORKSPACES_ROOT", "").strip()
+        root = Path(configured) if configured else WORKSPACES_ROOT
+    return Path(root).expanduser().resolve()
+
+
 def init_workspace(
     prompt: str,
     name: str = "",
-    root: Path = WORKSPACES_ROOT,
+    root: Path | None = None,
     max_qubits: int = DEFAULT_MAX_QUBITS,
     run_timeout_seconds: int = DEFAULT_RUN_TIMEOUT_SECONDS,
     *,
@@ -79,7 +88,7 @@ def init_workspace(
     parts = [now.strftime("%Y%m%d-%H%M%S"), _slugify(name), secrets.token_hex(2)]
     workspace_id = "-".join(part for part in parts if part)
 
-    path = Path(root).resolve() / workspace_id
+    path = workspace_root(root) / workspace_id
     path.mkdir(parents=True, exist_ok=False)  # never reuse a directory
 
     (path / PROMPT_FILE).write_text(prompt, encoding="utf-8")
@@ -97,14 +106,15 @@ def init_workspace(
     return Workspace(id=workspace_id, path=path)
 
 
-def open_workspace(workspace_id: str, root: Path = WORKSPACES_ROOT) -> Workspace:
+def open_workspace(workspace_id: str, root: Path | None = None) -> Workspace:
     """Look up an existing workspace by id (for every tool call after init)."""
     if not re.fullmatch(r"[a-z0-9-]+", workspace_id):
         raise WorkspaceError(f"Invalid workspace id: {workspace_id!r}")
-    path = Path(root).resolve() / workspace_id
-    if not (path / META_FILE).is_file():
+    path = workspace_root(root) / workspace_id
+    workspace = Workspace(id=workspace_id, path=path)
+    if path.resolve() != path or not workspace.resolve(META_FILE).is_file():
         raise WorkspaceError(f"No such workspace: {workspace_id!r}")
-    return Workspace(id=workspace_id, path=path)
+    return workspace
 
 
 def main() -> None:

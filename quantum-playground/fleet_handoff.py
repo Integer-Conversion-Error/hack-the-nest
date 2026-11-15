@@ -178,7 +178,7 @@ def validate_replay(sim):
     chargers = named_items(sim.get("chargers"), "charger")
     deliveries = named_items(sim.get("deliveries"), "delivery")
     vans = named_items(sim.get("vans"), "van")
-    require(1 <= len(vans) <= 4, "The EV scene supports one to four vans.")
+    require(1 <= len(vans) <= 6, "The EV scene supports one to six vans.")
     require(
         point(depot) and all(point(item.get("position")) for item in (*chargers.values(), *deliveries.values())),
         "A scene entity is outside the grid.",

@@ -24,6 +24,7 @@ import json
 import sys
 from collections.abc import Callable
 from fractions import Fraction
+from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -172,6 +173,7 @@ def run_test_phase(
     client=None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     on_event: Callable[[str], None] | None = None,
+    on_stage: Callable[[Literal["build", "test"]], None] | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
 ) -> TestPhaseResult:
     """Test the built solver, sending it back to Build with the issues until it passes.
@@ -185,6 +187,8 @@ def run_test_phase(
 
     previous_feedback = None
     for round_number in range(1, max_rounds + 1):
+        if on_stage is not None:
+            on_stage("test")
         say(f"=== Test round {round_number} of {max_rounds}")
         round_ = test_once(
             workspace, model=model, client=client, on_event=on_event, validate_results=validate_results,
@@ -198,6 +202,8 @@ def run_test_phase(
             raise TestNotPassed("A trip back to Build left the same issues, so Test stopped.", round_)
         previous_feedback = feedback
         if round_number < max_rounds:
+            if on_stage is not None:
+                on_stage("build")
             say(f"=== Test failed. Going back to Build with:\n{feedback}")
             run_build_phase(workspace, feedback, model=model, client=client, on_event=on_event)
 

@@ -5,7 +5,7 @@ import math
 import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
@@ -16,12 +16,43 @@ from ev_recorded import LIVE_PROMPT, RECORDED_CONTROLS, RECORDED_PROMPT, REPO_RO
 from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
 from pipeline_live import pipeline_handoff, planner_configured
+from workspace_runs import (
+    SavedResultUnavailable, SavedRunNotFound, SavedRunUnavailable, list_saved_runs, open_saved_run,
+    saved_artifact, saved_run,
+)
 
 ROOT = Path(__file__).resolve().parent
 VIEWS = {}
 UPLOADED_FRAME = None
 VIEW_LOCK = Lock()
 BACKEND_TIMEOUT_SECONDS = 300
+PIPELINE_RUNS = {}
+PIPELINE_LOCK = Lock()
+MAX_ACTIVE_PIPELINE_RUNS = 2
+MAX_PIPELINE_RUNS = 32
+ACTIVE_PIPELINE_STATUSES = {"queued", "running"}
+SAMPLE_PROMPTS = (
+    {"id": "ev-charge-range", "label": "EV dispatch · charge range", "prompt": LIVE_PROMPT},
+    {"id": "ev-charge-options", "label": "EV dispatch · two charge settings", "prompt": RECORDED_PROMPT},
+    {
+        "id": "ev-electricity-price",
+        "label": "EV dispatch · electricity price range",
+        "prompt": RECORDED_PROMPT + "\nLet me vary the electricity price from $0.10 to $0.50 per kWh in $0.10 steps.",
+    },
+) + tuple(
+    {
+        "id": sample_id,
+        "label": label,
+        "prompt": (REPO_ROOT / "example-user-prompts" / f"{sample_id}.md").read_text(encoding="utf-8"),
+    }
+    for sample_id, label in (
+        ("ev-charge-and-energy-prices", "EV dispatch · charge and energy prices"),
+        ("ev-waiting-and-late-delivery", "EV dispatch · waiting and late fees"),
+        ("ev-battery-and-charger-limits", "EV dispatch · battery and charger limits"),
+        ("ev-fleet-dispatch-full-scenario", "EV dispatch · 4 vans, 17 adjustable settings"),
+        ("ev-six-van-six-controls", "EV dispatch · 6 vans, 6 adjustable settings"),
+    )
+)
 
 
 class RequestError(Exception):
@@ -32,6 +63,10 @@ class RequestError(Exception):
 
 def backend_url():
     return os.environ.get("QUANTUM_BACKEND_URL", "").strip().rstrip("/")
+
+
+def native_pipeline_configured():
+    return not backend_url() and planner_configured()
 
 
 def request_handoff(base, payload):
@@ -74,59 +109,14 @@ def read_view(view_id):
     return view
 
 
-def run_plan(data):
-    mode = data.get("mode", "recorded")
-    if mode not in ("recorded", "reference", "live"):
-        raise ValueError("Unknown run mode.")
-    overrides = data.get("variables", {})
-    if not isinstance(overrides, dict):
-        raise ValueError("Control values must be a JSON object.")
-    previous = None
-    values = {}
-    if "view_id" in data:
-        previous = read_view(data["view_id"])
-        if mode != previous["mode"] or "prompt" in data:
-            raise ValueError("Use the displayed plan and its controls for recalculation.")
-        prompt = previous["problem"]["original_prompt"]
-        values = applied_values(previous["variables"], previous["effective_values"], overrides)
-    else:
-        prompt = data.get("prompt", "")
-        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 10000:
-            raise ValueError("Enter a prompt of 1–10,000 characters.")
-        if overrides:
-            raise ValueError("Start a plan before changing its controls.")
-        if (mode == "recorded" and prompt != RECORDED_PROMPT) or (mode == "reference" and prompt != PROMPT):
-            raise ValueError("Load the EV example prompt to replay the example.")
+def read_prompt(data):
+    prompt = data.get("prompt", "")
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 10000:
+        raise ValueError("Enter a prompt of 1–10,000 characters.")
+    return prompt
 
-    attempt_id = None
-    if mode == "recorded":
-        handoff = recorded_handoff(values, previous)
-    elif mode == "reference":
-        handoff = reference_handoff(values, previous)
-    else:
-        attempt_id = str(uuid4())
-        base = backend_url()
-        use_pipeline = planner_configured() if previous is None else previous["plan_id"] not in LOCAL_PLAN_IDS
-        if base:
-            payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
-            if previous is None:
-                payload["prompt"] = prompt
-            else:
-                payload.update(
-                    run_id=previous["run_id"],
-                    plan_id=previous["plan_id"],
-                    previous_attempt_id=previous["attempt_id"],
-                )
-            handoff = request_handoff(base, payload)
-        elif use_pipeline:
-            handoff = pipeline_handoff(prompt, values, previous, attempt_id)
-        else:
-            handoff = local_handoff(prompt, values, previous, attempt_id)
-    result = normalize_handoff(
-        handoff, mode, prompt, previous,
-        expected_values=values if previous is not None else None,
-        expected_attempt_id=attempt_id,
-    )
+
+def register_view(result, previous=None):
     result["view_id"] = str(uuid4())
     try:
         json.dumps(result, allow_nan=False)
@@ -144,6 +134,157 @@ def run_plan(data):
     return result
 
 
+def workspace_response(operation, *args):
+    try:
+        return operation(*args)
+    except SavedRunNotFound as exc:
+        raise RequestError(404, str(exc)) from exc
+    except SavedResultUnavailable as exc:
+        raise RequestError(422, str(exc)) from exc
+    except SavedRunUnavailable as exc:
+        raise RequestError(409, str(exc)) from exc
+
+
+def reopen_workspace(run_id):
+    result = workspace_response(open_saved_run, run_id)
+    result["workspace_origin"] = "local"
+    return register_view(result)
+
+
+def run_plan(data, *, on_stage=None):
+    mode = data.get("mode", "recorded")
+    if mode not in ("recorded", "reference", "live"):
+        raise ValueError("Unknown run mode.")
+    overrides = data.get("variables", {})
+    if not isinstance(overrides, dict):
+        raise ValueError("Control values must be a JSON object.")
+    previous = None
+    values = {}
+    if "view_id" in data:
+        previous = read_view(data["view_id"])
+        if mode != previous["mode"] or "prompt" in data:
+            raise ValueError("Use the displayed plan and its controls for recalculation.")
+        prompt = previous["problem"]["original_prompt"]
+        values = applied_values(previous["variables"], previous["effective_values"], overrides)
+    else:
+        prompt = read_prompt(data)
+        if overrides:
+            raise ValueError("Start a plan before changing its controls.")
+        if (mode == "recorded" and prompt != RECORDED_PROMPT) or (mode == "reference" and prompt != PROMPT):
+            raise ValueError("Load the EV example prompt to replay the example.")
+
+    local_workspace = previous is not None and previous.get("workspace_origin") == "local"
+    attempt_id = None
+    if mode == "recorded":
+        handoff = recorded_handoff(values, previous)
+    elif mode == "reference":
+        handoff = reference_handoff(values, previous)
+    else:
+        attempt_id = str(uuid4())
+        base = "" if local_workspace else backend_url()
+        if local_workspace and not planner_configured():
+            raise RequestError(503, "Configure the native planning pipeline to recalculate this saved run.")
+        use_pipeline = planner_configured() if previous is None else (
+            local_workspace or previous["plan_id"] not in LOCAL_PLAN_IDS
+        )
+        if on_stage is not None and (base or not use_pipeline):
+            raise RequestError(503, "Configure the native planning pipeline to run a problem with progress.")
+        if base:
+            payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
+            if previous is None:
+                payload["prompt"] = prompt
+            else:
+                payload.update(
+                    run_id=previous["run_id"],
+                    plan_id=previous["plan_id"],
+                    previous_attempt_id=previous["attempt_id"],
+                )
+            handoff = request_handoff(base, payload)
+        elif on_stage is not None:
+            handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage)
+        elif use_pipeline:
+            handoff = pipeline_handoff(prompt, values, previous, attempt_id)
+        else:
+            handoff = local_handoff(prompt, values, previous, attempt_id)
+    result = normalize_handoff(
+        handoff, mode, prompt, previous,
+        expected_values=values if previous is not None else None,
+        expected_attempt_id=attempt_id,
+    )
+    if local_workspace:
+        result["workspace_origin"] = "local"
+    return register_view(result, previous)
+
+
+def pipeline_run_snapshot(run):
+    snapshot = {key: run[key] for key in ("id", "status", "stage", "attempt")}
+    if run["status"] == "completed":
+        snapshot["result"] = run["result"]
+    elif run["status"] == "failed":
+        snapshot["error"] = run["error"]
+    return snapshot
+
+
+def read_pipeline_run(run_id):
+    with PIPELINE_LOCK:
+        run = PIPELINE_RUNS.get(run_id)
+        if run is None:
+            raise RequestError(404, "This pipeline run is no longer available. Start a new run.")
+        return pipeline_run_snapshot(run)
+
+
+def complete_pipeline_run(run):
+    attempts = {}
+
+    def update_stage(stage):
+        with PIPELINE_LOCK:
+            attempts[stage] = attempts.get(stage, 0) + 1
+            run.update(stage=stage, attempt=attempts[stage])
+
+    with PIPELINE_LOCK:
+        run["status"] = "running"
+    try:
+        result = run_plan({"mode": "live", "prompt": run["prompt"]}, on_stage=update_stage)
+    except (RequestError, SolverUnavailable, InvalidHandoff, SolverFailed, UnverifiedResult) as exc:
+        outcome = {"status": "failed", "error": str(exc)}
+    except TimeoutError:
+        outcome = {"status": "failed", "error": "The pipeline timed out. Try running the problem again."}
+    except Exception as exc:
+        print(f"Pipeline run {run['id']} failed ({type(exc).__name__}).", flush=True)
+        outcome = {"status": "failed", "error": "The pipeline stopped unexpectedly. Check the server terminal."}
+    else:
+        # Publish a stable copy even if feedback is later added to the live view.
+        outcome = {"status": "completed", "result": dict(result)}
+    with PIPELINE_LOCK:
+        run.update(outcome)
+
+
+def start_pipeline_run(prompt):
+    if not native_pipeline_configured():
+        raise RequestError(503, "Configure the native planning pipeline to run a problem with progress.")
+    with PIPELINE_LOCK:
+        active = [run for run in PIPELINE_RUNS.values() if run["status"] in ACTIVE_PIPELINE_STATUSES]
+        duplicate = next((run for run in active if run["prompt"] == prompt), None)
+        if duplicate is not None:
+            return pipeline_run_snapshot(duplicate)
+        if len(active) >= MAX_ACTIVE_PIPELINE_RUNS:
+            raise RequestError(429, "The pipeline is busy. Wait for a run to finish and try again.")
+        if len(PIPELINE_RUNS) >= MAX_PIPELINE_RUNS:
+            finished = next(run_id for run_id, run in PIPELINE_RUNS.items()
+                            if run["status"] not in ACTIVE_PIPELINE_STATUSES)
+            del PIPELINE_RUNS[finished]
+        run_id = str(uuid4())
+        run = {"id": run_id, "status": "queued", "stage": None, "attempt": 0, "prompt": prompt}
+        PIPELINE_RUNS[run_id] = run
+        snapshot = pipeline_run_snapshot(run)
+        try:
+            Thread(target=complete_pipeline_run, args=(run,), daemon=True).start()
+        except RuntimeError as exc:
+            del PIPELINE_RUNS[run_id]
+            raise RequestError(503, "Could not start a pipeline worker. Try again.") from exc
+    return snapshot
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -156,6 +297,14 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
+
+    def require_local_workspace_host(self):
+        try:
+            host = urlparse("//" + self.headers.get("Host", "")).hostname
+        except ValueError:
+            host = None
+        if host not in {"127.0.0.1", "::1", "localhost", "localhost."}:
+            raise RequestError(403, "Open Fleet Lab on localhost to access saved runs.")
 
     def do_GET(self):
         url = urlparse(self.path)
@@ -170,17 +319,50 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/example":
             return self.send_json(200, {
                 "prompt": RECORDED_PROMPT, "live_prompt": LIVE_PROMPT, "variables": RECORDED_CONTROLS,
+                "samples": SAMPLE_PROMPTS,
             })
         if url.path == "/api/config":
             external = bool(backend_url())
-            pipeline = not external and planner_configured()
+            pipeline = native_pipeline_configured()
             local = not external and not pipeline and local_solver_available()
             return self.send_json(200, {
                 "backend_configured": external or pipeline or local,
                 "pipeline_backend_configured": pipeline,
                 "local_backend_configured": local,
+                "saved_run_recalculation_configured": planner_configured(),
             })
+        if url.path.startswith("/api/pipeline-runs/"):
+            try:
+                snapshot = read_pipeline_run(url.path.removeprefix("/api/pipeline-runs/"))
+            except RequestError as exc:
+                return self.send_json(exc.status, {"error": str(exc)})
+            return self.send_json(200, snapshot)
+        if url.path == "/api/workspaces" or url.path.startswith("/api/workspaces/"):
+            try:
+                return self.send_workspace(url.path)
+            except RequestError as exc:
+                return self.send_json(exc.status, {"error": str(exc)})
         return super().do_GET()
+
+    def send_workspace(self, path):
+        self.require_local_workspace_host()
+        if path == "/api/workspaces":
+            return self.send_json(200, {"workspaces": workspace_response(list_saved_runs)})
+        segments = path.removeprefix("/api/workspaces/").split("/")
+        if len(segments) == 1:
+            return self.send_json(200, workspace_response(saved_run, segments[0]))
+        if len(segments) == 3 and segments[1] == "artifacts":
+            filename, data = workspace_response(saved_artifact, segments[0], segments[2])
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        raise RequestError(404, "Unknown saved workspace endpoint.")
 
     def send_frame(self, params):
         from pygame_renderer import PygameUnavailable, render_png, scene_layout
@@ -228,6 +410,19 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         global UPLOADED_FRAME
         try:
+            workspace_path = urlparse(self.path).path
+            if workspace_path.startswith("/api/workspaces/"):
+                self.require_local_workspace_host()
+                workspace_segments = workspace_path.removeprefix("/api/workspaces/").split("/")
+                if len(workspace_segments) != 2 or workspace_segments[1] != "open":
+                    raise RequestError(404, "Unknown saved workspace endpoint.")
+                if self.headers.get_content_type() != "application/json":
+                    raise RequestError(415, "Send the request as application/json.")
+                workspace_id = workspace_segments[0]
+            else:
+                workspace_id = None
+            if self.path == "/api/pipeline-runs" and self.headers.get_content_type() != "application/json":
+                raise RequestError(415, "Send the problem as application/json.")
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 5_000_000:
                 raise ValueError("Invalid request size.")
@@ -243,6 +438,10 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("Expected a JSON object.")
             if self.path == "/api/run":
                 result = run_plan(data)
+            elif self.path == "/api/pipeline-runs":
+                return self.send_json(202, start_pipeline_run(read_prompt(data)))
+            elif workspace_id is not None:
+                result = reopen_workspace(workspace_id)
             elif self.path == "/api/feedback":
                 view = read_view(data.get("view_id"))
                 feedback = str(data.get("feedback", ""))[:2000]
