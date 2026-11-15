@@ -7,7 +7,8 @@ apply on the next run.
 How this file is read:
 
 - Each `##` heading starts a prompt. The heading text is the prompt's id,
-  which the code passes to `load_prompt`. Ids use the form `<step>.<role>`.
+  which the code passes to `load_prompt`. The last part is the role, as in
+  `planning.research.system`.
 - Everything under a heading, up to the next `##` heading, is the prompt
   text. Leading and trailing blank lines are trimmed. Use `###` or deeper
   headings inside a prompt if you need them.
@@ -23,6 +24,17 @@ Prompts in this file:
   Placeholder: `{prompt}`.
 - `problem_statement.retry`: appended to the message when Final Go/No-Go
   sends the problem statement back. Placeholders: `{previous}`, `{feedback}`.
+- `planning.research.system`: instructions for gathering grounded evidence.
+- `planning.research.user`: the problem and planning context. Placeholders
+  `{problem}` and `{context}`.
+- `planning.draft.system`: instructions for proposing a plan. Placeholders
+  `{max_qubits}` and `{worker_seconds}`.
+- `planning.draft.user`: the request, problem, evidence, and context. Placeholders
+  `{prompt}`, `{problem}`, `{research}`, and `{context}`.
+- `planning.review.system`: instructions for reviewing a draft. Placeholders
+  `{max_qubits}` and `{worker_seconds}`.
+- `planning.review.user`: the request, evidence, and draft. Placeholders
+  `{prompt}`, `{problem}`, `{research}`, `{context}`, and `{draft}`.
 
 ## problem_statement.system
 
@@ -69,3 +81,142 @@ Your previous problem statement:
 A reviewer found these issues with it. Fix them:
 
 {feedback}
+
+## planning.research.system
+
+Gather technical evidence for planning a quantum optimization run. Use Google
+Search grounding and favor primary sources such as SDK documentation and papers.
+Focus on a gate-based method that can run on Quantum Rings, how to encode the
+user's problem, and how to verify decoded results independently. Investigate
+implementation details that affect feasibility, including circuit width, gates,
+SDK calls, and the boundary between classical and quantum work. Look for an
+exact or bounded classical reference when the problem admits one.
+
+If the user specifies a method or a hybrid split, research that design first.
+Consider another design if it addresses a material tradeoff and honors the same
+requirements. Explain any limitation that would prevent implementation.
+
+Use the problem, context, and search results as evidence. Only explicit user
+clarifications add requirements. Summarize the findings that affect the plan,
+cite the sources returned by search, and identify any claims still unverified.
+
+## planning.research.user
+
+Problem statement
+
+{problem}
+
+Planning context
+
+{context}
+
+## planning.draft.system
+
+Propose an implementation plan for the user's optimization problem. Use the
+original request and actual user clarifications as requirements. Treat the parsed
+problem, research, prior drafts, and reviewer feedback as evidence. Reconcile
+them with the request before planning.
+
+- Put the summary, objective, constraints, assumptions, and controls at the plan
+  level. Preserve the requested objective direction and units. Explain how each
+  hard constraint will be enforced and honor any specified method or hybrid
+  split that fits the execution limits.
+- Put problem-specific solver blueprints in `solver_examples` and set
+  `selected_solver` to the exact name of the preferred design. Include one design
+  when it is the only viable approach. Add a second only if it offers a material
+  tradeoff and satisfies the same user requirements.
+- For each design, describe its gate-based method, classical and quantum steps,
+  and encoding, including the mapping from decisions to measurements. Give
+  ordered `build_steps` with concrete file or module boundaries, callable
+  inputs and outputs, and relevant Quantum Rings API operations. Base technical
+  details on the available evidence.
+- Estimate decision and auxiliary qubits for each design. Their total must fit
+  {max_qubits}. Size the work for the {worker_seconds}-second worker limit and
+  estimate worker time when the evidence supports it. Describe independent
+  checks for the decoded solution, constraint violations, and objective score.
+  Include edge cases that could undermine the result and a reference method
+  over the same inputs and search space, with its applicable limits.
+- For sampling-based designs, say how to filter infeasible measurements and
+  select the best remaining candidate by the original objective. Keep the
+  measured outcome and classical reference separate. For penalty encodings,
+  give a defensible penalty bound and describe an encoding check when the
+  instance is small enough to enumerate.
+- Select controls the proposed implementation can apply, if any. For each, give
+  a stable key, label, type, default, valid values or bounds, and recalculation
+  mode. Cover the qubit and time limits for supported inputs. Keep each default
+  within the allowed values and record meaningful assumptions.
+
+Return `needs_clarification` with focused questions when a missing or conflicting
+fact changes feasibility or the objective. Return `unsupported` with a reason
+when a gate-based Quantum Rings design cannot represent the user's requirements
+within the limits. Use `ready` with a complete plan when these checks pass.
+
+## planning.draft.user
+
+Original request
+
+{prompt}
+
+Problem statement
+
+{problem}
+
+Grounded research
+
+{research}
+
+Planning context
+
+{context}
+
+## planning.review.system
+
+Independently review the selected solver design against the original request,
+the user's clarifications, the parsed problem, and the research evidence. Check
+that `selected_solver` names a supplied blueprint. Check that its gate-based
+method can run on Quantum Rings and preserves the requested classical and
+quantum split. Review how its file and API boundaries carry inputs through
+encoding, circuit execution, decoding, and result verification.
+
+Check that the encoding preserves the objective and its units and that each
+hard constraint has an enforcement and verification step. Review the decoded
+result checks, edge cases, and the reference's inputs and search space. For
+sampling-based designs, verify feasibility filtering and ranking by the original
+objective. For penalty encodings, check the proposed bound. Check control
+defaults, allowed values, and recalculation behavior. Any alternative must meet
+the same hard constraints. For the supported inputs, the total width including
+auxiliary qubits must fit {max_qubits}, and the work must fit the
+{worker_seconds}-second worker limit.
+
+- Return `approve` when the plan satisfies these checks.
+- Return `revise` with concrete issues when the plan can be fixed using the
+  current problem statement. Identify any material claim that still needs
+  verification.
+- Return `needs_clarification` with questions when a missing user decision
+  affects feasibility or the objective.
+- Return `unsupported` with a reason when a gate-based Quantum Rings design
+  cannot meet the requested constraints within the limits.
+- Return `needs_reinterpretation` with a reason identifying the mismatch when
+  the problem statement itself materially misrepresents the user's request.
+
+## planning.review.user
+
+Original request
+
+{prompt}
+
+Problem statement
+
+{problem}
+
+Grounded research
+
+{research}
+
+Planning context
+
+{context}
+
+Proposed plan
+
+{draft}
