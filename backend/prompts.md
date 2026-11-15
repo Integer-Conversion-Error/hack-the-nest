@@ -19,7 +19,8 @@ How this file is read:
 Prompts in this file:
 
 - `problem_statement.system`: instructions for Init step 2, rewriting the
-  user's prompt into a problem statement. Placeholder: `{max_qubits}`.
+  user's prompt into a problem statement. Placeholders:
+  `{max_qubits}`, `{run_timeout_seconds}`.
 - `problem_statement.user`: the message carrying the user's prompt.
   Placeholder: `{prompt}`.
 - `problem_statement.retry`: appended to the message when Final Go/No-Go
@@ -48,22 +49,35 @@ Rules:
 - Preserve every number, unit, coordinate, count and name exactly as given.
   Do not round, convert or drop anything.
 - Restate the problem; do not solve it.
-- Choose the quantum method that best fits the problem, and say why. Any
-  method is open as long as it runs as a gate-based circuit on the Quantum
-  Rings simulator within the qubit limit (for example QAOA, VQE, Grover
-  search or quantum phase estimation). Quantum annealing does not run on
-  it. Split the problem into a quantum part and a classical part if that
-  fits better than solving it all on the quantum side. If the user named a
-  method that fits these limits, use theirs and mark it stated; otherwise
-  mark your choice as chosen.
+- Choose the quantum method that best fits the problem, and say why. The
+  choice is yours. Users describe their problem in everyday terms and are
+  not expected to know quantum computing, so the prompt will not name a
+  method. Choose only from this list:
+  - QAOA: choosing among discrete options, where the cost and the rules can
+    be written over yes/no variables (scheduling, assignment, routing
+    choices, graph problems).
+  - VQE: finding the lowest-energy state of a Hamiltonian, or an
+    optimization that is naturally written as one.
+  - Grover: searching for an item or assignment that passes a yes/no check,
+    when the search space is small enough for the qubit limit.
+  Split the problem into a quantum part and a classical part if that fits
+  better than solving it all on the quantum side. If no method fits well,
+  pick the closest one.
+- Estimate how many qubits the chosen method needs for this problem,
+  including auxiliary qubits, and record it as the qubit estimate.
 - Anything the user did not state but the problem needs (for example a
   missing deadline or capacity) goes in assumptions, and any value you fill
   in is marked source "assumed". Never present an assumption as stated.
 - Put real ambiguities in open questions, each with the default you would pick.
-- The simulator allows at most {max_qubits} qubits. If the user's formulation
-  needs more, say so in open questions.
-- If the prompt is not an optimization problem that a quantum approach could
-  reasonably address, set is_optimization_problem to false, explain why in
+- Reject a prompt only when it is too large to run: the qubit estimate is
+  above the simulator's limit of {max_qubits} qubits, or the run clearly
+  could not finish within {run_timeout_seconds} seconds. Say which limit it
+  breaks and by roughly how much. Do not reject for missing details,
+  ambiguity or an unusual kind of problem; use assumptions and open
+  questions for those.
+- The one other reason to reject: the text does not describe a problem to
+  solve at all.
+- To reject, set is_optimization_problem to false, explain why in
   rejection_reason, and fill the other fields as best you can.
 
 ## problem_statement.user
@@ -92,9 +106,13 @@ implementation details that affect feasibility, including circuit width, gates,
 SDK calls, and the boundary between classical and quantum work. Look for an
 exact or bounded classical reference when the problem admits one.
 
-If the user specifies a method or a hybrid split, research that design first.
-Consider another design if it addresses a material tradeoff and honors the same
-requirements. Explain any limitation that would prevent implementation.
+Research the quantum method recorded in the problem statement first. Users
+describe their problem in everyday terms and do not name quantum methods, so
+that method and its split between classical and quantum work are a proposal
+from the parsing step. Treat them as a starting point that the evidence can
+overrule. Consider another design if it addresses a material tradeoff and
+honors the user's requirements. Explain any limitation that would prevent
+implementation.
 
 Use the problem, context, and search results as evidence. Only explicit user
 clarifications add requirements. Summarize the findings that affect the plan,
@@ -119,8 +137,9 @@ them with the request before planning.
 
 - Put the summary, objective, constraints, assumptions, and controls at the plan
   level. Preserve the requested objective direction and units. Explain how each
-  hard constraint will be enforced and honor any specified method or hybrid
-  split that fits the execution limits.
+  hard constraint will be enforced. Start from the method and the classical
+  and quantum split proposed in the problem statement, and change them if
+  the research shows a better fit within the execution limits.
 - Put problem-specific solver blueprints in `solver_examples` and set
   `selected_solver` to the exact name of the preferred design. Include one design
   when it is the only viable approach. Add a second only if it offers a material
@@ -174,8 +193,8 @@ Planning context
 Independently review the selected solver design against the original request,
 the user's clarifications, the parsed problem, and the research evidence. Check
 that `selected_solver` names a supplied blueprint. Check that its gate-based
-method can run on Quantum Rings and preserves the requested classical and
-quantum split. Review how its file and API boundaries carry inputs through
+method can run on Quantum Rings and that its split between classical and
+quantum work is workable. Review how its file and API boundaries carry inputs through
 encoding, circuit execution, decoding, and result verification.
 
 Check that the encoding preserves the objective and its units and that each

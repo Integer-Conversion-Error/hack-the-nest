@@ -66,17 +66,18 @@ class Constraint(BaseModel):
 
 
 class QuantumRequirements(BaseModel):
-    method: str = Field(description="Gate-based quantum method to use, e.g. 'QAOA'.")
-    method_source: Literal["stated", "chosen"] = Field(
-        description="'stated' if the user named this method, 'chosen' if you picked it."
-    )
+    # The allowed methods. Keep this list in step with the one in prompts.md
+    # (problem_statement.system), which tells Gemini when to use each.
+    method: Literal["QAOA", "VQE", "Grover"] = Field(description="Quantum method to use.")
     method_reason: str = Field(description="One or two sentences on why this method fits the problem.")
     quantum_part: str = Field(description="Which part of the problem is solved on the quantum side.")
     classical_part: str | None = Field(
         default=None, description="Which part is solved classically; null if none."
     )
+    # Optional only so problem.json files saved before this field was filled still load.
     qubit_estimate: int | None = Field(
-        default=None, description="Qubit count the user stated for the basic formulation; null if not stated."
+        default=None,
+        description="Always fill this in: your estimate of the qubits the method needs, including auxiliary qubits.",
     )
     qubit_budget: int | None = Field(
         default=None, description="Maximum qubits the user allows (including auxiliary qubits); null if not stated."
@@ -85,7 +86,7 @@ class QuantumRequirements(BaseModel):
 
 class ProblemStatement(BaseModel):
     is_optimization_problem: bool = Field(
-        description="False if the prompt is not an optimization problem a quantum approach could address."
+        description="False only if the problem is too large to run or the text describes no problem to solve."
     )
     rejection_reason: str | None = Field(
         default=None, description="Why the prompt was rejected; null when is_optimization_problem is true."
@@ -126,8 +127,11 @@ def parse_problem_statement(
     model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
 
     # Prompts are read from prompts.md now, before Gemini is called.
+    limits = workspace.meta["limits"]
     system_instruction = load_prompt(
-        "problem_statement.system", max_qubits=workspace.meta["limits"]["max_qubits"]
+        "problem_statement.system",
+        max_qubits=limits["max_qubits"],
+        run_timeout_seconds=limits["run_timeout_seconds"],
     )
     contents = load_prompt("problem_statement.user", prompt=workspace.prompt)
     if feedback:
@@ -180,7 +184,7 @@ def render_markdown(problem: ProblemStatement) -> str:
     q = problem.quantum
     lines += ["", "## Quantum requirements", ""]
     for label, value in (
-        ("Method", f"{q.method} ({q.method_source})"),
+        ("Method", q.method),
         ("Why", q.method_reason),
         ("Quantum part", q.quantum_part),
         ("Classical part", q.classical_part),

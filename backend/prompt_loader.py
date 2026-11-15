@@ -5,7 +5,7 @@ there by id and fills in its {placeholders}. The file is read on every call,
 so edits to prompts.md apply on the next request without restarting
 anything. See the intro of prompts.md for the format.
 
-    system = load_prompt("problem_statement.system", max_qubits=200)
+    system = load_prompt("problem_statement.user", prompt="...")
 """
 
 import re
