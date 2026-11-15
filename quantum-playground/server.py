@@ -1,163 +1,244 @@
-"""Local dashboard. Run: python server.py (no dependencies needed for demo)."""
+"""Serve the EV reference and verified backend handoffs on localhost."""
+
 import json
-import os
 import math
-from pathlib import Path
+import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from pathlib import Path
+from threading import Lock
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
-from threading import Lock
 
-ROOT = Path(__file__).parent
-RUNS = {}
-LOCK = Lock()
-FRAME = None
+from ev_reference import CONTROLS, PROMPT, reference_handoff
+from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
+
+ROOT = Path(__file__).resolve().parent
+VIEWS = {}
+UPLOADED_FRAME = None
+VIEW_LOCK = Lock()
+BACKEND_TIMEOUT_SECONDS = 300
 
 
-def backend(path, payload):
-    base = os.environ.get('QUANTUM_BACKEND_URL', '').rstrip('/')
+class RequestError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def backend_url():
+    return os.environ.get("QUANTUM_BACKEND_URL", "").strip().rstrip("/")
+
+
+def request_handoff(payload):
+    base = backend_url()
     if not base:
-        raise ValueError('Set QUANTUM_BACKEND_URL to your teammates’ backend URL.')
-    request = Request(base + path, json.dumps(payload).encode(), {'Content-Type': 'application/json'})
-    with urlopen(request, timeout=120) as response:
-        return json.load(response)
+        raise RequestError(503, "Set QUANTUM_BACKEND_URL to use the live backend.")
+    try:
+        request = Request(
+            base + "/api/run",
+            json.dumps(payload).encode("utf-8"),
+            {"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with urlopen(request, timeout=BACKEND_TIMEOUT_SECONDS) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        with exc:
+            try:
+                body = json.load(exc)
+                message = body.get("error") if isinstance(body, dict) else None
+            except (ValueError, OSError):
+                message = None
+        raise RequestError(
+            exc.code if 400 <= exc.code < 500 else 502,
+            message if isinstance(message, str) and message else f"Backend returned HTTP {exc.code}.",
+        ) from exc
+    except TimeoutError as exc:
+        raise RequestError(504, "Timed out waiting for the verified backend result.") from exc
+    except URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            raise RequestError(504, "Timed out waiting for the verified backend result.") from exc
+        raise RequestError(502, "Could not reach the configured backend.") from exc
+    except (ValueError, OSError) as exc:
+        raise RequestError(502, "Could not read a JSON handoff from the backend.") from exc
 
 
-from ev_demo import demo, variables, PROMPT
+def read_view(view_id):
+    if not isinstance(view_id, str):
+        raise ValueError("Expected a view ID.")
+    with VIEW_LOCK:
+        view = VIEWS.get(view_id)
+    if view is None:
+        raise RequestError(404, "This result is no longer available. Start a new dispatch.")
+    return view
 
 
-def run_agent(prompt, variables):
-    from agent import orchestrate
-    return orchestrate(prompt, variables, backend)
+def run_plan(data):
+    mode = data.get("mode", "reference")
+    if mode not in ("reference", "live"):
+        raise ValueError("Unknown run mode.")
+    overrides = data.get("variables", {})
+    if not isinstance(overrides, dict):
+        raise ValueError("Control values must be a JSON object.")
+    previous = None
+    values = {}
+    if "view_id" in data:
+        previous = read_view(data["view_id"])
+        if mode != previous["mode"] or "prompt" in data:
+            raise ValueError("Use the displayed plan and its controls for recalculation.")
+        prompt = previous["problem"]["original_prompt"]
+        values = applied_values(previous["variables"], previous["effective_values"], overrides)
+    else:
+        prompt = data.get("prompt", "")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 10000:
+            raise ValueError("Enter a prompt of 1–10,000 characters.")
+        if overrides:
+            raise ValueError("Start a plan before changing its controls.")
+        if mode == "reference" and prompt != PROMPT:
+            raise ValueError("Load the EV example prompt to run the reference.")
+
+    if mode == "reference":
+        handoff = reference_handoff(values, previous)
+    else:
+        payload = {"schema_version": 1, "values": values}
+        if previous is None:
+            payload["prompt"] = prompt
+        else:
+            payload.update(
+                run_id=previous["run_id"],
+                plan_id=previous["plan_id"],
+                previous_attempt_id=previous["attempt_id"],
+            )
+        handoff = request_handoff(payload)
+    result = normalize_handoff(handoff, mode, prompt, previous, values if previous is not None else None)
+    result["view_id"] = str(uuid4())
+    try:
+        json.dumps(result, allow_nan=False)
+    except ValueError as exc:
+        raise InvalidHandoff("The handoff includes non-finite JSON values.") from exc
+    with VIEW_LOCK:
+        if previous is not None and any(
+            all(view[key] == result[key] for key in ("run_id", "plan_id", "attempt_id"))
+            for view in VIEWS.values()
+        ):
+            raise InvalidHandoff("The backend returned an attempt that was already displayed.")
+        if len(VIEWS) >= 100:
+            VIEWS.pop(next(iter(VIEWS)))
+        VIEWS[result["view_id"]] = result
+    return result
 
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(ROOT / 'web'), **kwargs)
+        super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
 
-    def send_json(self, code, value):
-        data = json.dumps(value).encode()
-        self.send_response(code)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(data)))
+    def send_json(self, status, value):
+        data = json.dumps(value, allow_nan=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
     def do_GET(self):
-        if urlparse(self.path).path == '/api/pygame-frame':
-            from pygame_renderer import render_png, scene_layout, PygameUnavailable
-            try:
-                params = parse_qs(urlparse(self.path).query)
-                with LOCK:
-                    run = RUNS.get(params.get('run_id', [''])[0])
-                if run is None:
-                    return self.send_json(404, {'error': 'This run is no longer available. Generate a new dispatch.'})
-                minute = float(params.get('minute', ['0'])[0])
-                if not math.isfinite(minute) or not 0 <= minute <= run.get('simulation', {}).get('duration_min', 240):
-                    raise ValueError('Invalid replay time.')
-                speed = float(params.get('speed', ['4'])[0])
-                if speed not in (1,4,12):
-                    raise ValueError('Invalid playback speed.')
-                resolution = int(params.get('resolution', ['2'])[0])
-                if resolution not in (1,2,3):
-                    raise ValueError('Invalid frame resolution.')
-                simulation = run.get('simulation', {})
-                frame = render_png(simulation, minute, params.get('selected', [None])[0],
-                                   params.get('playing', ['false'])[0]=='true', speed, resolution)
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/png')
-                self.send_header('Content-Length', str(len(frame)))
-                self.send_header('Cache-Control', 'no-store')
-                scene = scene_layout(simulation, minute)
-                scene.update(pixel_width=scene['width']*resolution, pixel_height=scene['height']*resolution)
-                self.send_header('X-Pygame-Scene', json.dumps(scene, separators=(',', ':')))
-                self.end_headers()
-                self.wfile.write(frame)
-            except PygameUnavailable as exc:
-                self.send_json(503, {'error': str(exc)})
-            except (ValueError, TypeError, KeyError) as exc:
-                self.send_json(400, {'error': str(exc)})
-            except Exception as exc:
-                print(f'Pygame rendering failed: {exc}')
-                self.send_json(500, {'error': 'Pygame rendering failed. Check the server terminal.'})
-            return
-        if self.path == '/api/example':
-            return self.send_json(200, {'prompt': PROMPT, 'variables': variables()})
-        if self.path == '/api/config':
-            return self.send_json(200, {'gemini_configured': bool(os.environ.get('GEMINI_API_KEY')), 'backend_configured': bool(os.environ.get('QUANTUM_BACKEND_URL'))})
-        if urlparse(self.path).path == '/api/frame':
-            with LOCK:
-                frame = FRAME
+        url = urlparse(self.path)
+        if url.path == "/api/pygame-frame":
+            return self.send_frame(parse_qs(url.query))
+        if url.path == "/api/frame":
+            with VIEW_LOCK:
+                frame = UPLOADED_FRAME
             if frame is None:
-                return self.send_json(404, {'error': 'No Pygame frame received yet.'})
-            self.send_response(200)
-            self.send_header('Content-Type', 'image/png')
-            self.send_header('Content-Length', str(len(frame)))
-            self.send_header('Cache-Control', 'no-store')
-            self.end_headers()
-            self.wfile.write(frame)
-            return
+                return self.send_json(404, {"error": "No Pygame frame received yet."})
+            return self.send_png(frame)
+        if url.path == "/api/example":
+            return self.send_json(200, {"prompt": PROMPT, "variables": CONTROLS})
+        if url.path == "/api/config":
+            return self.send_json(200, {"backend_configured": bool(backend_url())})
         return super().do_GET()
 
-    def do_POST(self):
-        global FRAME
+    def send_frame(self, params):
+        from pygame_renderer import PygameUnavailable, render_png, scene_layout
+
         try:
-            size = int(self.headers.get('Content-Length', '0'))
+            run = read_view(params.get("view_id", [""])[0])
+            simulation = run["simulation"]
+            minute = float(params.get("minute", ["0"])[0])
+            if not math.isfinite(minute) or not 0 <= minute <= simulation["duration_min"]:
+                raise ValueError("Invalid replay time.")
+            speed = float(params.get("speed", ["4"])[0])
+            if speed not in (1, 4, 12):
+                raise ValueError("Invalid playback speed.")
+            resolution = int(params.get("resolution", ["2"])[0])
+            if resolution not in (1, 2, 3):
+                raise ValueError("Invalid frame resolution.")
+            frame = render_png(
+                simulation, minute, params.get("selected", [None])[0],
+                params.get("playing", ["false"])[0] == "true", speed, resolution,
+            )
+            scene = scene_layout(simulation, minute)
+            scene.update(pixel_width=scene["width"] * resolution, pixel_height=scene["height"] * resolution)
+        except RequestError as exc:
+            return self.send_json(exc.status, {"error": str(exc)})
+        except PygameUnavailable as exc:
+            return self.send_json(503, {"error": str(exc)})
+        except ValueError as exc:
+            return self.send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            print(f"Pygame rendering failed: {exc}", flush=True)
+            return self.send_json(500, {"error": "Pygame rendering failed. Check the server terminal."})
+
+        return self.send_png(frame, scene)
+
+    def send_png(self, frame, scene=None):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(frame)))
+        self.send_header("Cache-Control", "no-store")
+        if scene is not None:
+            self.send_header("X-Pygame-Scene", json.dumps(scene, separators=(",", ":")))
+        self.end_headers()
+        self.wfile.write(frame)
+
+    def do_POST(self):
+        global UPLOADED_FRAME
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 5_000_000:
-                raise ValueError('Invalid request size.')
+                raise ValueError("Invalid request size.")
             raw = self.rfile.read(size)
-            if self.path == '/api/frame':
-                if not raw.startswith(b'\x89PNG\r\n\x1a\n'):
-                    raise ValueError('Expected a PNG frame.')
-                with LOCK:
-                    FRAME = raw
-                return self.send_json(200, {'ok': True})
+            if self.path == "/api/frame":
+                if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise ValueError("Expected a PNG frame.")
+                with VIEW_LOCK:
+                    UPLOADED_FRAME = raw
+                return self.send_json(200, {"ok": True})
             data = json.loads(raw)
             if not isinstance(data, dict):
-                raise ValueError('Expected a JSON object.')
-            if self.path == '/api/run':
-                prompt = data.get('prompt', '')
-                if not isinstance(prompt, str):
-                    raise ValueError('Prompt must be text.')
-                prompt = prompt.strip()
-                if not prompt or len(prompt) > 10000:
-                    raise ValueError('Enter a prompt of 1–10,000 characters.')
-                mode = data.get('mode', 'demo')
-                if mode not in ('demo', 'live'):
-                    raise ValueError('Unknown mode.')
-                variables = data.get('variables', {})
-                if not isinstance(variables, dict):
-                    raise ValueError('Variables must be an object.')
-                if mode == 'live':
-                    if not os.environ.get('GEMINI_API_KEY') or not os.environ.get('QUANTUM_BACKEND_URL'):
-                        raise ValueError('Live mode needs GEMINI_API_KEY and QUANTUM_BACKEND_URL on the server.')
-                    result = run_agent(prompt, variables)
-                else:
-                    result = demo(prompt, variables)
-                result.setdefault('problem', {})['original_prompt'] = prompt
-                with LOCK:
-                    if len(RUNS) >= 100:
-                        RUNS.pop(next(iter(RUNS)))
-                    RUNS[result['run_id']] = result
-                return self.send_json(200, result)
-            if self.path == '/api/feedback':
-                with LOCK:
-                    run = RUNS.get(data.get('run_id'))
-                    if run is None:
-                        raise ValueError('Unknown run ID.')
-                    feedback = str(data.get('feedback', ''))[:2000]
-                    run.setdefault('feedback', []).append(feedback)
-                return self.send_json(200, {'ok': True})
-            self.send_json(404, {'error': 'Unknown endpoint.'})
-        except (ValueError, TypeError, KeyError) as exc:
-            self.send_json(400, {'error': str(exc)})
-        except Exception as exc:
-            print(f'Request failed: {type(exc).__name__}: {exc}')
-            self.send_json(502, {'error': 'Agent/backend request failed. Check the server terminal for details.'})
+                raise ValueError("Expected a JSON object.")
+            if self.path == "/api/run":
+                result = run_plan(data)
+            elif self.path == "/api/feedback":
+                view = read_view(data.get("view_id"))
+                feedback = str(data.get("feedback", ""))[:2000]
+                with VIEW_LOCK:
+                    view.setdefault("feedback", []).append(feedback)
+                result = {"ok": True}
+            else:
+                return self.send_json(404, {"error": "Unknown endpoint."})
+        except RequestError as exc:
+            return self.send_json(exc.status, {"error": str(exc)})
+        except InvalidHandoff as exc:
+            return self.send_json(502, {"error": str(exc)})
+        except UnverifiedResult as exc:
+            return self.send_json(422, {"error": str(exc)})
+        except ValueError as exc:
+            return self.send_json(400, {"error": str(exc)})
+        self.send_json(200, result)
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8000))
-    print(f'Quantum Playground: http://127.0.0.1:{port}', flush=True)
-    ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    print(f"Fleet Lab: http://127.0.0.1:{port}", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

@@ -2,16 +2,16 @@ process.chdir(require('node:path').resolve(__dirname, '..'));
 const assert=require('node:assert/strict');
 const {execFileSync}=require('node:child_process');
 const {stateAt,deliveredAt,validate}=require('../web/fleet.js');
-const sim=JSON.parse(execFileSync(process.env.PYTHON||'python',['-c','import json; from ev_demo import demo; print(json.dumps(demo("test", {})["simulation"]))'],{encoding:'utf8'}));
+const sim=JSON.parse(execFileSync(process.env.PYTHON||'python',['-c','import json; from ev_reference import reference_handoff; print(json.dumps(reference_handoff({})["result"]["simulation"]))'],{encoding:'utf8'}));
 assert.equal(validate(sim),true);
 assert.equal(deliveredAt(sim,0).size,0);
-assert.equal(deliveredAt(sim,240).size,8);
+assert.equal(deliveredAt(sim,sim.duration_min).size,2);
 for(const van of sim.vans){
   assert.deepEqual(stateAt(van,0,sim.depot).position,sim.depot);
   const drive=van.events.find(e=>e.type==='drive'), at=stateAt(van,(drive.start_min+drive.end_min)/2,sim.depot);
   assert.equal(at.status,'Driving');
   assert.equal(at.battery,(drive.battery_start_kwh+drive.battery_end_kwh)/2);
-  const end=stateAt(van,240,sim.depot);
+  const end=stateAt(van,sim.duration_min,sim.depot);
   assert.deepEqual(end.position,sim.depot);
   assert.equal(end.status,'At depot');
   for(const e of van.events){

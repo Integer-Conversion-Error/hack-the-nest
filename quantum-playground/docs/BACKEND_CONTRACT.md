@@ -1,81 +1,60 @@
-# EV fleet integration contract
+# Verified EV handoff
 
-The dashboard server calls the quantum team's HTTP service at `QUANTUM_BACKEND_URL`. Units: kilometers, kWh, dollars, minutes. Coordinates are `[x,y]` intersections. All event times are minutes after `simulation.start_hour` (8 means 08:00). Events must be chronological and non-overlapping per van. A drive path lists every consecutive intersection, without diagonal movement. Battery endpoints support linear playback; the backend remains responsible for energy physics and evaluation.
+The dashboard calls the backend host at `QUANTUM_BACKEND_URL`. The host owns prompt interpretation, planning, bounded solver execution, and independent verification. The repository currently implements Init and Plan. The future backend HTTP handler should call the host and serialize the verified result after GO. See the [solver skill](../../agent-prompts/skills/backend/run-quantum-solver/SKILL.md) and [verification skill](../../agent-prompts/skills/backend/verify-and-handoff/SKILL.md).
 
-## Solver request
+Set the URL in the dashboard server environment. For example, in PowerShell:
 
-`POST /api/solve`
+```powershell
+$env:QUANTUM_BACKEND_URL = 'http://127.0.0.1:8001'
+python quantum-playground/server.py
+```
+
+## Host request
+
+Implement `POST /api/run` with an `application/json` body. An initial request carries the original prompt and lets the host resolve the plan defaults.
 
 ```json
-{"problem_statement":"Complete natural language problem including required inputs","parameters":{"battery_kwh":20,"initial_1":20,"charging_kw":10}}
+{"schema_version":1,"prompt":"Dispatch the fleet using these inputs...","values":{}}
 ```
 
-The Python Gemini tool merges UI overrides into the parameters, overriding any conflicting model value. On the first live submission only sliders actually changed by the user are sent. After a live solver response, its slider values are submitted on subsequent runs. Demo defaults are not silently imposed on the first live prompt.
-
-Backend parameter names supported by the demo UI: `battery_kwh`, `reserve_pct`, `charging_kw`, `consumption`, `electricity_price`, `driving_cost`, `waiting_cost`, `late_cost`, `undelivered_cost`, `speed_kmh`, `service_minutes`, `initial_1` through `initial_4`. The live backend can return different numeric variable definitions.
-
-## Solver response
-
-Return `run_id`, `problem`, `variables`, `circuits`, `quantum`, `assumptions`, and `simulation`. This is a minimal format illustration, not a feasible full fleet plan:
+Apply requests carry the last accepted backend identities and the complete set of requested values for the approved controls. Load the original prompt and approved plan from the run, validate the control values, and create a fresh attempt under the same plan. The EV plan uses `rerun_mode: rebuild` for `van_2_initial_charge_pct`. Rebuild the options and circuit, execute, then independently verify the selected result and recompute its exact reference.
 
 ```json
-{
-  "run_id": "ev-run-123",
-  "problem": {"title":"EV Fleet Dispatch","statement":"Classical routes and QAOA charging"},
-  "variables": [{"id":"charging_kw","label":"Charging power","min":2,"max":22,"step":1,"default":10,"unit":"kW"}],
-  "circuits": [{"title":"Actual QAOA circuit","drawing":"Your actual circuit draw() output"}],
-  "quantum": {"binary_variables":32,"qubit_target":80,"actual_qubits":32},
-  "assumptions": ["Document user-approved deadlines, capacity, charging horizon, travel and service times here"],
-  "simulation": {
-    "kind":"ev_fleet",
-    "grid":{"width":6,"height":6,"block_km":0.5},
-    "depot":[2,2],
-    "chargers":[{"id":"C1","position":[2,1]},{"id":"C2","position":[5,4]}],
-    "deliveries":[{"id":"D1","position":[0,0],"deadline_min":180}],
-    "start_hour":8,"duration_min":240,"charging_slot_count":4,"slot_minutes":30,
-    "battery_capacity_kwh":20,"reserve_pct":15,
-    "vans":[{
-      "id":"V1","initial_battery_kwh":4,"delivery_ids":["D1"],
-      "events":[
-        {"type":"drive","start_min":0,"end_min":1.5,"position":[2,2],"path":[[2,2],[2,1]],"battery_start_kwh":4,"battery_end_kwh":3.85},
-        {"type":"wait","start_min":1.5,"end_min":30,"position":[2,1],"charger_id":"C1","battery_start_kwh":3.85,"battery_end_kwh":3.85},
-        {"type":"charge","start_min":30,"end_min":60,"position":[2,1],"charger_id":"C1","energy_kwh":5,"battery_start_kwh":3.85,"battery_end_kwh":8.85}
-      ]
-    }],
-    "counts":{}
-  }
-}
+{"schema_version":1,"run_id":"ev-run-1","plan_id":"ev-plan-1","previous_attempt_id":"attempt-1","values":{"van_2_initial_charge_pct":20}}
 ```
 
-`position` is the event's starting position; non-drive events remain there. Complete delivery events use `type: "deliver"`, `delivery_id`, position, times, and unchanged battery endpoints. Include driving, waiting, charging, service events and the final return drive. Model long idle gaps explicitly as `wait` when they incur waiting cost. Events extending past the operating horizon are clipped in the timeline, not hidden from the evaluator. `counts` contains real measurements only; leave empty if unavailable. `actual_qubits` must reflect the executed circuit including auxiliaries; use null if unknown. The 80-qubit target is not a verified property of a missing circuit.
+The host enforces its workspace limits. The dashboard waits up to 300 seconds for the response. For clarification, unsupported problems, timeouts, and NO-GO, return an appropriate HTTP error and a JSON `error` string with the actionable next step. An identified result with a status other than `verified` is also rejected. Its `message` is displayed when supplied.
 
-## Evaluation
+## Host response
 
-`POST /api/evaluate` receives `{"run_id":"ev-run-123"}`. Evaluate the stored original input and stored solver output, not a Gemini reconstruction.
+A successful response is a v1 `VisualizationHandoff` with these fields.
 
-```json
-{
-  "feasible":false,
-  "objective_value":55.82,
-  "costs":{"driving":7.20,"electricity":3.00,"waiting":45.62,"late":0,"undelivered":0},
-  "violations":["Example only: replace with actual evaluation issues"],
-  "delivered":8,
-  "optimality_proven":false
-}
+| Field | Contents |
+| --- | --- |
+| `schema_version` | `1` |
+| `run_id`, `plan_id`, `attempt_id` | The host IDs, repeated exactly in `result`. An Apply response keeps the run and plan IDs and returns a fresh attempt ID. |
+| `scene_type` | `"ev_fleet"` |
+| `problem` | `title`, a concise `statement`, and the exact `original_prompt`. |
+| `controls` | Approved numeric enum controls using the plan's `key` (or `id`), `label`, `allowed_values`, `default`, and `rerun_mode`. An optional `unit` is appended to displayed choice values. Keep the definitions stable for the same plan ID. |
+| `result` | The verified `RunResult` described below. |
+
+The result includes the three IDs, `status: "verified"`, and `provenance: "live"` for a fresh execution or `"recorded"` for previously verified execution data. `effective_values` gives the complete control values used for the attempt. The initial values match the approved defaults. Apply results match the requested values.
+
+- `simulation` describes the selected, timed EV schedule. It has `kind: "ev_fleet"`, `grid: {width, height, block_km}`, `depot: [x,y]`, `chargers: [{id, position}]`, `deliveries: [{id, position, deadline_min}]`, `start_hour`, `duration_min`, `battery_capacity_kwh`, `reserve_pct`, and `vans`. The scene supports grids from 2 to 50 intersections on each axis and up to four vans.
+- Each van has `id`, `initial_battery_kwh`, `delivery_ids`, and `events`. A van starts at the depot and its events are chronological and non-overlapping. Include the return drive when required by the plan.
+- Each event supplies `type` (`drive`, `wait`, `charge`, or `deliver`), `start_min`, `end_min`, `position` at its start, `battery_start_kwh`, and `battery_end_kwh`. Drive events list successive neighboring intersections in `path`. Charging uses `charger_id`, charger waits use it when applicable, and deliveries use `delivery_id`. All positions are integer grid intersections. Times are minutes from `start_hour`; charging intervals are half-open.
+- `evaluation` supplies `feasible: true`, the total `objective_value`, a component map `costs`, and the number `delivered`. Report costs in USD, without rounding away precision. Optional `reference_value` and `gap` give the exact classical comparison in USD on the same effective inputs and options.
+- Supply actual evidence when available in `circuits: [{title, drawing}]`, `quantum: {binary_variables, actual_qubits}`, and `simulation.counts` (measured bitstrings mapped to integer counts). `actual_qubits` includes auxiliary qubits and may be null. Optional `assumptions` and `explanation` describe the verified run.
+
+The dashboard validates handoff identity, approved settings, and replay consistency before creating a view. It consumes the host's feasibility and objective result. The host retains execution and verification evidence.
+
+## Reference data and integration checks
+
+The dashboard includes two timed exact classical replays from the [EV solver plan](../../example-solver-plans/ev-fleet-dispatch-optimization.md). These show the intended payload shape with `status: "reference"` and `provenance: "classical_reference"` inside the local example path. They contain no measured outcomes.
+
+From `quantum-playground`, inspect a full handoff envelope or run the stub-backend tests.
+
+```sh
+python -c "import json; from ev_reference import reference_handoff; print(json.dumps(reference_handoff({}), indent=2))"
+python -m unittest discover -s tests -p test_handoff_http.py -v
 ```
-
-Costs are schedule totals; delivery progress in the website is relative to the playback clock. The interface displays the backend's evaluation rather than independently certifying a live result. Reject unsupported problems and invalid parameters with a useful HTTP error.
-
-## Clarifications for Prompt V2
-
-Ask for speed/travel times, service times, capacity and package sizes, deadlines, depot return requirements, and the placement of four half-hour charging slots in a four-hour operating day. If stations start occupied, obtain occupancy intervals. Demo mode explicitly supplies assumptions; live mode must get user inputs or approved assumptions. Routing is classical; charging decisions are the QAOA scope. Do not claim optimality or quantum advantage without comparison evidence.
-
-To inspect a full demo-shaped payload locally:
-
-```bash
-python3 -c 'import json; from ev_demo import demo; print(json.dumps(demo("EV preview", {}), indent=2))'
-```
-
-## Plain-language display fields
-
-Return `problem.statement` as one or two short sentences describing the objective and essential constraints based on the user input. Keep full solver input in stored run data. The local server preserves the submitted prompt in `problem.original_prompt`. Supply actual circuit drawings in `circuits[].drawing`; the website keeps waiting slots until these are available.

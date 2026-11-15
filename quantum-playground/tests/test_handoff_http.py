@@ -1,0 +1,207 @@
+import copy
+import json
+import os
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from unittest.mock import patch
+
+from ev_reference import PROMPT, reference_handoff
+from server import Handler
+
+
+CONTROL_ID = "van_2_initial_charge_pct"
+
+
+class QuietDashboard(Handler):
+    def log_message(self, *_args):
+        pass
+
+
+def verified_handoff(values, previous=None, provenance="live"):
+    handoff = copy.deepcopy(reference_handoff(values, previous))
+    result = handoff["result"]
+    result["status"] = "verified"
+    result["provenance"] = provenance
+    result["quantum"]["actual_qubits"] = result["quantum"]["binary_variables"]
+    bits = "0" * result["quantum"]["actual_qubits"]
+    result["simulation"]["counts"] = {bits: 16}
+    result["circuits"] = [{"title": "Test circuit", "drawing": "test circuit diagram"}]
+    return handoff
+
+
+class HandoffTests(unittest.TestCase):
+    def setUp(self):
+        self.dashboard_url = self.serve(QuietDashboard)
+
+    def serve(self, handler):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}"
+
+    def configure_backend(self, *responses):
+        calls = []
+        pending = iter(responses)
+
+        class BackendStub(BaseHTTPRequestHandler):
+            def do_POST(self):
+                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                calls.append((self.path, request))
+                response = next(pending, None)
+                body = json.dumps(response if response is not None else {"error": "Unexpected backend call"}).encode()
+                self.send_response(200 if response is not None else 500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        env = patch.dict(os.environ, {"QUANTUM_BACKEND_URL": self.serve(BackendStub)})
+        env.start()
+        self.addCleanup(env.stop)
+        return calls
+
+    def request(self, path, payload=None):
+        data = None if payload is None else json.dumps(payload).encode()
+        request = Request(self.dashboard_url + path, data, {"Content-Type": "application/json"})
+        return urlopen(request, timeout=5)
+
+    def run_plan(self, mode, **request):
+        with self.request("/api/run", {"mode": mode, **request}) as response:
+            return json.load(response)
+
+    def assert_run_error(self, mode, expected_status=None, **request):
+        with self.assertRaises(HTTPError) as caught:
+            self.run_plan(mode, **request)
+        with caught.exception as response:
+            if expected_status is not None:
+                self.assertEqual(response.code, expected_status)
+            body = json.load(response)
+            self.assertTrue(body["error"])
+
+    def read_frame(self, view_id):
+        params = urlencode({"view_id": view_id, "minute": 60})
+        with self.request(f"/api/pygame-frame?{params}") as response:
+            self.assertEqual(response.headers.get_content_type(), "image/png")
+            self.assertEqual(json.loads(response.headers["X-Pygame-Scene"])["minute"], 60)
+            return response.read()
+
+    def test_reference_dispatch_and_recalculation_work_without_backend(self):
+        with patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}):
+            with self.request("/api/config") as response:
+                self.assertFalse(json.load(response)["backend_configured"])
+            with self.request("/api/example") as response:
+                example = json.load(response)
+            self.assertEqual(example["prompt"], PROMPT)
+            self.assertEqual([control["id"] for control in example["variables"]], [CONTROL_ID])
+            self.assertEqual(example["variables"][0]["allowed_values"], [35, 20])
+            first = self.run_plan("reference", prompt=example["prompt"])
+            second = self.run_plan("reference", view_id=first["view_id"], variables={CONTROL_ID: 20})
+        self.assertEqual(first["provenance"], "classical_reference")
+        self.assertEqual(first["effective_values"], {CONTROL_ID: 35})
+        self.assertAlmostEqual(first["evaluation"]["objective_value"], 947 / 60, places=2)
+        self.assertEqual(second["effective_values"], {CONTROL_ID: 20})
+        self.assertAlmostEqual(second["evaluation"]["objective_value"], 3502 / 60, places=2)
+        self.assertEqual(first["run_id"], second["run_id"])
+        self.assertEqual(first["plan_id"], second["plan_id"])
+        self.assertNotEqual(first["attempt_id"], second["attempt_id"])
+        self.assertNotEqual(first["view_id"], second["view_id"])
+        self.assertIsNone(second["quantum"]["actual_qubits"])
+        self.assertFalse(second["simulation"].get("counts"))
+
+    def test_live_posts_once_per_attempt_and_renders_each_accepted_view(self):
+        first_handoff = verified_handoff({})
+        updated_handoff = verified_handoff({CONTROL_ID: 20}, first_handoff["result"], provenance="recorded")
+        backend_calls = self.configure_backend(first_handoff, updated_handoff)
+        with self.request("/api/config") as response:
+            self.assertTrue(json.load(response)["backend_configured"])
+
+        first = self.run_plan("live", prompt=PROMPT)
+        updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+        self.assertEqual(backend_calls, [
+            ("/api/run", {"schema_version": 1, "prompt": PROMPT, "values": {}}),
+            ("/api/run", {
+                "schema_version": 1,
+                "run_id": first["run_id"],
+                "plan_id": first["plan_id"],
+                "previous_attempt_id": first["attempt_id"],
+                "values": {CONTROL_ID: 20},
+            }),
+        ])
+        self.assertEqual(first["provenance"], "live")
+        self.assertEqual(updated["provenance"], "recorded")
+        self.assertEqual(updated["attempt_id"], updated_handoff["attempt_id"])
+        self.assertEqual(updated["effective_values"], {CONTROL_ID: 20})
+        self.assertEqual(updated["circuits"], updated_handoff["result"]["circuits"])
+        self.assertNotEqual(first["view_id"], updated["view_id"])
+
+        def render_frame(simulation, *_args, **_kwargs):
+            return str(simulation["vans"][1]["initial_battery_kwh"]).encode()
+
+        with patch("pygame_renderer.render_png", side_effect=render_frame):
+            self.assertEqual(float(self.read_frame(first["view_id"])), 7)
+            self.assertEqual(float(self.read_frame(updated["view_id"])), 4)
+
+    def test_bad_controls_do_not_call_backend(self):
+        backend_calls = self.configure_backend(verified_handoff({}))
+        first = self.run_plan("live", prompt=PROMPT)
+
+        for variables in ({CONTROL_ID: 25}, {CONTROL_ID: True}, {"unapproved_control": 20}):
+            with self.subTest(variables=variables):
+                self.assert_run_error("live", 400, view_id=first["view_id"], variables=variables)
+        self.assertEqual(len(backend_calls), 1)
+
+    def test_bad_handoffs_leave_the_last_verified_view_available(self):
+        first_handoff = verified_handoff({})
+        valid = verified_handoff({CONTROL_ID: 20}, first_handoff["result"])
+
+        no_go = copy.deepcopy(valid)
+        no_go["result"].update(status="no_go", message="No feasible measurement.")
+        different_attempt = copy.deepcopy(valid)
+        different_attempt["result"]["attempt_id"] = first_handoff["attempt_id"]
+        reused_attempt = copy.deepcopy(valid)
+        reused_attempt["attempt_id"] = first_handoff["attempt_id"]
+        reused_attempt["result"]["attempt_id"] = first_handoff["attempt_id"]
+        different_values = verified_handoff({CONTROL_ID: 35}, first_handoff["result"])
+        different_controls = copy.deepcopy(valid)
+        different_controls["controls"][0]["allowed_values"].append(25)
+        bad_scene = copy.deepcopy(valid)
+        bad_scene["scene_type"] = "unsupported_scene"
+        unknown_delivery = copy.deepcopy(valid)
+        events = unknown_delivery["result"]["simulation"]["vans"][0]["events"]
+        next(event for event in events if event["type"] == "deliver")["delivery_id"] = "unknown"
+
+        failures = {
+            "no go": no_go,
+            "mismatched attempt": different_attempt,
+            "reused attempt": reused_attempt,
+            "mismatched values": different_values,
+            "changed approved controls": different_controls,
+            "unsupported scene": bad_scene,
+            "unknown delivery entity": unknown_delivery,
+        }
+        calls = self.configure_backend(first_handoff, *failures.values(), valid, first_handoff)
+        first = self.run_plan("live", prompt=PROMPT)
+        for problem in failures:
+            with self.subTest(problem=problem):
+                self.assert_run_error("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+
+        updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+        self.assert_run_error("live", view_id=updated["view_id"], variables={CONTROL_ID: 35})
+        self.assertEqual(len(calls), len(failures) + 3)
+        with patch("pygame_renderer.render_png", return_value=b"fixture png") as render:
+            self.assertEqual(self.read_frame(first["view_id"]), b"fixture png")
+            self.assertEqual(render.call_args.args[0]["vans"][1]["initial_battery_kwh"], 7)
+
+
+if __name__ == "__main__":
+    unittest.main()
