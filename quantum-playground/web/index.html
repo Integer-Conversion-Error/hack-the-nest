@@ -141,18 +141,47 @@
           <span class="tag" id="run-badge"></span>
         </div>
         <div class="summary-strip">
-          <div><span>Total cost</span><strong id="score">—</strong></div>
-          <div><span>Delivered now</span><strong id="delivered">—</strong></div>
+          <div class="solver-metric quantum-metric">
+            <span id="score-label">Total cost</span><strong id="score">—</strong>
+            <span class="metric-check" id="score-check" hidden>Feasible schedule</span>
+          </div>
+          <div class="solver-metric classical-metric" id="reference-value" hidden>
+            <span id="reference-label">Classical cost</span><strong id="reference-score">—</strong>
+            <span class="metric-check" id="reference-check" hidden></span>
+          </div>
+          <div class="solver-metric gap-metric" id="reference-gap" hidden>
+            <span id="gap-label">Gap to classical</span><strong id="gap-score">—</strong>
+            <span class="metric-check" id="gap-note"></span>
+          </div>
+          <div id="delivered-summary"><span>Delivered now</span><strong id="delivered">—</strong></div>
           <section class="cost-comparison" aria-label="Change from previous run">
             <p id="change-summary" aria-live="polite"></p>
             <ul id="cost-delta"></ul>
           </section>
         </div>
-        <div class="visual-stage">
-          <canvas id="fleet-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive fleet map" aria-describedby="map-help" hidden>Fleet map unavailable.</canvas>
-          <p class="sr-only" id="map-help">Press Space to play or pause, the arrow keys to seek, V to inspect vans, C to inspect chargers, D to inspect deliveries, or Escape to clear.</p>
-          <p id="frame-status" role="status">Loading map…</p>
+        <p class="comparison-note" id="comparison-note" hidden><span aria-hidden="true">↔</span> Same scenario. Two solver schedules. One playback clock.</p>
+        <div class="map-grid" id="map-grid">
+          <section class="map-view quantum-map-view" aria-label="Quantum schedule replay">
+            <div class="map-heading" id="quantum-map-heading" hidden>
+              <h3><span class="solver-dot" aria-hidden="true"></span>Quantum</h3>
+              <span id="quantum-delivered"></span>
+            </div>
+            <div class="visual-stage">
+              <canvas id="fleet-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive fleet map" aria-describedby="map-help" hidden>Fleet map unavailable.</canvas>
+              <p id="frame-status" role="status">Loading map…</p>
+            </div>
+          </section>
+          <section class="map-view classical-map-view" id="classical-map-view" aria-label="Classical schedule replay" hidden>
+            <div class="map-heading">
+              <h3><span class="solver-dot" aria-hidden="true"></span>Classical</h3>
+              <span id="classical-delivered"></span>
+            </div>
+            <div class="visual-stage">
+              <canvas id="classical-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive classical fleet map" aria-describedby="map-help">Classical fleet map unavailable.</canvas>
+            </div>
+          </section>
         </div>
+        <p class="sr-only" id="map-help">Both maps share the playback clock. Press Space to play or pause, the arrow keys to seek, V to inspect vans, C to inspect chargers, D to inspect deliveries, or Escape to clear.</p>
 
         <div class="playback" role="group" aria-label="Playback controls">
           <div class="playback-actions">
@@ -205,14 +234,17 @@
           </div>
           <dl class="technical-summary">
             <div><dt>Plan check</dt><dd id="feasible">—</dd></div>
-            <div id="reference-value" hidden><dt>Exact reference</dt><dd id="reference-score"></dd></div>
-            <div id="reference-gap" hidden><dt>Gap to reference</dt><dd id="gap-score"></dd></div>
           </dl>
           <h3>Costs</h3><div id="costs" class="costs"></div>
           <h3>Assumptions</h3><ul id="assumptions"></ul>
           <div id="quantum-details" hidden>
             <h3>Quantum details</h3><p id="quantum-summary"></p><div id="histogram" class="histogram"></div>
           </div>
+          <section id="classical-details" hidden>
+            <h3>Classical solver</h3>
+            <p id="classical-method"></p>
+            <p id="classical-options" hidden></p>
+          </section>
         </div>
       </details>
       <footer>

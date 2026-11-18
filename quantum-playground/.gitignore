@@ -3,3 +3,4 @@ __pycache__/
 .env
 *.png
 !docs/evidence/agent-loop/*.png
+!docs/evidence/fleet-comparison/*.png

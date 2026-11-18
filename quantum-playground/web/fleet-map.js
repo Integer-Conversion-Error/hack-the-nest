@@ -312,7 +312,8 @@
     return label(context, vehicle.van.id, x, y + marker * 1.25, tint, clamp(marker * 0.85, 8, 12));
   }
 
-  function create(canvas, { colors, onInspect }) {
+  function create(canvas, { colors, onInspect,
+    motionAllowed = () => !root.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches }) {
     const context = canvas.getContext('2d', { alpha: false });
     const background = canvas.ownerDocument.createElement('canvas');
     const baseContext = background.getContext('2d', { alpha: false });
@@ -328,12 +329,13 @@
 
     function setSimulation(sim) {
       simulation = sim;
-      vehicles = sim.vans.map((van, index) => ({
+      vehicles = (sim?.vans || []).map((van, index) => ({
         van,
         color: colors[index % colors.length],
         drives: van.events.filter(event => event.type === 'drive'),
       }));
       hitTargets = [];
+      lastDraw = null;
       resized = true;
     }
 
@@ -354,9 +356,9 @@
       return true;
     }
 
-    function draw(minute, selectedVan = null) {
+    function draw(minute, selectedVan = null, playing = false) {
       if (!simulation) return;
-      lastDraw = [minute, selectedVan];
+      lastDraw = [minute, selectedVan, playing];
       const scale = clamp(root.devicePixelRatio || 1, 1, 2.5);
       if ((resized || density !== scale) && !resize(scale)) return;
       context.setTransform(1, 0, 0, 1, 0, 0);
@@ -380,6 +382,21 @@
       context.globalAlpha = 1;
 
       const marker = clamp(view.cell * 0.18, 7, 15);
+      if (playing && motionAllowed()) {
+        vehicles.forEach(vehicle => {
+          const drive = vehicle.drives.find(event => event.start_min <= minute && minute < event.end_min);
+          if (!drive) return;
+          const lookback = Math.min(1.2, (drive.end_min - drive.start_min) * 0.18);
+          for (const [index, fraction] of [1, 0.65, 0.3].entries()) {
+            const at = Math.max(drive.start_min, minute - lookback * fraction);
+            if (at === drive.start_min) continue;
+            const point = view.point(root.FleetReplay.stateAt(vehicle.van, at, simulation.depot).position);
+            context.globalAlpha = selectedVan && vehicle.van.id !== selectedVan ? 0.1 : 0.13 + index * 0.08;
+            circle(context, point[0], point[1], marker * (0.15 + index * 0.045), vehicle.color);
+          }
+        });
+        context.globalAlpha = 1;
+      }
       const positions = vehicles.map(({ van }) => view.point(root.FleetReplay.stateAt(van, minute, simulation.depot).position));
       const displayPositions = placeVehicles(positions, view, marker);
       displayPositions.forEach((point, index) => {

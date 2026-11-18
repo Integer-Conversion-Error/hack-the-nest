@@ -13,6 +13,29 @@ Open **http://127.0.0.1:8000**. Use the prompt screen to start a new run or open
 
 The example worker uses the local QAOA simulator by default. To run it through Quantum Rings, install `QuantumRingsLib` in the same environment and set `QR_ACCOUNT` and `QR_KEY` in the repository root's ignored `.env`.
 
+## Compare quantum and classical schedules
+
+When a verified classical schedule is available, the dashboard shows both maps
+on the same playback clock, with separate delivery counts, costs, and their gap.
+The baseline identifies its method and whether optimality was proven. A feasible
+classical result without that proof is labeled as a baseline, rather than an
+exact optimum. Runs without a classical replay retain the single-map view.
+
+Press **Play** to animate the schedules together, or scrub to inspect the same
+instant in both maps. Each map can be inspected independently. Decorative motion
+is reduced when the operating system requests reduced motion; playback remains
+an explicit user action.
+
+The checked-in example also has a standalone exact classical solver:
+
+```sh
+python -m backend.ev_dispatch --solver classical --van-2-initial-charge 22
+```
+
+It enumerates the supported route and charger-slot choices and verifies the
+selected schedule independently. This classical-only command needs Python,
+without the quantum simulator dependencies.
+
 ## Plan a fleet run from a prompt
 
 Install the backend requirements in the same Python environment.
@@ -33,7 +56,7 @@ Choose a sample and select **Load sample** to fill the prompt box. Edit the text
 
 The progress view shows individual steps and findings for prompt interpretation, planning, solver build, testing, and final verification. Collapse an attempt or choose **Hide all steps** for a stage summary. When a check sends the run back, the original attempt stays in the timeline with the reason for revision. Refreshing the same tab reconnects to the run while the dashboard server is running. The dashboard opens the results as soon as the verified schedule is ready, where you can reopen the progress timeline. If the pipeline needs more details, revise the prompt using the feedback and run it again.
 
-The settings displayed after a successful run come from the approved plan. Applying a new setting runs the solver and checks the resulting schedule before updating the map.
+The settings displayed after a successful run come from the approved plan. Applying a new setting runs the solver and checks the resulting schedule before updating the map. Repeating a recently verified combination within the same live run can reuse the bounded result cache. The dashboard identifies that reuse; it does not present it as a new measurement.
 
 Numeric sliders follow the plan's approved values or range. The live example asks the planner for a 20–35% charge range in one-point steps. Releasing the Van 2 slider runs the solver when charge is the only pending change. For grouped rates, open **Costs** and select **Apply changes** to run with all pending edits.
 

@@ -31,10 +31,10 @@ const runModes = {
 };
 
 let inspected = null;
-let result = null, sim = null, busy = false, initialized = false;
+let result = null, sim = null, classicalSim = null, busy = false, initialized = false;
 let backendConfigured = false, localBackendConfigured = false, pipelineBackendConfigured = false;
 let savedRunRecalculationConfigured = false;
-let playing = false, minute = 0, last = null, selectedVan = null;
+let playing = false, minute = 0, last = null;
 let examplePrompt = '', liveExamplePrompt = '';
 let samplePrompts = new Map();
 let screen = 'prompt';
@@ -43,8 +43,13 @@ let historyRequest = 0;
 let selectedRun = null, selectedRunButton = null;
 let controlPanel = null;
 let vanCards = [];
+const motionPreference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+let reducedMotion = Boolean(motionPreference?.matches);
 const mapCanvas = $('fleet-map');
-const map = FleetMap.create(mapCanvas, { colors, onInspect: inspect });
+const classicalCanvas = $('classical-map');
+const map = FleetMap.create(mapCanvas, { colors, onInspect: inspect, motionAllowed: () => !reducedMotion });
+const classicalMap = FleetMap.create(classicalCanvas, { colors,
+  onInspect: target => inspect(target, 'classical'), motionAllowed: () => !reducedMotion });
 
 const node = (tag, text, cls) => {
   const element = document.createElement(tag);
@@ -74,6 +79,22 @@ function composerError(message) {
   writeText($('composer-error'), message);
   $('composer-error').hidden = !message;
 }
+
+function writeMetric(id, value) {
+  const element = $(id);
+  if (element.textContent === value) return;
+  writeText(element, value);
+  if (!reducedMotion && element.animate) {
+    element.animate([{ opacity: 0.45, transform: 'translateY(3px)' }, { opacity: 1, transform: 'translateY(0)' }],
+      { duration: 220, easing: 'ease-out' });
+  }
+}
+
+motionPreference?.addEventListener?.('change', event => {
+  reducedMotion = event.matches;
+  if (reducedMotion) setPlaying(false);
+  updatePlayback();
+});
 
 function error(message) {
   $('error').textContent = message;
@@ -181,6 +202,7 @@ function clock(m) {
 
 function setPlaying(value) {
   playing = value;
+  $('map-grid').setAttribute('data-playing', String(value));
   $('play').textContent = value ? 'Pause' : 'Play';
   $('play').setAttribute('aria-pressed', String(value));
 }
@@ -243,7 +265,7 @@ function showResult(data, payload) {
   render(data, {preserve: !!payload.view_id});
   result = data;
   renderChanges(data.evaluation, payload.view_id ? previous?.evaluation : null);
-  setStatus('');
+  setStatus(data.cached ? 'Reused verified result' : '');
 }
 
 function queueRun(payload, status) {
@@ -564,10 +586,16 @@ $('run-history').onclick = showHistory;
 $('history-open').onclick = openSavedResult;
 
 function render(data, {preserve = false} = {}) {
-  const saved = {minute, playing, selectedVan};
+  const saved = {minute, playing};
   sim = data.simulation;
-  if (!preserve || (inspected && !entities(inspected.kind).some(item => item.id === inspected.id))) inspected = null;
-  selectedVan = preserve && sim.vans.some(van => van.id === saved.selectedVan) ? saved.selectedVan : null;
+  const comparison = data.classical_simulation;
+  classicalSim = data.provenance !== 'classical_reference' && data.evaluation.classical?.feasible === true &&
+    Number.isFinite(data.evaluation.classical.objective_value) &&
+    comparison?.start_hour === sim.start_hour && comparison.duration_min === sim.duration_min &&
+    FleetReplay.validate(comparison) ? comparison : null;
+  if (!preserve || (inspected && !entities(inspected.kind, replayFor(inspected.source)).some(item => item.id === inspected.id))) {
+    inspected = null;
+  }
   minute = preserve ? Math.min(saved.minute, sim.duration_min) : 0;
   setPlaying(preserve && saved.playing && minute < sim.duration_min);
 
@@ -615,12 +643,9 @@ function render(data, {preserve = false} = {}) {
 
   $('assumptions').replaceChildren(...(data.assumptions || []).map(value => node('li', value)));
   const evaluation = data.evaluation;
-  $('score').textContent = money(evaluation.objective_value);
+  writeMetric('score', money(evaluation.objective_value));
   $('feasible').textContent = 'Checks passed';
-  $('reference-value').hidden = data.provenance === 'classical_reference' || !Number.isFinite(evaluation.reference_value);
-  $('reference-score').textContent = money(evaluation.reference_value);
-  $('reference-gap').hidden = data.provenance === 'classical_reference' || !Number.isFinite(evaluation.gap);
-  $('gap-score').textContent = money(evaluation.gap);
+  renderSolverComparison(evaluation, data.provenance === 'classical_reference');
   $('costs').replaceChildren(...Object.entries(evaluation.costs || {})
     .map(([label, value]) => node('span', label + ' · ' + money(value))));
   $('explanation').textContent = data.explanation || '';
@@ -635,11 +660,48 @@ function render(data, {preserve = false} = {}) {
   buildFleet();
   buildTimeline();
   applyVanSelection();
+  $('map-grid').classList.toggle('comparing', Boolean(classicalSim));
+  $('quantum-map-heading').hidden = !classicalSim;
+  $('classical-map-view').hidden = !classicalSim;
+  $('comparison-note').hidden = !classicalSim;
+  $('delivered-summary').hidden = Boolean(classicalSim);
+  $('schedule-heading').textContent = classicalSim ? 'Quantum schedule' : 'Schedule';
+  mapCanvas.setAttribute('aria-label', classicalSim ? 'Interactive quantum fleet map' : 'Interactive fleet map');
   map.setSimulation(sim);
+  classicalMap.setSimulation(classicalSim);
   mapCanvas.hidden = false;
   $('frame-status').hidden = true;
   updatePlayback();
 }
+function renderSolverComparison(evaluation, isReference) {
+  const baseline = evaluation.classical;
+  const classical = !isReference && baseline?.feasible === true && Number.isFinite(baseline.objective_value);
+  const reference = classical ? baseline.objective_value : evaluation.reference_value;
+  const gap = Number.isFinite(reference) ? evaluation.objective_value - reference : evaluation.gap;
+
+  $('score-label').textContent = classical ? 'Quantum cost' : 'Total cost';
+  $('score-check').hidden = !classical;
+  $('reference-value').hidden = isReference || !Number.isFinite(reference);
+  $('reference-label').textContent = classical ? 'Classical cost' : 'Reference cost';
+  writeMetric('reference-score', Number.isFinite(reference) ? money(reference) : '—');
+  $('reference-check').hidden = !classical;
+  $('reference-check').textContent = baseline?.optimality_proven === true ? 'Feasible · Exact optimum' : 'Feasible';
+  $('reference-gap').hidden = isReference || !Number.isFinite(gap);
+  $('gap-label').textContent = classical ? 'Gap to classical' : 'Gap to reference';
+  const sign = Math.abs(gap) >= 0.005 ? (gap < 0 ? '−' : '+') : '';
+  writeMetric('gap-score', Number.isFinite(gap) ? sign + money(Math.abs(gap)) : '—');
+  const direction = !Number.isFinite(gap) || Math.abs(gap) < 0.005 ? 'equal' : gap > 0 ? 'higher' : 'lower';
+  $('reference-gap').setAttribute('data-direction', direction);
+  $('gap-note').textContent = classical ? direction === 'equal' ? 'Same cost'
+    : direction === 'higher' ? 'Quantum costs more' : 'Quantum costs less' : 'Difference from reference';
+
+  $('classical-details').hidden = !classical;
+  $('classical-method').textContent = classical ? baseline.method : '';
+  const options = classical && Array.isArray(baseline.selected_options) ? baseline.selected_options : [];
+  $('classical-options').hidden = !options.length;
+  $('classical-options').textContent = options.length ? 'Route options · ' + options.join(', ') : '';
+}
+
 function renderChanges(current, previous) {
   const deltaList = $('cost-delta');
   deltaList.replaceChildren();
@@ -719,12 +781,19 @@ function buildTimeline() {
 
 function updatePlayback() {
   if (!sim) return;
-  map.draw(minute, selectedVan, playing);
+  map.draw(minute, inspectedVan('primary'), playing);
   writeText($('clock'), clock(minute));
   $('scrub').value = String(minute);
   $('scrub').setAttribute('aria-valuetext', clock(minute));
   const done = FleetReplay.deliveredAt(sim, minute);
-  writeText($('delivered'), done.size + ' / ' + sim.deliveries.length);
+  const delivered = done.size + ' / ' + sim.deliveries.length;
+  writeText($('delivered'), delivered);
+  if (classicalSim) {
+    classicalMap.draw(minute, inspectedVan('classical'), playing);
+    const classicalDone = FleetReplay.deliveredAt(classicalSim, minute);
+    writeText($('quantum-delivered'), delivered + ' delivered');
+    writeText($('classical-delivered'), classicalDone.size + ' / ' + classicalSim.deliveries.length + ' delivered');
+  }
   sim.vans.forEach((van, i) => {
     const state = FleetReplay.stateAt(van, minute, sim.depot);
     const {status, energy, fill, color} = vanCards[i];
@@ -772,11 +841,20 @@ window.addEventListener('pageshow', event => {
   }
 });
 
-function entities(kind) {
-  return {van: sim.vans, charger: sim.chargers, delivery: sim.deliveries}[kind];
+function replayFor(source) {
+  return source === 'classical' ? classicalSim : sim;
+}
+
+function entities(kind, replay) {
+  return replay ? {van: replay.vans, charger: replay.chargers, delivery: replay.deliveries}[kind] : [];
+}
+
+function inspectedVan(source) {
+  return inspected?.source === source && inspected.kind === 'van' ? inspected.id : null;
 }
 
 function applyVanSelection() {
+  const selectedVan = inspectedVan('primary');
   vanCards.forEach(({card}, i) => {
     const active = selectedVan === sim.vans[i].id;
     card.classList.toggle('selected', active);
@@ -784,20 +862,19 @@ function applyVanSelection() {
   });
 }
 
-function setInspection(target) {
-  inspected = target;
-  selectedVan = target?.kind === 'van' ? target.id : null;
+function setInspection(target, source = 'primary') {
+  inspected = target ? {...target, source} : null;
   applyVanSelection();
 }
 
-function inspect(target) {
-  const alreadySelected = inspected?.kind === target.kind && inspected?.id === target.id;
-  setInspection(alreadySelected ? null : target);
+function inspect(target, source = 'primary') {
+  const alreadySelected = inspected?.source === source && inspected.kind === target.kind && inspected.id === target.id;
+  setInspection(alreadySelected ? null : target, source);
   updatePlayback();
 }
 
-function chargerBookings(chargerId) {
-  return sim.vans.flatMap((van, i) => van.events
+function chargerBookings(chargerId, replay = sim) {
+  return replay.vans.flatMap((van, i) => van.events
     .filter(event => event.type === 'charge' && event.charger_id === chargerId)
     .map(event => ({...event, van: van.id, color: colors[i % colors.length]})))
     .sort((first, second) => first.start_min - second.start_min);
@@ -807,8 +884,9 @@ function updateInspector() {
   const panel = $('pygame-inspector');
   panel.hidden = !inspected;
   if (!inspected) return;
-  const {kind, id} = inspected;
-  const item = entities(kind).find(candidate => candidate.id === id);
+  const {kind, id, source} = inspected;
+  const replay = replayFor(source);
+  const item = entities(kind, replay).find(candidate => candidate.id === id);
   if (!item) {
     panel.hidden = true;
     return;
@@ -816,41 +894,43 @@ function updateInspector() {
 
   let details;
   if (kind === 'van') {
-    const state = FleetReplay.stateAt(item, minute, sim.depot);
+    const state = FleetReplay.stateAt(item, minute, replay.depot);
     const upcoming = item.events.find(event => event.end_min > minute);
-    const percent = (state.battery / sim.battery_capacity_kwh * 100).toFixed(0);
+    const percent = (state.battery / replay.battery_capacity_kwh * 100).toFixed(0);
     details = [item.name || id, state.status, state.battery.toFixed(2) + ' kWh (' + percent + '%)',
       item.delivery_ids?.length ? 'Deliveries ' + item.delivery_ids.join(', ') : '',
       item.option_id ? 'Option: ' + item.option_id : '',
       upcoming ? 'Next event ends ' + clock(upcoming.end_min) : ''];
   } else if (kind === 'charger') {
-    const bookings = chargerBookings(id);
+    const bookings = chargerBookings(id, replay);
     const active = bookings.find(event => event.start_min <= minute && minute < event.end_min);
     const reservations = bookings.map(event => event.van + ' ' + clock(event.start_min) + '–' + clock(event.end_min));
     details = [id, active ? 'Charging ' + active.van + ' until ' + clock(active.end_min) : 'No charging scheduled at this time',
       'Reservations: ' + (reservations.join(', ') || 'none')];
   } else {
-    const van = sim.vans.find(candidate => candidate.events.some(event => event.delivery_id === id));
+    const van = replay.vans.find(candidate => candidate.events.some(event => event.delivery_id === id));
     const event = van?.events.find(candidate => candidate.delivery_id === id);
-    const done = FleetReplay.deliveredAt(sim, minute).has(id);
+    const done = FleetReplay.deliveredAt(replay, minute).has(id);
     const lateness = event && Math.max(0, event.end_min - item.deadline_min);
     details = [id + ' at (' + item.position.join(', ') + ')', done ? 'Delivered' : 'Pending',
       van?.id || 'Unassigned', event ? 'Service completes ' + clock(event.end_min) : '',
       Number.isFinite(item.deadline_min) ? 'Deadline ' + clock(item.deadline_min) : '',
       lateness > 0 ? lateness.toFixed(1).replace(/\.0$/, '') + ' min late' : ''];
   }
-  writeText(panel, details.filter(Boolean).join(' | '));
+  const solver = classicalSim ? (source === 'classical' ? 'Classical' : 'Quantum') : '';
+  writeText(panel, [solver, ...details].filter(Boolean).join(' | '));
 }
 
-mapCanvas.onkeydown = event => {
-  if (!sim) return;
+function handleMapKeys(event, source) {
+  const replay = replayFor(source);
+  if (!replay) return;
   const kind = {v: 'van', c: 'charger', d: 'delivery'}[event.key.toLowerCase()];
   if (kind) {
-    const items = entities(kind);
+    const items = entities(kind, replay);
     if (!items.length) return;
-    const i = inspected?.kind === kind ? items.findIndex(item => item.id === inspected.id) : -1;
+    const i = inspected?.source === source && inspected.kind === kind ? items.findIndex(item => item.id === inspected.id) : -1;
     event.preventDefault();
-    inspect({kind, id: items[(i + 1) % items.length].id});
+    inspect({kind, id: items[(i + 1) % items.length].id}, source);
     return;
   }
   const step = event.shiftKey ? 15 : 5;
@@ -863,7 +943,9 @@ mapCanvas.onkeydown = event => {
     event.preventDefault();
     actions[event.key]();
   }
-};
+}
+mapCanvas.onkeydown = event => handleMapKeys(event, 'primary');
+classicalCanvas.onkeydown = event => handleMapKeys(event, 'classical');
 $('export').onclick=()=>{if(!result)return;const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'})),a=node('a');a.href=url;a.download=`ev-dispatch-${result.run_id}-${result.attempt_id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('feedback').onclick=async()=>{if(!result)return;const feedback=prompt('Feedback is saved for this server session. What should change?');if(!feedback)return;try{await request('/api/feedback',{view_id:result.view_id,feedback});setStatus('Feedback saved locally');}catch(e){error(e.message);}};
 

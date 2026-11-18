@@ -3,6 +3,9 @@
 import json
 import math
 import os
+import sys
+from collections import OrderedDict
+from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
@@ -23,9 +26,12 @@ from workspace_runs import (
 
 ROOT = Path(__file__).resolve().parent
 VIEWS = {}
+VIEW_BACKENDS = {}
+SOLVER_RESULTS = OrderedDict()
 UPLOADED_FRAME = None
 VIEW_LOCK = Lock()
 BACKEND_TIMEOUT_SECONDS = 300
+MAX_CACHED_SOLVER_RESULTS = 100
 PIPELINE_RUNS = {}
 PIPELINE_LOCK = Lock()
 MAX_ACTIVE_PIPELINE_RUNS = 2
@@ -60,6 +66,14 @@ class RequestError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
+
+
+@dataclass(frozen=True)
+class ViewBackend:
+    source: tuple[str, str]
+    # Cache hits get a new display attempt without creating a backend attempt.
+    last_attempt_id: str
+    revision: str | None = ""
 
 
 def backend_url():
@@ -100,14 +114,59 @@ def request_handoff(base, payload):
         raise RequestError(502, "Could not read a JSON handoff from the backend.") from exc
 
 
-def read_view(view_id):
+def view_state(view_id):
     if not isinstance(view_id, str):
         raise ValueError("Expected a view ID.")
     with VIEW_LOCK:
         view = VIEWS.get(view_id)
+        backend = VIEW_BACKENDS.get(view_id)
     if view is None:
         raise RequestError(404, "This result is no longer available. Start a new dispatch.")
-    return view
+    return view, backend
+
+
+def read_view(view_id):
+    return view_state(view_id)[0]
+
+
+def solver_result_key(source, view, values, revision=""):
+    return source, revision, view["run_id"], view["plan_id"], view["problem"]["original_prompt"], tuple(sorted(values.items()))
+
+
+def native_cache_revision(view):
+    """Identify the trusted solver inputs and current review policy, or skip reuse."""
+    try:
+        from backend.build import DEFAULT_MODEL
+        from backend.build_review import build_fingerprint, solver_fingerprint
+        from backend.model_provider import ModelError, model_name, model_provider
+        from backend.prompt_loader import PROMPTS_FILE
+        from backend.semantics import semantics_fingerprint
+        from backend.workspace import WorkspaceError, fingerprint, open_workspace
+    except ImportError:
+        return None
+    try:
+        workspace = open_workspace(view["plan_id"])
+        approval = json.loads(workspace.resolve("handoff.json").read_bytes())
+        if approval.get("decision") != "GO" or approval.get("workspace_id") != workspace.id:
+            return None
+        review_models = {
+            stage: model_name(DEFAULT_MODEL, stage=stage)
+            for stage in ("plan_review", "build_review", "semantic_review", "final_review")
+        }
+        # Match the worker identity used by Test without retaining credentials in
+        # cache metadata. Switching simulators or quantum accounts needs fresh evidence.
+        runtime_identity = fingerprint(
+            sys.executable, sys.version,
+            os.getenv("QR_BACKEND"), os.getenv("QR_ACCOUNT"), os.getenv("QR_KEY"),
+        )
+        return fingerprint(
+            solver_fingerprint(workspace), build_fingerprint(workspace), semantics_fingerprint(),
+            model_provider(), review_models, runtime_identity, PROMPTS_FILE.read_text(encoding="utf-8"),
+        )
+    except (OSError, ValueError, KeyError, WorkspaceError, ModelError):
+        # Older or unavailable workspaces can still be recalculated; they simply
+        # cannot bypass verification using an unidentifiable cached result.
+        return None
 
 
 def read_prompt(data):
@@ -117,7 +176,7 @@ def read_prompt(data):
     return prompt
 
 
-def register_view(result, previous=None):
+def register_view(result, previous=None, backend=None):
     result["view_id"] = str(uuid4())
     try:
         json.dumps(result, allow_nan=False)
@@ -130,8 +189,18 @@ def register_view(result, previous=None):
         ):
             raise InvalidHandoff("The backend returned an attempt that was already displayed.")
         if len(VIEWS) >= 100:
-            VIEWS.pop(next(iter(VIEWS)))
+            oldest = next(iter(VIEWS))
+            VIEWS.pop(oldest)
+            VIEW_BACKENDS.pop(oldest, None)
         VIEWS[result["view_id"]] = result
+        if backend is not None:
+            VIEW_BACKENDS[result["view_id"]] = backend
+            if not result.get("cached") and backend.revision is not None:
+                key = solver_result_key(backend.source, result, result["effective_values"], backend.revision)
+                SOLVER_RESULTS[key] = result
+                SOLVER_RESULTS.move_to_end(key)
+                if len(SOLVER_RESULTS) > MAX_CACHED_SOLVER_RESULTS:
+                    SOLVER_RESULTS.popitem(last=False)
     return result
 
 
@@ -149,7 +218,61 @@ def workspace_response(operation, *args):
 def reopen_workspace(run_id):
     result = workspace_response(open_saved_run, run_id)
     result["workspace_origin"] = "local"
-    return register_view(result)
+    return register_view(result, backend=ViewBackend(("native", ""), result["attempt_id"], native_cache_revision(result)))
+
+
+def live_result(prompt, values, previous, previous_backend, *, on_stage=None, on_progress=None):
+    local_workspace = previous is not None and previous.get("workspace_origin") == "local"
+    attempt_id = str(uuid4())
+    base = "" if local_workspace else backend_url()
+    if local_workspace and not planner_configured():
+        raise RequestError(503, "Configure the native planning pipeline to recalculate this saved run.")
+    use_pipeline = planner_configured() if previous is None else (
+        local_workspace or previous["plan_id"] not in LOCAL_PLAN_IDS
+    )
+    if on_stage is not None and (base or not use_pipeline):
+        raise RequestError(503, "Configure the native planning pipeline to run a problem with progress.")
+    source = ("external", base) if base else ("native" if use_pipeline else "local", "")
+    revision = native_cache_revision(previous) if source[0] == "native" and previous is not None else ""
+    if previous is not None:
+        if previous_backend is None or previous_backend.source != source:
+            raise RequestError(409, "The solver backend changed. Start a new dispatch.")
+        key = solver_result_key(source, previous, values, revision)
+        with VIEW_LOCK:
+            cached = SOLVER_RESULTS.get(key) if revision is not None else None
+            if cached is not None:
+                SOLVER_RESULTS.move_to_end(key)
+        if cached is not None:
+            return {**cached, "attempt_id": attempt_id, "cached": True}, ViewBackend(
+                source, previous_backend.last_attempt_id, revision,
+            )
+
+    if base:
+        payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
+        if previous is None:
+            payload["prompt"] = prompt
+        else:
+            payload.update(
+                run_id=previous["run_id"], plan_id=previous["plan_id"],
+                previous_attempt_id=previous_backend.last_attempt_id,
+            )
+        handoff = request_handoff(base, payload)
+    elif on_stage is not None:
+        handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage, on_progress=on_progress)
+    elif use_pipeline:
+        handoff = pipeline_handoff(prompt, values, previous, attempt_id)
+    else:
+        handoff = local_handoff(prompt, values, previous, attempt_id)
+    result = normalize_handoff(
+        handoff, "live", prompt, previous,
+        expected_values=values if previous is not None else None, expected_attempt_id=attempt_id,
+    )
+    if local_workspace:
+        result["workspace_origin"] = "local"
+    if source[0] == "native":
+        current = native_cache_revision(result)
+        revision = current if previous is None or current == revision else None
+    return result, ViewBackend(source, attempt_id, revision)
 
 
 def run_plan(data, *, on_stage=None, on_progress=None):
@@ -160,9 +283,10 @@ def run_plan(data, *, on_stage=None, on_progress=None):
     if not isinstance(overrides, dict):
         raise ValueError("Control values must be a JSON object.")
     previous = None
+    previous_backend = None
     values = {}
     if "view_id" in data:
-        previous = read_view(data["view_id"])
+        previous, previous_backend = view_state(data["view_id"])
         if mode != previous["mode"] or "prompt" in data:
             raise ValueError("Use the displayed plan and its controls for recalculation.")
         prompt = previous["problem"]["original_prompt"]
@@ -174,49 +298,18 @@ def run_plan(data, *, on_stage=None, on_progress=None):
         if (mode == "recorded" and prompt != RECORDED_PROMPT) or (mode == "reference" and prompt != PROMPT):
             raise ValueError("Load the EV example prompt to replay the example.")
 
-    local_workspace = previous is not None and previous.get("workspace_origin") == "local"
-    attempt_id = None
-    if mode == "recorded":
-        handoff = recorded_handoff(values, previous)
-    elif mode == "reference":
-        handoff = reference_handoff(values, previous)
-    else:
-        attempt_id = str(uuid4())
-        base = "" if local_workspace else backend_url()
-        if local_workspace and not planner_configured():
-            raise RequestError(503, "Configure the native planning pipeline to recalculate this saved run.")
-        use_pipeline = planner_configured() if previous is None else (
-            local_workspace or previous["plan_id"] not in LOCAL_PLAN_IDS
+    view_backend = None
+    if mode == "live":
+        result, view_backend = live_result(
+            prompt, values, previous, previous_backend, on_stage=on_stage, on_progress=on_progress,
         )
-        if on_stage is not None and (base or not use_pipeline):
-            raise RequestError(503, "Configure the native planning pipeline to run a problem with progress.")
-        if base:
-            payload = {"schema_version": 1, "attempt_id": attempt_id, "values": values}
-            if previous is None:
-                payload["prompt"] = prompt
-            else:
-                payload.update(
-                    run_id=previous["run_id"],
-                    plan_id=previous["plan_id"],
-                    previous_attempt_id=previous["attempt_id"],
-                )
-            handoff = request_handoff(base, payload)
-        elif on_stage is not None:
-            handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage, on_progress=on_progress)
-        elif use_pipeline:
-            handoff = pipeline_handoff(prompt, values, previous, attempt_id)
-        else:
-            handoff = local_handoff(prompt, values, previous, attempt_id)
+    else:
+        handoff = recorded_handoff(values, previous) if mode == "recorded" else reference_handoff(values, previous)
+        result = normalize_handoff(handoff, mode, prompt, previous,
+                                   expected_values=values if previous is not None else None)
     if on_progress is not None:
         on_progress("Publish the verified schedule", status="running")
-    result = normalize_handoff(
-        handoff, mode, prompt, previous,
-        expected_values=values if previous is not None else None,
-        expected_attempt_id=attempt_id,
-    )
-    if local_workspace:
-        result["workspace_origin"] = "local"
-    view = register_view(result, previous)
+    view = register_view(result, previous, view_backend)
     if on_progress is not None:
         on_progress("Publish the verified schedule", status="completed")
     return view

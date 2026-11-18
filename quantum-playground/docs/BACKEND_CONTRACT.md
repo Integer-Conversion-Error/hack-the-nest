@@ -2,7 +2,7 @@
 
 ## Native pipeline
 
-With Gemini configured, the dashboard starts the native `backend.pipeline` in an EV fleet workspace. The generated solver supplies a timed `simulation`, the effective control values, the cost breakdown, and its feasibility verification. Test checks the replay contract before GO. The dashboard translates the approved workspace `handoff.json` into the response below, using the workspace ID as the plan ID.
+With Gemini or OpenRouter [configured](../../backend/MODEL_PROVIDERS.md), the dashboard starts the native `backend.pipeline` in an EV fleet workspace. The generated solver supplies a timed `simulation`, the effective control values, the cost breakdown, and its feasibility verification. When a feasible classical solution is computed, `reference` includes its method, cost, feasibility, optimality status, and optional timed replay. Test checks the replay contract before GO. The dashboard translates the approved workspace `handoff.json` into the response below, using the workspace ID as the plan ID.
 
 The browser starts a new native run with `POST /api/pipeline-runs` and a JSON object containing `prompt`. The dashboard returns HTTP 202 with a run snapshot. Poll `GET /api/pipeline-runs/{id}` for the latest snapshot. IDs refer to jobs in the running dashboard process.
 
@@ -14,7 +14,7 @@ Saved runs are read from the configured workspace directory. `GET /api/workspace
 
 Apply runs the approved solver with the full set of settings in a temporary copy of the workspace. It checks the replay and runs the pipeline's semantic review on the fresh result before displaying it. The approved workspace retains its original result for later attempts.
 
-The built-in example worker is available without Gemini configuration. It accepts the live EV example prompt and rebuilds the QUBO for each whole percentage from 20% to 35%. The worker reports fresh circuit measurements and passes the chosen schedule through independent verification before the dashboard updates.
+The built-in example worker is available without model-provider configuration. It accepts the live EV example prompt and rebuilds the QUBO for each whole percentage from 20% to 35%. The worker reports circuit measurements and passes the chosen schedule through independent verification before the dashboard updates. Recently verified settings can be served from the bounded result cache, with `cached: true` and a fresh display attempt ID. The next backend request retains the last actual backend attempt ID.
 
 ## External backend
 
@@ -63,7 +63,9 @@ The result includes the three IDs, `status: "verified"`, and `provenance: "live"
 - `simulation` describes the selected, timed EV schedule. It has `kind: "ev_fleet"`, `grid: {width, height, block_km}`, `depot: [x,y]`, `chargers: [{id, position}]`, `deliveries: [{id, position, deadline_min}]`, `start_hour`, `duration_min`, `battery_capacity_kwh`, `reserve_pct`, and `vans`. The scene supports grids from 2 to 50 intersections on each axis and up to six vans.
 - Each van has `id`, `initial_battery_kwh`, `delivery_ids`, and `events`. A van starts at the depot and its events are chronological and non-overlapping. Include the return drive when required by the plan. When the plan exposes `van_2_initial_charge_pct`, identify Van 2 as `V2` and set its initial battery to the effective percentage of `battery_capacity_kwh`.
 - Each event supplies `type` (`drive`, `wait`, `charge`, or `deliver`), `start_min`, `end_min`, `position` at its start, `battery_start_kwh`, and `battery_end_kwh`. Drive events list successive neighboring intersections in `path`. Charging uses `charger_id`, charger waits use it when applicable, and deliveries use `delivery_id`. All positions are integer grid intersections. Times are minutes from `start_hour`; charging intervals are half-open.
-- `evaluation` supplies `feasible: true`, the total `objective_value`, a component map `costs`, and the number `delivered`. Report costs in USD, without rounding away precision. Optional `reference_value` and `gap` give the exact classical comparison in USD on the same effective inputs and options.
+- `evaluation` supplies `feasible: true`, the total `objective_value`, a component map `costs`, and the number `delivered`. Report costs in USD, without rounding away precision. Optional `reference_value` and `gap` give the classical reference cost and difference in USD on the same effective inputs and options; optimality is reported separately.
+- Optional `evaluation.classical` records `method`, `objective_value`, `feasible: true`, `optimality_proven`, and optional `selected_options`. Its cost must agree with `reference_value`; `gap` is the quantum cost minus the classical cost. Do not claim an exact optimum when `optimality_proven` is false.
+- Optional `classical_simulation` supplies the independently verified classical schedule in the same replay format, sharing the quantum scene, assignments, operating clock, and effective inputs. This enables synchronized maps. Omit it when there is no compatible classical replay; the classical cost metadata can still be shown.
 - Supply actual evidence when available in `circuits: [{title, drawing}]`, `quantum: {binary_variables, actual_qubits}`, and `simulation.counts` (measured bitstrings mapped to integer counts). `actual_qubits` includes auxiliary qubits and may be null. Optional `assumptions` and `explanation` describe the verified run.
 
 The dashboard validates handoff identity, approved settings, and replay consistency before creating a view. It consumes the host's feasibility and objective result. The host retains execution and verification evidence.

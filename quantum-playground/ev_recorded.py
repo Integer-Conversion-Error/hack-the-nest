@@ -1,6 +1,7 @@
 """Project recorded and live EV solver results into a dashboard replay."""
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +10,12 @@ from fleet_handoff import applied_values, normalize_controls, require
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from backend.ev_dispatch.classical import solve_classical
+
+
 SCENARIO = "ev-fleet-dispatch-optimization"
 RECORDING_DIR = (
     REPO_ROOT / "example-backend-final-result" / "20261115-071610-ev-fleet-dispatch-optimization-6252"
@@ -142,6 +149,32 @@ def _replay(solution, counts):
     }
 
 
+def _classical_replay(output, reference, provenance):
+    classical = output.get("classical")
+    reconstructing = classical is None and provenance == "recorded"
+    if reconstructing:
+        classical = solve_classical(output["controls"]["van_2_initial_charge_pct"])
+    if classical is None:
+        return None
+
+    solution = classical["solution"]
+    verification = solution["verification"]
+    matches_reference = (
+        classical["optimality_proven"] is True
+        and verification["feasible"] is True and not verification["violations"]
+        and classical["objective"]["value"] == reference["objective_value"]
+        and classical["objective"]["unit"] == reference["unit"]
+        and solution["cost_breakdown"] == reference["cost_breakdown"]
+        and solution["selected_options"] == reference["selected_options"]
+        and [van["option_id"] for van in solution["vans"]] == reference["selected_options"]
+    )
+    if reconstructing and not matches_reference:
+        return None
+
+    require(matches_reference, "The classical replay did not match the verified exact schedule.")
+    return _replay(solution, {})
+
+
 def recorded_handoff(values, previous=None):
     """Load a verified recorded result for the requested settings."""
     recorded, filename, source_label = _recording(values)
@@ -173,7 +206,9 @@ def project_ev_result(output, identity, *, provenance, explanation, source=None,
     )
     cost = solution["cost_breakdown"]
     quantum = output["quantum"]
+    reference = output["reference"]
     simulation = _replay(solution, quantum["counts"])
+    classical_simulation = _classical_replay(output, reference, provenance)
     return {
         "schema_version": 1,
         **identity,
@@ -191,11 +226,20 @@ def project_ev_result(output, identity, *, provenance, explanation, source=None,
             **({"source": source} if source is not None else {}),
             "effective_values": output["controls"],
             "simulation": simulation,
+            **({"classical_simulation": classical_simulation} if classical_simulation is not None else {}),
             "evaluation": {
                 "feasible": verification["feasible"],
                 "objective_value": output["objective"]["value"],
-                "reference_value": output["reference"]["objective_value"],
+                "reference_value": reference["objective_value"],
                 "gap": verification["optimality_gap_usd"],
+                # Both curated EV sources independently enumerate every route and charger choice.
+                "classical": {
+                    "method": reference["method"],
+                    "objective_value": reference["objective_value"],
+                    "feasible": True,
+                    "optimality_proven": True,
+                    "selected_options": reference["selected_options"],
+                },
                 "costs": {
                     "driving": cost["driving_cost"],
                     "electricity": cost["electricity_cost"],

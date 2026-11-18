@@ -51,6 +51,13 @@ async function check(browser, url, platform, width, height) {
     assert.equal(await page.locator('#pipeline-repeat-count').textContent(), '1 repair loop');
     assert.equal(await page.locator('#pipeline-repair').isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    const dotAnimation = () => page.locator('#pipeline-current-state').evaluate(element =>
+      getComputedStyle(element, '::before').animationName);
+    assert.notEqual(await dotAnimation(), 'none', 'the active step has a status animation');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await dotAnimation(), 'none', 'reduced motion suppresses the status animation');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.waitForTimeout(350);
     if (evidence && platform !== 'small-mobile') {
       await page.screenshot({ path: path.join(evidence, `after-${platform}.png`), fullPage: true });
     }
@@ -85,9 +92,11 @@ async function check(browser, url, platform, width, height) {
     await page.locator('#failed-pipeline-progress').click();
     assert.equal(await page.locator('#pipeline-current-state').textContent(), 'Needs your attention');
     assert.equal(await page.locator('#pipeline-stages [data-state="failed"]').count(), 1);
+    assert.equal(await dotAnimation(), 'none', 'a failed step no longer pulses as active');
     assert.equal(await page.locator('#pipeline-visits li.pipeline-visit').count(), 1);
     assert.equal(await page.locator('#pipeline-visits strong').first().textContent(), 'Plan solution');
     if (evidence && platform === 'mobile') {
+      await page.waitForTimeout(350);
       await page.screenshot({ path: path.join(evidence, 'after-failed-mobile.png'), fullPage: true });
     }
     await page.locator('#progress-return').click();

@@ -69,19 +69,24 @@ class DashboardPipelineTests(unittest.TestCase):
         self.assertIn(("Check solver output", "completed", None), steps)
         self.assertEqual(steps[-1], ("Check the dashboard result", "failed", "Missing EV simulation."))
 
-    def test_stage_updates_follow_build_repairs_and_final_review_retries(self):
+    def test_stage_updates_follow_early_fidelity_checks_and_scoped_build_repairs(self):
         problem = SimpleNamespace(
-            is_optimization_problem=True, title="Schedule the fleet", quantum=SimpleNamespace(method="QAOA"),
+            is_optimization_problem=True, title="Schedule the fleet", quantum=SimpleNamespace(method="QAOA", qubit_budget=None),
+            model_dump=lambda **kwargs: {"title": "Schedule the fleet"},
         )
-        planning = SimpleNamespace(plan=SimpleNamespace(selected=SimpleNamespace(name="Fleet solver")), attempts=1)
+        planning = SimpleNamespace(plan=SimpleNamespace(selected=SimpleNamespace(name="Fleet solver")), attempts=1,
+                                   max_qubits=5, worker_seconds=10, answers=[],
+                                   model_dump=lambda **kwargs: {"selected_solver": "Fleet solver"})
         failed_review = SemanticReview(verdict="falls_short", summary="Revise", checks_done=[], issues=[], model="test")
         passed_review = SemanticReview(verdict="matches", summary="Ready", checks_done=[], issues=[], model="test")
         failed_check = FinalCheck(
             name="Problem", returns_to="init", verdict="falls_short", summary="Revise", issues=["Check departure time"],
         )
-        decisions = [
-            FinalDecision(decision="NO_GO", failed_stage="init", checks=[failed_check], model="test"),
-            FinalDecision(decision="GO", failed_stage=None, checks=[], model="test"),
+        approved_problem = FinalCheck(name="Problem", returns_to="init", verdict="matches", summary="Matches", issues=[])
+        approved_plan = FinalCheck(name="Plan", returns_to="plan", verdict="matches", summary="Matches", issues=[])
+        implementation_checks = [
+            FinalCheck(name="Implementation", returns_to="build", verdict="falls_short", summary="Revise", issues=["Check service time"]),
+            FinalCheck(name="Implementation", returns_to="build", verdict="matches", summary="Matches", issues=[]),
         ]
         stages = []
         trace = []
@@ -96,25 +101,28 @@ class DashboardPipelineTests(unittest.TestCase):
         with (
             patch("backend.pipeline.parse_problem_statement"),
             patch("backend.pipeline.load_problem_statement", return_value=problem),
+            patch("backend.pipeline.load_plan", return_value=planning),
             patch("backend.pipeline.run_planning", return_value=planning),
             patch("backend.pipeline.run_build_phase"),
             patch("backend.testing.run_build_phase"),
             patch("backend.testing.evaluate_semantics", side_effect=[failed_review, passed_review, passed_review]),
-            patch("backend.pipeline.run_final_checks", side_effect=decisions),
+            patch("backend.pipeline.check_problem_against_prompt", side_effect=[failed_check, approved_problem]),
+            patch("backend.pipeline.check_plan_against_problem", return_value=approved_plan),
+            patch("backend.pipeline.check_implementation_against_plan", side_effect=implementation_checks),
             patch("backend.pipeline.write_handoff", return_value={"decision": "GO"}),
         ):
             result = run_pipeline(self.workspace, on_stage=enter, on_progress=progress)
 
         self.assertEqual(result["decision"], "GO")
         self.assertEqual(stages, [
-            "init", "plan", "build", "test", "build", "test", "verify",
-            "init", "plan", "build", "test", "verify",
+            "init", "init", "plan", "build", "test", "build", "test", "verify",
+            "build", "test", "verify",
         ])
         self.assertIn(("test", "Check the solution against the problem", "failed", "Revise"), trace)
         return_to_build = next(i for i, event in enumerate(trace) if event[:2] == ("test", "Return to Build"))
         self.assertEqual(trace[return_to_build + 1], ("stage", "build"))
-        return_to_init = trace.index(("verify", "Return to prompt parsing", "info", "- Check departure time"))
-        self.assertEqual(trace[return_to_init + 1], ("stage", "init"))
+        return_to_init = trace.index(("init", "Return to prompt parsing", "info", "Check departure time"))
+        self.assertLess(return_to_init, trace.index(("stage", "plan")), "interpretation is repaired before planning")
         self.assertEqual(trace[-1], ("verify", "Save the verified handoff", "completed", None))
 
     def test_failed_final_check_reports_both_attempts_before_sending_work_back(self):

@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import unittest
+from collections import OrderedDict
 from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.util import find_spec
@@ -55,6 +56,10 @@ class HandoffTests(unittest.TestCase):
         planner_env = patch.dict(os.environ, {"GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""})
         planner_env.start()
         self.addCleanup(planner_env.stop)
+        for name, value in (("VIEWS", {}), ("VIEW_BACKENDS", {}), ("SOLVER_RESULTS", OrderedDict())):
+            state = patch("server." + name, value)
+            state.start()
+            self.addCleanup(state.stop)
         self.dashboard_url = self.serve(QuietDashboard)
 
     def test_openrouter_enables_the_native_pipeline_without_exposing_credentials(self):
@@ -304,6 +309,189 @@ class HandoffTests(unittest.TestCase):
             self.assertEqual(float(self.read_frame(first["view_id"])), 7)
             self.assertEqual(float(self.read_frame(updated["view_id"])), 4)
 
+    def test_external_classical_comparison_computes_gap_and_rejects_contradictions(self):
+        initial = verified_handoff({})
+        comparison = {
+            "method": "Enumerate feasible schedules",
+            "objective_value": 14,
+            "feasible": True,
+            "optimality_proven": True,
+            "selected_options": ["Van 1: Slot 1", "Van 2: Direct"],
+        }
+        initial["result"]["evaluation"]["classical"] = comparison
+        updated = verified_handoff({CONTROL_ID: 20}, initial["result"])
+        updated["result"]["evaluation"]["classical"] = {**comparison, "objective_value": 60}
+        self.configure_backend(initial, updated)
+
+        first = self.run_plan("live", prompt=PROMPT)
+        self.assertEqual(first["evaluation"]["classical"], comparison)
+        self.assertEqual(first["evaluation"]["reference_value"], 14)
+        self.assertAlmostEqual(first["evaluation"]["gap"], 947 / 60 - 14)
+        self.assertIn("contradicts", self.assert_run_error(
+            "live", 502, view_id=first["view_id"], variables={CONTROL_ID: 20},
+        ))
+
+
+    def test_apply_rejects_a_classical_map_from_an_older_charge(self):
+        initial = verified_handoff({})
+        stale = copy.deepcopy(initial["result"]["simulation"])
+        stale["counts"] = {}
+        updated = verified_handoff({CONTROL_ID: 20}, initial["result"])
+        updated["result"]["evaluation"]["classical"] = {
+            "method": "Enumerate feasible schedules",
+            "objective_value": updated["result"]["evaluation"]["objective_value"],
+            "feasible": True,
+            "optimality_proven": True,
+        }
+        updated["result"]["classical_simulation"] = stale
+        self.configure_backend(initial, updated)
+        first = self.run_plan("live", prompt=PROMPT)
+
+        self.assertIn("same vans and starting batteries", self.assert_run_error(
+            "live", 502, view_id=first["view_id"], variables={CONTROL_ID: 20},
+        ))
+
+
+    def test_live_reuses_complete_verified_settings_and_keeps_backend_attempt_lineage(self):
+        tariff = "electricity_price"
+
+        def handoff(charge, price, previous=None):
+            response = verified_handoff({CONTROL_ID: charge}, previous)
+            response["controls"].append({
+                "id": tariff, "label": "Electricity price", "type": "number", "default": 0.20,
+                "allowed_values": [0.20, 0.30], "rerun_mode": "rebuild", "unit": "USD/kWh",
+            })
+            result = response["result"]
+            result["effective_values"][tariff] = price
+            evaluation = result["evaluation"]
+            costs = evaluation["costs"]
+            change = costs["electricity"] * (price - 0.20) / 0.20
+            costs["electricity"] += change
+            evaluation["objective_value"] += change
+            evaluation["objective_units_60"] = round(evaluation["objective_value"] * 60)
+            return response
+
+        initial = handoff(35, 0.20)
+        low_charge = handoff(20, 0.20, initial["result"])
+        higher_tariff = handoff(20, 0.30, initial["result"])
+        higher_tariff_at_default = handoff(35, 0.30, initial["result"])
+        other_initial = handoff(35, 0.20)
+        other_low_charge = handoff(20, 0.20, other_initial["result"])
+        backend_calls = self.configure_backend(
+            initial, low_charge, higher_tariff, higher_tariff_at_default, other_initial, other_low_charge,
+        )
+
+        first = self.run_plan("live", prompt=PROMPT)
+        second = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+        first_again = self.run_plan("live", view_id=second["view_id"], variables={CONTROL_ID: 35})
+        second_again = self.run_plan("live", view_id=first_again["view_id"], variables={CONTROL_ID: 20})
+        changed = self.run_plan("live", view_id=second_again["view_id"], variables={tariff: 0.30})
+        changed_from_default = self.run_plan("live", view_id=first_again["view_id"], variables={tariff: 0.30})
+        other_first = self.run_plan("live", prompt=PROMPT)
+        other_second = self.run_plan("live", view_id=other_first["view_id"], variables={CONTROL_ID: 20})
+
+        for saved, reused in ((first, first_again), (second, second_again)):
+            self.assertNotIn("cached", saved)
+            self.assertIs(reused["cached"], True)
+            for key in ("run_id", "plan_id", "effective_values", "simulation", "evaluation", "quantum", "circuits"):
+                self.assertEqual(reused[key], saved[key])
+        views = (first, second, first_again, second_again, changed, changed_from_default, other_first, other_second)
+        self.assertEqual(len({view["view_id"] for view in views}), len(views))
+        self.assertEqual(len({view["attempt_id"] for view in views}), len(views))
+        self.assertEqual(other_second["plan_id"], second["plan_id"])
+        self.assertNotEqual(other_second["run_id"], second["run_id"])
+        self.assertGreater(changed["evaluation"]["objective_value"], second["evaluation"]["objective_value"])
+
+        payloads = [payload for _, payload in backend_calls]
+        self.assertEqual([payload["attempt_id"] for payload in payloads], [
+            first["attempt_id"], second["attempt_id"], changed["attempt_id"], changed_from_default["attempt_id"],
+            other_first["attempt_id"], other_second["attempt_id"],
+        ])
+        self.assertEqual(payloads[2]["values"], {CONTROL_ID: 20, tariff: 0.30})
+        self.assertEqual(payloads[2]["previous_attempt_id"], second["attempt_id"])
+        self.assertEqual(payloads[3]["values"], {CONTROL_ID: 35, tariff: 0.30})
+        self.assertEqual(payloads[3]["previous_attempt_id"], second["attempt_id"])
+
+
+    def test_cached_settings_do_not_cross_external_backend_changes(self):
+        original_calls = self.configure_backend(verified_handoff({}))
+        first = self.run_plan("live", prompt=PROMPT)
+        replacement_calls = self.configure_backend()
+
+        message = self.assert_run_error("live", 409, view_id=first["view_id"], variables={CONTROL_ID: 35})
+
+        self.assertIn("Start a new dispatch", message)
+        self.assertEqual(len(original_calls), 1)
+        self.assertEqual(replacement_calls, [])
+
+    def test_verified_result_cache_evicts_old_settings_at_its_limit(self):
+        first_handoff = verified_handoff({})
+        alternate = verified_handoff({CONTROL_ID: 20}, first_handoff["result"])
+        calls = self.configure_backend(first_handoff, alternate, first_handoff)
+        with patch("server.MAX_CACHED_SOLVER_RESULTS", 1):
+            first = self.run_plan("live", prompt=PROMPT)
+            changed = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
+            restored = self.run_plan("live", view_id=changed["view_id"], variables={CONTROL_ID: 35})
+        self.assertNotIn("cached", restored)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[-1][1]["previous_attempt_id"], changed["attempt_id"])
+
+    def test_native_cache_requires_unchanged_solver_and_review_revision(self):
+        from server import normalize_handoff, register_view, ViewBackend
+
+        handoff = verified_handoff({})
+        first = normalize_handoff(handoff, "live", PROMPT)
+        register_view(first, backend=ViewBackend(("native", ""), first["attempt_id"], "original"))
+
+        def recalculate(prompt, values, previous, attempt_id):
+            return with_attempt(verified_handoff(values, previous), attempt_id)
+
+        with (
+            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": ""}),
+            patch("server.planner_configured", return_value=True),
+            patch("server.pipeline_handoff", side_effect=recalculate) as solver,
+            patch("server.native_cache_revision", return_value="original"),
+        ):
+            reused = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 35})
+            self.assertIs(reused["cached"], True)
+            solver.assert_not_called()
+            for revision in ("solver-changed", "review-policy-changed", None):
+                with patch("server.native_cache_revision", return_value=revision):
+                    refreshed = self.run_plan("live", view_id=reused["view_id"], variables={CONTROL_ID: 35})
+                self.assertNotIn("cached", refreshed)
+            self.assertEqual(solver.call_count, 3)
+
+    @unittest.skipUnless(find_spec("pydantic"), "The planner dependencies are required.")
+    def test_native_cache_revision_changes_with_workspace_inputs_and_review_model(self):
+        from server import native_cache_revision
+        from backend.workspace import init_workspace
+
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "QUANTUM_WORKSPACES_ROOT": directory, "MODEL_PROVIDER": "gemini",
+        }):
+            workspace = init_workspace(PROMPT, scene_type="ev_fleet")
+            workspace.resolve("problem.json").write_bytes((RECORDING_DIR / "problem.json").read_bytes())
+            plan = REPO_ROOT / "example-solver-plans" / "ev-fleet-dispatch-optimization" / "plan.json"
+            workspace.resolve("plan.json").write_bytes(plan.read_bytes())
+            workspace.resolve("main.py").write_text("print('first solver')\n", encoding="utf-8")
+            workspace.resolve("handoff.json").write_text(json.dumps({
+                "decision": "GO", "workspace_id": workspace.id,
+            }), encoding="utf-8")
+            view = {"plan_id": workspace.id}
+            original = native_cache_revision(view)
+            self.assertIsInstance(original, str)
+            workspace.resolve("main.py").write_text("print('changed solver')\n", encoding="utf-8")
+            changed = native_cache_revision(view)
+            self.assertNotEqual(changed, original)
+            with patch.dict(os.environ, {"GEMINI_SEMANTIC_REVIEW_MODEL": "other-review-model"}):
+                self.assertNotEqual(native_cache_revision(view), changed)
+            for key in ("QR_BACKEND", "QR_ACCOUNT", "QR_KEY"):
+                with self.subTest(runtime_setting=key), patch.dict(os.environ, {key: "changed-fixture-" + key}):
+                    self.assertNotEqual(native_cache_revision(view), changed)
+            workspace.resolve("plan.json").unlink()
+            self.assertIsNone(native_cache_revision(view))
+
+
     def test_bad_controls_do_not_call_backend(self):
         backend_calls = self.configure_backend(verified_handoff({}))
         first = self.run_plan("live", prompt=PROMPT)
@@ -345,18 +533,17 @@ class HandoffTests(unittest.TestCase):
             "unsupported scene": bad_scene,
             "unknown delivery entity": unknown_delivery,
         }
-        def reuse_initial_attempt(_request):
-            return with_attempt(first_handoff, calls[0][1]["attempt_id"])
-
-        calls = self.configure_backend(first_handoff, *failures.values(), valid, reuse_initial_attempt)
+        calls = self.configure_backend(first_handoff, *failures.values(), valid)
         first = self.run_plan("live", prompt=PROMPT)
         for problem in failures:
             with self.subTest(problem=problem):
                 self.assert_run_error("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
 
         updated = self.run_plan("live", view_id=first["view_id"], variables={CONTROL_ID: 20})
-        self.assert_run_error("live", view_id=updated["view_id"], variables={CONTROL_ID: 35})
-        self.assertEqual(len(calls), len(failures) + 3)
+        restored = self.run_plan("live", view_id=updated["view_id"], variables={CONTROL_ID: 35})
+        self.assertEqual(restored["simulation"], first["simulation"])
+        self.assertIs(restored["cached"], True)
+        self.assertEqual(len(calls), len(failures) + 2)
         with patch("pygame_renderer.render_png", return_value=b"fixture png") as render:
             self.assertEqual(self.read_frame(first["view_id"]), b"fixture png")
             self.assertEqual(render.call_args.args[0]["vans"][1]["initial_battery_kwh"], 7)
@@ -501,11 +688,15 @@ class HandoffTests(unittest.TestCase):
 
         approves = FinalCheck(name="Fixture review", returns_to="build", verdict="matches",
                               summary="Approved the finite fleet plan.", issues=[])
+        problem_approval = FinalCheck(name="Fixture problem review", returns_to="init", verdict="matches",
+                                      summary="Approved the prompt interpretation.", issues=[])
+        plan_approval = FinalCheck(name="Fixture plan review", returns_to="plan", verdict="matches",
+                                   summary="Approved the finite fleet plan.", issues=[])
         needs_repair = FinalCheck(
             name="Fixture review", returns_to="build", verdict="falls_short",
             summary="Found an issue in the solver.", issues=["Recheck the charging cost calculation."],
         )
-        final_reviews = iter([needs_repair, needs_repair, approves])
+        final_reviews = iter([needs_repair, approves])
 
         def verify(*_args, **_kwargs):
             pause_stage("verify")
@@ -527,7 +718,9 @@ class HandoffTests(unittest.TestCase):
                 patch("backend.pipeline.parse_problem_statement", side_effect=parse),
                 patch("backend.pipeline.run_planning", side_effect=plan) as planner,
                 patch("backend.pipeline.run_build_phase", side_effect=build),
-                patch("backend.final_check.CHECKS", (("Review the fixture", verify),)),
+                patch("backend.pipeline.check_problem_against_prompt", return_value=problem_approval),
+                patch("backend.pipeline.check_plan_against_problem", return_value=plan_approval),
+                patch("backend.pipeline.check_implementation_against_plan", side_effect=verify),
                 patch("backend.testing.evaluate_semantics", side_effect=review),
                 patch("backend.semantics.evaluate_semantics", side_effect=review),
             ):
@@ -575,7 +768,10 @@ class HandoffTests(unittest.TestCase):
                 updated = self.run_plan("live", view_id=first["view_id"], variables={tariff: 0.30})
                 message = self.assert_run_error("live", 422, view_id=updated["view_id"], variables={tariff: 0.40})
                 self.assertIn("independent review", message)
-                self.assertEqual(views, {view["view_id"]: view for view in (first, updated)})
+                restored = self.run_plan("live", view_id=updated["view_id"], variables={tariff: 0.20})
+                self.assertIs(restored["cached"], True)
+                self.assertEqual(restored["evaluation"], first["evaluation"])
+                self.assertEqual(views, {view["view_id"]: view for view in (first, updated, restored)})
                 for name, before in baseline.items():
                     self.assertEqual(workspace.resolve(name).read_bytes(), before)
                 self.assertEqual(list(root.iterdir()), [workspace.path])
@@ -594,7 +790,7 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(updated["effective_values"], {tariff: 0.30})
         self.assertAlmostEqual(updated["evaluation"]["costs"]["electricity"], 1.50)
         self.assertAlmostEqual(updated["evaluation"]["objective_value"], first["evaluation"]["objective_value"] + 0.50)
-        self.assertEqual(reviewed_tariffs, [[0.20, 0.30], [0.20, 0.30], [0.30], [0.40]])
+        self.assertEqual(reviewed_tariffs, [[0.20, 0.30], [0.30], [0.40]])
 
     def test_pipeline_input_failure_remains_visible_in_its_stage(self):
         def needs_input(_request, *, on_stage, on_progress):

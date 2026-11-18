@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from ev_live import SolverFailed, SolverUnavailable
-from fleet_handoff import UnverifiedResult, applied_values, is_number, normalize_controls, normalize_handoff, require
+from fleet_handoff import UnverifiedResult, applied_values, is_number, is_text, normalize_controls, normalize_handoff, require
 
 def planner_configured():
     from backend.model_provider import model_configured
@@ -59,10 +59,25 @@ def project_result(artifact, output, prompt, identity):
                          for van in vans for event in van["events"]),
     }
     reference = output.get("reference")
+    classical_simulation = None
     if isinstance(reference, dict):
         reference_value = reference.get("objective_value", reference.get("value"))
         if is_number(reference_value):
             evaluation.update(reference_value=reference_value, gap=objective["value"] - reference_value)
+            method = reference.get("method")
+            optimality_proven = reference.get("optimality_proven")
+            if is_text(method) and reference.get("feasible") is True and isinstance(optimality_proven, bool):
+                classical = {
+                    "method": method.strip(),
+                    "objective_value": reference_value,
+                    "feasible": True,
+                    "optimality_proven": optimality_proven,
+                }
+                selected_options = reference.get("selected_options")
+                if isinstance(selected_options, list) and all(map(is_text, selected_options)):
+                    classical["selected_options"] = selected_options
+                evaluation["classical"] = classical
+                classical_simulation = reference.get("simulation")
     quantum_details = {key: value for key, value in quantum.items() if key != "counts"}
     quantum_details.update(actual_qubits=quantum.get("qubits"), binary_variables=quantum.get("decision_qubits"))
     return {
@@ -81,6 +96,7 @@ def project_result(artifact, output, prompt, identity):
             "provenance": "live",
             "effective_values": output.get("controls"),
             "simulation": {**simulation, "counts": quantum.get("counts")},
+            **({"classical_simulation": classical_simulation} if isinstance(classical_simulation, dict) else {}),
             "evaluation": evaluation,
             "quantum": quantum_details,
             "circuits": output.get("circuits", []),

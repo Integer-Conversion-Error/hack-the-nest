@@ -16,28 +16,38 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--van-2-initial-charge", type=int, choices=VAN2_CHARGE_PCTS, default=DEFAULT_VAN2_CHARGE_PCT,
     )
-    parser.add_argument("--engine", choices=("auto", "local", "quantum-rings"), default="auto")
-    parser.add_argument("--env-file", type=Path)
+    parser.add_argument(
+        "--solver", choices=("compare", "classical"), default="compare",
+        help="Run QAOA and the exact classical baseline, or run the classical solver alone.",
+    )
+    parser.add_argument("--engine", choices=("auto", "local", "quantum-rings"), default="auto",
+                        help="QAOA engine for compare mode.")
+    parser.add_argument("--env-file", type=Path, help="Environment file for compare mode.")
     args = parser.parse_args(argv)
-    if args.env_file is not None and not args.env_file.is_file():
+    if args.solver == "compare" and args.env_file is not None and not args.env_file.is_file():
         parser.error("The specified environment file does not exist.")
 
     try:
         with redirect_stdout(sys.stderr):
-            from dotenv import load_dotenv
+            if args.solver == "classical":
+                from .classical import solve_classical
 
-            env_file = args.env_file or Path(__file__).resolve().parents[2] / ".env"
-            load_dotenv(env_file)
+                result = solve_classical(args.van_2_initial_charge)
+            else:
+                from dotenv import load_dotenv
 
-            from .runtime import LocalBackend, QuantumRingsBackend, quantum_rings_configured
-            from .solver import solve
+                env_file = args.env_file or Path(__file__).resolve().parents[2] / ".env"
+                load_dotenv(env_file)
 
-            configured = quantum_rings_configured()
-            if args.engine == "quantum-rings" and not configured:
-                parser.error("Quantum Rings requires QR_KEY and QR_ACCOUNT.")
-            use_quantum_rings = args.engine == "quantum-rings" or (args.engine == "auto" and configured)
-            backend = QuantumRingsBackend() if use_quantum_rings else LocalBackend()
-            result = solve(args.van_2_initial_charge, backend)
+                from .runtime import LocalBackend, QuantumRingsBackend, quantum_rings_configured
+                from .solver import solve
+
+                configured = quantum_rings_configured()
+                if args.engine == "quantum-rings" and not configured:
+                    parser.error("Quantum Rings requires QR_KEY and QR_ACCOUNT.")
+                use_quantum_rings = args.engine == "quantum-rings" or (args.engine == "auto" and configured)
+                backend = QuantumRingsBackend() if use_quantum_rings else LocalBackend()
+                result = solve(args.van_2_initial_charge, backend)
             payload = json.dumps(result, allow_nan=False)
     except ImportError as error:
         print(f"Missing solver dependency: {error.name}.", file=sys.stderr)

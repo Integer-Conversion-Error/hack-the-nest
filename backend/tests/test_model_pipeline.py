@@ -97,6 +97,10 @@ class ModelPipelineTests(unittest.TestCase):
                     workspace = init_workspace("Choose the smallest bit.", root=Path(directory))
                     adapter = PipelineModel()
                     handoff = run_pipeline(workspace, client=adapter)
+                    initial_calls = len(adapter.requests)
+                    with patch("backend.testing.run_solver", side_effect=AssertionError("Unchanged solver reran")):
+                        self.assertEqual(run_pipeline(workspace, client=adapter), handoff)
+                    self.assertEqual(len(adapter.requests), initial_calls, "unchanged reviews are reused across providers")
 
                 self.assertEqual(handoff["decision"], "GO")
                 self.assertEqual(handoff["results"]["solution"], {"x": 0})
@@ -123,11 +127,11 @@ class ModelPipelineTests(unittest.TestCase):
                 run_pipeline(workspace, client=session)
 
             self.assertEqual([request.stage for request in adapter.requests],
-                             ["interpret", "research", "research", "plan", "plan_review"])
+                             ["interpret", "final_review", "research", "research", "plan", "plan_review"])
             self.assertFalse(workspace.resolve("handoff.json").exists())
             self.assertFalse(workspace.resolve("plan.json").exists())
             summary = json.loads(workspace.resolve("model_usage.json").read_text(encoding="utf-8"))
-            self.assertEqual(summary["requests"], 5)
+            self.assertEqual(summary["requests"], 6)
             self.assertEqual(summary["failed_requests"], 2)
 
     def test_a_plan_revision_uses_the_original_pipeline_request_budget(self):
@@ -140,9 +144,15 @@ class ModelPipelineTests(unittest.TestCase):
                 response = super().generate(request, timeout=timeout)
                 if request.stage == "plan":
                     self.plan_count += 1
-                    draft = json.loads(response.text)
-                    draft["plan"]["summary"] = f"Plan revision {self.plan_count}"
-                    response.text = json.dumps(draft)
+                    summary = f"Plan revision {self.plan_count}"
+                    if request.schema.get("title") == "PlanRevision":
+                        response.text = json.dumps({"status": "ready", "edits": [{
+                            "op": "replace", "path": ["summary"], "value_json": json.dumps(summary),
+                        }]})
+                    else:
+                        draft = json.loads(response.text)
+                        draft["plan"]["summary"] = summary
+                        response.text = json.dumps(draft)
                 if request.stage == "plan_review":
                     response.text = json.dumps({"verdict": "revise", "issues": ["Clarify the encoding."]})
                 return response
@@ -152,15 +162,15 @@ class ModelPipelineTests(unittest.TestCase):
         }, clear=True):
             workspace = init_workspace("Choose the smallest bit.", root=Path(directory))
             adapter = RevisingPlanner()
-            context = RunContext(max_requests=5)
+            context = RunContext(max_requests=6)
             session = ModelSession(adapter, "gemini", context)
 
             with self.assertRaises(ModelBudgetExceeded):
                 run_pipeline(workspace, client=session)
 
             self.assertEqual([request.stage for request in adapter.requests],
-                             ["interpret", "research", "plan", "plan_review", "plan"])
-            self.assertEqual(context.requests, 5)
+                             ["interpret", "final_review", "research", "plan", "plan_review", "plan"])
+            self.assertEqual(context.requests, 6)
             self.assertEqual(context.retries, 0)
             self.assertFalse(workspace.resolve("handoff.json").exists())
 

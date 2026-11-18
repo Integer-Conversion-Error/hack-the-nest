@@ -44,3 +44,22 @@ node tests/browser/pipeline-progress.cjs
 Set `PLAYWRIGHT_MODULE` or `BROWSER_EXECUTABLE` when using an existing installation.
 Set `EVIDENCE_DIR` to an absolute directory to save screenshots. See the
 [before-and-after captures](evidence/agent-loop/README.md).
+
+## Quantum/classical replay
+
+When both verified replays are available, the maps share one clock and scrubber;
+each map has its own inspection targets. Costs, feasibility, and proven-optimum
+status remain factual values. Play is always explicit. Reduced-motion mode
+suppresses decorative transitions, status pulses, and vehicle trails while
+preserving manual playback and scrubbing.
+
+With the dashboard running, the optional comparison browser check exercises the
+actual recorded/reference routes and, when available, the built-in local solver
+and verified-result cache:
+
+```sh
+DASHBOARD_URL=http://127.0.0.1:8000 node tests/browser/fleet-comparison.cjs
+```
+
+It needs Playwright with Chromium, and accepts the same browser/evidence settings
+as the progress check. See the [comparison screenshots and playback recording](evidence/fleet-comparison/README.md).

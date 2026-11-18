@@ -19,6 +19,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ValidationError
 
+from backend import files
 from backend.build import ENTRY_POINT, BuildError, run_build
 from backend.build_review import BuildReview, compare_with_plan
 from backend.model_provider import ModelError, model_run
@@ -58,6 +59,7 @@ def run_build_phase(
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     on_event: Callable[[str], None] | None = None,
     on_progress: ProgressCallback | None = None,
+    review_existing: bool = False,
 ) -> BuildPhaseResult:
     """Build, compare with the plan, and repeat until they match.
 
@@ -69,7 +71,19 @@ def run_build_phase(
         raise BuildError("Allow at least one build round.")
     say = on_event or (lambda message: None)
 
-    previous_feedback = None
+    if review_existing and feedback is None and workspace.resolve(ENTRY_POINT).is_file():
+        say("--- Build: checking the current implementation")
+        review = compare_with_plan(workspace, model=model, client=client, on_progress=on_progress)
+        if review.matches:
+            report(on_progress, "Reuse the approved implementation", status="completed", detail=review.summary)
+            return BuildPhaseResult(
+                workspace_id=workspace.id, entry_point=ENTRY_POINT, rounds=0, review=review,
+                files=[entry["path"] for entry in files.list_files(workspace)["files"] if not entry["read_only"]],
+            )
+        feedback = review.feedback()
+        say(f"--- Build: repairing the existing files:\n{feedback}")
+
+    previous_feedback = feedback
     for round_number in range(1, max_rounds + 1):
         say(f"--- Build round {round_number} of {max_rounds}: writing files")
         report(on_progress, f"Build round {round_number} of {max_rounds}")

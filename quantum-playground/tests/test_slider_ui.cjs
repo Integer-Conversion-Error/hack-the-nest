@@ -76,15 +76,20 @@ const json = (body, ok = true, status = ok ? 200 : 400) => ({ ok, status, json: 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const preventDefault = () => {};
 
-function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samples = sampleCatalog) {
+function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samples = sampleCatalog, reduceMotion = false) {
   const registry = new Map();
   const posts = [];
   const polls = [];
   const historyReads = [];
   const timers = [];
   const drawings = [];
+  const classicalDrawings = [];
+  const animations = [];
+  const inspections = new Map();
   const listeners = new Map();
-  let animationFrame, inspect, displayedSimulation;
+  const motionListeners = [];
+  const motion = { matches: reduceMotion, addEventListener: (_event, callback) => motionListeners.push(callback) };
+  let animationFrame;
 
   class Element {
     constructor(tag) {
@@ -103,6 +108,7 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
     setCustomValidity(message) { this.validationMessage = message; }
     reportValidity() { return Boolean(this.value.trim()); }
     focus() {}
+    animate(frames, options) { animations.push({ id: this.id, frames, options }); }
   }
 
   const get = id => registry.get(id);
@@ -121,6 +127,7 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
     clearTimeout,
     requestAnimationFrame: draw => { animationFrame = draw; },
     window: {
+      matchMedia: () => motion,
       addEventListener: (event, listener) => listeners.set(event, listener),
       sessionStorage: {
         getItem: key => storage.get(key),
@@ -130,11 +137,14 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
     },
     document: { getElementById: get, createElement: tag => new Element(tag) },
     FleetMap: {
-      create(_canvas, options) {
-        inspect = options.onInspect;
+      create(canvas, options) {
+        const log = canvas.id === 'classical-map' ? classicalDrawings : drawings;
+        let displayedSimulation;
+        inspections.set(canvas.id, options.onInspect);
         return {
           setSimulation: simulation => { displayedSimulation = simulation; },
-          draw: (minute, selection, playing) => drawings.push({ minute, selection, playing, simulation: displayedSimulation }),
+          draw: (minute, selection, playing) => log.push({ minute, selection, playing,
+            simulation: displayedSimulation, motionAllowed: options.motionAllowed?.() }),
         };
       },
     },
@@ -159,7 +169,9 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
     vm.runInContext(fs.readFileSync('web/' + name, 'utf8'), context);
   }
   return {
-    get, posts, polls, historyReads, drawings, listeners, inspect, storage,
+    get, posts, polls, historyReads, drawings, classicalDrawings, animations, listeners, storage,
+    inspect: inspections.get('fleet-map'), inspectClassical: inspections.get('classical-map'),
+    reduceMotion(value) { motion.matches = value; motionListeners.forEach(callback => callback({ matches: value })); },
     advance: now => animationFrame(now),
     chooseCharge(value) {
       const slider = get(chargeSliderId);
@@ -630,6 +642,109 @@ async function testSixVanResult() {
   assert.equal(booking.style['--van'], fleetColors.at(-1));
 }
 
+async function testSynchronizedSolverComparison() {
+  const ui = boot({ backend_configured: true });
+  const { get, drawings, classicalDrawings } = ui;
+  await flush();
+  get('recorded-example').onclick();
+  const recorded = fixture(35, 'comparison', 'recorded');
+  recorded.evaluation.classical = {
+    method: 'Exact route-and-charger enumeration', feasible: true, optimality_proven: true,
+    objective_value: recorded.evaluation.objective_value - 1.5,
+    selected_options: ['Van1_Slot1', 'Van2_Direct'],
+  };
+  recorded.evaluation.reference_value = recorded.evaluation.classical.objective_value;
+  recorded.evaluation.gap = 99;
+  recorded.classical_simulation = structuredClone(recorded.simulation);
+  delete recorded.classical_simulation.counts;
+  Object.assign(recorded.classical_simulation.vans[0].events[1], { start_min: 25, end_min: 30 });
+  await ui.respond(recorded);
+  assert.equal(get('score-label').textContent, 'Quantum cost');
+  assert.equal(get('reference-score').textContent, '$14.28');
+  assert.equal(get('reference-check').textContent, 'Feasible · Exact optimum');
+  assert.equal(get('gap-score').textContent, '+$1.50', 'the displayed gap is recomputed from the two verified costs');
+  assert.equal(get('gap-note').textContent, 'Quantum costs more');
+  assert.equal(get('classical-method').textContent, recorded.evaluation.classical.method);
+  assert.equal(get('classical-options').textContent, 'Route options · Van1_Slot1, Van2_Direct');
+  assert.equal(get('classical-map-view').hidden, false);
+  assert.equal(get('quantum-map-heading').hidden, false);
+  assert.equal(get('schedule-heading').textContent, 'Quantum schedule');
+  assert.equal(drawings.at(-1).playing, false, 'accepted results never autoplay');
+  assert.equal(classicalDrawings.at(-1).simulation, recorded.classical_simulation);
+
+  get('scrub').value = '60';
+  get('scrub').oninput();
+  assert.equal(drawings.at(-1).minute, 60);
+  assert.equal(classicalDrawings.at(-1).minute, 60);
+  assert.equal(get('quantum-delivered').textContent, '0 / 1 delivered');
+  assert.equal(get('classical-delivered').textContent, '1 / 1 delivered');
+  ui.inspectClassical({ kind: 'delivery', id: 'D1' });
+  assert.match(get('pygame-inspector').textContent, /^Classical .* Delivered/);
+  get('fleet-map').onkeydown({ key: 'd', preventDefault });
+  assert.match(get('pygame-inspector').textContent, /^Quantum .* Pending/);
+  get('classical-map').onkeydown({ key: ' ', preventDefault });
+  ui.advance(100);
+  ui.advance(150);
+  assert.equal(drawings.at(-1).minute, 60.2);
+  assert.equal(classicalDrawings.at(-1).minute, 60.2);
+  const finalClassicalFrame = classicalDrawings.at(-1);
+
+  ui.mode('reference');
+  await ui.respond(fixture());
+  assert.equal(get('classical-map-view').hidden, true);
+  assert.equal(get('classical-details').hidden, true);
+  assert.equal(get('score-label').textContent, 'Total cost');
+  assert.equal(classicalDrawings.at(-1), finalClassicalFrame, 'hidden comparisons do not keep rendering');
+}
+
+async function testHeuristicBaselineAndReducedMotion() {
+  const ui = boot({ backend_configured: true }, liveExamplePrompt, new Map(), sampleCatalog, true);
+  const { get, drawings, animations } = ui;
+  await flush();
+  get('recorded-example').onclick();
+  const recorded = fixture(35, 'heuristic', 'recorded');
+  recorded.evaluation.classical = {
+    method: 'Greedy assignment', feasible: true, optimality_proven: false,
+    objective_value: recorded.evaluation.objective_value + 1.5,
+  };
+  await ui.respond(recorded);
+  assert.equal(get('reference-check').textContent, 'Feasible', 'a heuristic baseline is never labelled an optimum');
+  assert.equal(get('gap-score').textContent, '−$1.50');
+  assert.equal(get('gap-note').textContent, 'Quantum costs less');
+  assert.equal(get('classical-map-view').hidden, true, 'cost metadata does not invent a missing classical replay');
+  assert.equal(drawings.at(-1).playing, false);
+  assert.equal(drawings.at(-1).motionAllowed, false);
+  assert.equal(animations.length, 0, 'decorative value animation respects reduced motion');
+  get('play').onclick();
+  ui.advance(100);
+  ui.advance(150);
+  assert.ok(drawings.at(-1).minute > 0, 'explicit manual playback remains available');
+  ui.reduceMotion(true);
+  assert.equal(drawings.at(-1).playing, false, 'changing to reduced motion pauses existing playback');
+  get('scrub').value = '40';
+  get('scrub').oninput();
+  assert.equal(drawings.at(-1).minute, 40, 'scrubbing remains available');
+}
+
+async function testCachedResultKeepsApprovedSettings() {
+  const ui = boot({ backend_configured: true, local_backend_configured: true });
+  const { get, drawings } = ui;
+  await flush();
+  get('load-example').onclick();
+  ui.submit();
+  await ui.respond(liveFixture(35, 'cache-original'));
+  ui.chooseCharge(27);
+  const cached = { ...liveFixture(27, 'cache-hit'), cached: true };
+  await ui.respond(cached);
+  assert.equal(get('status').textContent, 'Reused verified result');
+  assert.equal(get('run-status').hidden, false);
+  assert.equal(get(chargeSliderId).value, '27');
+  assert.equal(get(chargeSliderId).attrs['aria-valuetext'], '27%');
+  assert.equal(get('rerun').disabled, true, 'cached results approve the requested settings');
+  assert.equal(drawings.at(-1).simulation.vans[1].initial_battery_kwh, 5.4);
+  assert.equal(get('score').textContent, '$58.37');
+}
+
 async function main() {
   await testReferenceAndRecorded();
   await testLocalSolver();
@@ -641,6 +756,9 @@ async function main() {
   await testSavedRunHistory(false);
   await testSavedRunHistory(true);
   await testSixVanResult();
+  await testSynchronizedSolverComparison();
+  await testHeuristicBaselineAndReducedMotion();
+  await testCachedResultKeepsApprovedSettings();
   console.log('PASS: canvas playback, saved run history, verified result swaps, and typed planner controls');
 }
 
