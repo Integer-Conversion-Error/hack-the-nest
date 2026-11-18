@@ -105,6 +105,9 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
     append(...items) { this.children.push(...items); }
     replaceChildren(...items) { this.children = items; }
     setAttribute(key, value) { this.attrs[key] = value; }
+    removeAttribute(key) { delete this.attrs[key]; delete this[key]; }
+    showModal() { this.open = true; }
+    close() { this.open = false; this.onclose?.(); }
     setCustomValidity(message) { this.validationMessage = message; }
     reportValidity() { return Boolean(this.value.trim()); }
     focus() {}
@@ -113,6 +116,11 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
 
   const get = id => registry.get(id);
   for (const [, id] of html.matchAll(/id="([^"]+)"/g)) new Element('div').id = id;
+  for (const [tag] of html.matchAll(/<[^>]+\bid="[^"]+"[^>]*>/g)) {
+    const id = tag.match(/\bid="([^"]+)"/)[1];
+    const download = tag.match(/\bdownload="([^"]*)"/);
+    if (download) get(id).download = download[1];
+  }
   get('mode').value = 'recorded';
   get('speed').value = '4';
   get('fleet-map').hidden = true;
@@ -745,6 +753,78 @@ async function testCachedResultKeepsApprovedSettings() {
   assert.equal(get('score').textContent, '$58.37');
 }
 
+function descendants(element, tag) {
+  return element.children.flatMap(child => [
+    ...(child.tag === tag ? [child] : []), ...descendants(child, tag),
+  ]);
+}
+
+const circuitPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQC3QHAAFHALeLlo0CAAAAAElFTkSuQmCC';
+const secondCircuitPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwjO4HAAHcARzULbZvAAAAAElFTkSuQmCC';
+
+async function testCircuitImagePreviewAndDialog() {
+  const ui = boot({ backend_configured: true });
+  const { get } = ui;
+  await flush();
+  get('recorded-example').onclick();
+  const recorded = fixture(35, 'circuit-images', 'recorded');
+  const title = 'Final <QAOA> circuit';
+  const description = 'Cost layer <script>alert(1)</script> followed by measurement.';
+  recorded.circuits = [
+    { title, image: circuitPng, description, drawing: 'legacy circuit text' },
+    { title: 'Second circuit', image: secondCircuitPng, description: 'Another measured circuit.' },
+  ];
+  await ui.respond(recorded);
+  assert.equal(get('circuit-panel').hidden, false);
+  const previews = descendants(get('circuits'), 'button');
+  const images = descendants(get('circuits'), 'img');
+  assert.equal(previews.length, 2, 'each circuit image has its own preview control');
+  assert.deepEqual(images.map(image => image.src), [circuitPng, secondCircuitPng]);
+  previews[0].onclick();
+  assert.equal(get('circuit-dialog').open, true);
+  assert.equal(get('circuit-dialog-title').textContent, title);
+  assert.equal(get('circuit-dialog-image').src, circuitPng);
+  assert.equal(get('circuit-dialog-description').textContent, description);
+  assert.equal(get('circuit-download').href, circuitPng);
+  assert.match(get('circuit-download').download, /\.png$/);
+  get('circuit-dialog-close').onclick();
+  assert.equal(get('circuit-dialog').open, false);
+  assert.notEqual(get('circuit-dialog-image').src, circuitPng, 'closing releases the displayed image');
+  assert.notEqual(get('circuit-download').href, circuitPng, 'closing clears the old download target');
+  previews[1].onclick();
+  assert.equal(get('circuit-dialog-title').textContent, 'Second circuit');
+  assert.equal(get('circuit-dialog-image').src, secondCircuitPng, 'the dialog shows the selected circuit rather than the first image');
+
+  ui.mode('reference');
+  await ui.respond({ ...fixture(), circuits: recorded.circuits });
+  assert.equal(get('circuit-dialog').open, false, 'new results close the old image dialog');
+  assert.notEqual(get('circuit-dialog-image').src, secondCircuitPng);
+  assert.equal(get('circuit-panel').hidden, true, 'classical-only results do not display quantum circuits');
+  assert.equal(descendants(get('circuits'), 'img').length, 0, 'stale image previews are removed');
+}
+
+async function testLegacyCircuitFallbackAndUnsafeImages() {
+  const ui = boot({ backend_configured: true });
+  const { get } = ui;
+  await flush();
+  get('recorded-example').onclick();
+  const recorded = fixture(35, 'legacy-circuit', 'recorded');
+  recorded.circuits = [
+    { title: 'Legacy circuit', drawing: 'q0: ─H─●─\nq1: ───X─' },
+    { title: 'Remote image', image: 'https://example.org/circuit.png' },
+    { title: 'Script URL', image: 'javascript:alert(1)' },
+    { title: 'SVG payload', image: 'data:image/svg+xml;base64,PHN2Zy8+' },
+  ];
+  await ui.respond(recorded);
+  assert.equal(get('circuit-panel').hidden, false, 'a text drawing remains available for older runs');
+  assert.equal(descendants(get('circuits'), 'img').length, 0, 'only embedded PNGs can become images');
+  assert.deepEqual(descendants(get('circuits'), 'pre').map(element => element.textContent), [recorded.circuits[0].drawing]);
+  ui.mode('reference');
+  await ui.respond(fixture());
+  assert.equal(get('circuit-panel').hidden, true);
+  assert.equal(get('circuits').children.length, 0);
+}
+
 async function main() {
   await testReferenceAndRecorded();
   await testLocalSolver();
@@ -759,6 +839,8 @@ async function main() {
   await testSynchronizedSolverComparison();
   await testHeuristicBaselineAndReducedMotion();
   await testCachedResultKeepsApprovedSettings();
+  await testCircuitImagePreviewAndDialog();
+  await testLegacyCircuitFallbackAndUnsafeImages();
   console.log('PASS: canvas playback, saved run history, verified result swaps, and typed planner controls');
 }
 

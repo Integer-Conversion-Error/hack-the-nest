@@ -9,7 +9,7 @@ From the repository root, install the frontend requirements and start `python qu
 - **Live backend** can recalculate every whole Van 2 starting charge from 20% to 35% for the live example. The existing map stays visible during the solve. With `QUANTUM_BACKEND_URL` set, the dashboard sends the original prompt and control changes to the external service instead.
 - Click a van to highlight its route. Click the charger for bookings or a delivery for its completion time and deadline. The timeline shows drive, wait, charge, and delivery events. Click a block to seek to its start.
 - Click the map to focus it. Use Space to play or pause, Left/Right to seek five minutes, Shift with an arrow to seek fifteen minutes, Home/End for the operating-window boundaries, V/C/D to cycle through vans, chargers, or deliveries, and Escape to clear selection.
-- View costs and circuit evidence in the result details or download the displayed result as JSON.
+- Inspect quantum circuit images in the left sidebar. Select a preview for a scrollable full-size diagram and PNG download; Escape or Close returns focus to that preview. Legacy text drawings remain available when no image is supplied. View costs in the result details or download the displayed result as JSON.
 
 After each verified response, the browser draws the street map and animates the result using its timed events. The native playback bar, vehicle cards, and timeline share the same playhead. Playback uses the loaded schedule and makes no frame requests. The server still offers the Pygame frame endpoint for callers that need it.
 
@@ -63,3 +63,8 @@ DASHBOARD_URL=http://127.0.0.1:8000 node tests/browser/fleet-comparison.cjs
 
 It needs Playwright with Chromium, and accepts the same browser/evidence settings
 as the progress check. See the [comparison screenshots and playback recording](evidence/fleet-comparison/README.md).
+
+The same browser check validates the left circuit sidebar, image loading,
+full-size viewing, keyboard dismissal, PNG download, and image updates when
+recorded controls change. Set `SKIP_VIDEO=1` for screenshot-only capture. See the
+[circuit sidebar screenshots](evidence/circuit-sidebar/README.md).

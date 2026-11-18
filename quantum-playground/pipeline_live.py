@@ -8,6 +8,7 @@ from shutil import copytree, ignore_patterns
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
+from circuit_images import captured_circuit
 from ev_live import SolverFailed, SolverUnavailable
 from fleet_handoff import UnverifiedResult, applied_values, is_number, is_text, normalize_controls, normalize_handoff, require
 
@@ -32,7 +33,7 @@ def planner_session(workspace=None):
         raise SolverFailed(str(exc)) from None
 
 
-def project_result(artifact, output, prompt, identity):
+def project_result(artifact, output, prompt, identity, *, workspace=None, saved_image=False):
     """Translate a native solver result using the approved plan and the solver's own replay."""
     require(isinstance(output, dict) and output.get("status") == "ok", "The fleet solver did not succeed.")
     solution = output.get("solution")
@@ -80,6 +81,11 @@ def project_result(artifact, output, prompt, identity):
                 classical_simulation = reference.get("simulation")
     quantum_details = {key: value for key, value in quantum.items() if key != "counts"}
     quantum_details.update(actual_qubits=quantum.get("qubits"), binary_variables=quantum.get("decision_qubits"))
+    circuits = output.get("circuits", [])
+    if workspace is not None:
+        captured = captured_circuit(workspace, output, saved=saved_image)
+        if captured is not None and isinstance(circuits, list):
+            circuits = [*circuits, captured]
     return {
         "schema_version": 1,
         **identity,
@@ -99,7 +105,7 @@ def project_result(artifact, output, prompt, identity):
             **({"classical_simulation": classical_simulation} if isinstance(classical_simulation, dict) else {}),
             "evaluation": evaluation,
             "quantum": quantum_details,
-            "circuits": output.get("circuits", []),
+            "circuits": circuits,
         },
     }
 
@@ -164,7 +170,7 @@ def pipeline_handoff(
                 )
             if artifact["decision"] != "GO":
                 raise UnverifiedResult("The pipeline did not approve the fleet plan.")
-            return project_result(artifact, artifact["results"], prompt, identity)
+            return project_result(artifact, artifact["results"], prompt, identity, workspace=workspace, saved_image=True)
 
         workspace = open_workspace(previous["plan_id"])
         identity = {"run_id": previous["run_id"], "plan_id": workspace.id, "attempt_id": attempt_id}
@@ -181,7 +187,7 @@ def pipeline_handoff(
                 raise TimeoutError("The fleet solver timed out while recalculating the requested settings.")
             if not outcome.passed:
                 raise UnverifiedResult("The fleet solver could not verify the requested settings.")
-            handoff = project_result(artifact, outcome.results, prompt, identity)
+            handoff = project_result(artifact, outcome.results, prompt, identity, workspace=attempt)
             normalize_handoff(handoff, "live", prompt, previous, expected_values=values)
             with planner_session(workspace=workspace) as client:
                 review = evaluate_semantics(attempt, [outcome], client=client)

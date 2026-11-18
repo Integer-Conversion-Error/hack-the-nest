@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from circuit_images import reconstructed_circuit
 from fleet_handoff import applied_values, normalize_controls, require
 
 
@@ -209,6 +210,7 @@ def project_ev_result(output, identity, *, provenance, explanation, source=None,
     reference = output["reference"]
     simulation = _replay(solution, quantum["counts"])
     classical_simulation = _classical_replay(output, reference, provenance)
+    circuit = reconstructed_circuit(output, provenance)
     return {
         "schema_version": 1,
         **identity,
@@ -257,6 +259,7 @@ def project_ev_result(output, identity, *, provenance, explanation, source=None,
                 "binary_variables": quantum["decision_qubits"],
                 "actual_qubits": quantum["qubits"],
             },
+            "circuits": [circuit] if circuit is not None else [],
             "assumptions": _PROBLEM["assumptions"],
             "explanation": explanation,
         },

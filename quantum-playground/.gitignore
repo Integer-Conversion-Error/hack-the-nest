@@ -4,3 +4,4 @@ __pycache__/
 *.png
 !docs/evidence/agent-loop/*.png
 !docs/evidence/fleet-comparison/*.png
+!docs/evidence/circuit-sidebar/*.png

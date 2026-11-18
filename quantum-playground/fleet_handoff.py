@@ -4,6 +4,7 @@ import math
 import re
 from fractions import Fraction
 
+from circuit_images import valid_png_image
 
 class InvalidHandoff(ValueError):
     pass
@@ -384,8 +385,13 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
     explanation = result.get("explanation", "")
     counts = simulation.get("counts", {})
     require(
-        isinstance(circuits, list) and all(isinstance(circuit, dict) and is_text(circuit.get("drawing"))
-                                          for circuit in circuits)
+        isinstance(circuits, list) and len(circuits) <= 16
+        and all(isinstance(circuit, dict)
+                and (is_text(circuit.get("drawing")) or valid_png_image(circuit.get("image")))
+                and ("image" not in circuit or valid_png_image(circuit["image"]))
+                and ("title" not in circuit or is_text(circuit["title"]))
+                and ("description" not in circuit or isinstance(circuit["description"], str))
+                for circuit in circuits)
         and isinstance(quantum, dict) and isinstance(assumptions, list) and all(map(is_text, assumptions))
         and isinstance(explanation, str) and isinstance(counts, dict)
         and all(re.fullmatch(r"[01]+", bits) and type(count) is int and count >= 0 for bits, count in counts.items()),

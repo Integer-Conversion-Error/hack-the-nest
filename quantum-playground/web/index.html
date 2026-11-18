@@ -132,6 +132,11 @@
           <p class="original-prompt-text" id="prompt"></p>
         </details>
       </section>
+      <section class="panel circuit-panel" id="circuit-panel" aria-labelledby="circuit-heading" hidden>
+        <div class="panel-heading"><h2 id="circuit-heading">Quantum circuits</h2></div>
+        <p class="circuit-help" id="circuit-help">Select an image to inspect the gates at full size.</p>
+        <div id="circuits" class="circuits"></div>
+      </section>
     </aside>
 
     <div class="main-column">
@@ -220,11 +225,6 @@
         </div>
       </section>
 
-      <section class="panel circuit-panel" id="circuit-panel" hidden>
-        <div class="panel-heading"><h2>Circuit drawings</h2></div>
-        <div id="circuits" class="circuits"></div>
-      </section>
-
       <details class="panel run-details">
         <summary>Results &amp; technical details</summary>
         <div class="detail-body">
@@ -255,6 +255,19 @@
   </div>
   </section>
 </main>
+<dialog class="circuit-dialog" id="circuit-dialog" aria-labelledby="circuit-dialog-title" aria-describedby="circuit-dialog-description">
+  <div class="circuit-dialog-toolbar">
+    <h2 id="circuit-dialog-title">Quantum circuit</h2>
+    <div class="circuit-dialog-actions">
+      <a class="text-button" id="circuit-download" download="quantum-circuit.png">Download PNG</a>
+      <button class="secondary" id="circuit-dialog-close" type="button" autofocus>Close</button>
+    </div>
+  </div>
+  <p id="circuit-dialog-description" class="circuit-dialog-description"></p>
+  <div class="circuit-image-viewport" tabindex="0" aria-label="Scrollable full-size quantum circuit">
+    <img id="circuit-dialog-image" alt="Quantum circuit diagram">
+  </div>
+</dialog>
 <script src="fleet.js"></script>
 <script src="live-updates.js"></script>
 <script src="pipeline-progress.js"></script>

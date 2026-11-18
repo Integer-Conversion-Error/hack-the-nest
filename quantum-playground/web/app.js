@@ -585,6 +585,72 @@ async function openSavedResult() {
 $('run-history').onclick = showHistory;
 $('history-open').onclick = openSavedResult;
 
+const circuitDialog = $('circuit-dialog');
+function closeCircuit() {
+  if (circuitDialog.open) circuitDialog.close();
+}
+$('circuit-dialog-close').onclick = closeCircuit;
+circuitDialog.onclose = () => {
+  if (circuitDialog.open) return;
+  $('circuit-dialog-image').removeAttribute('src');
+  $('circuit-download').removeAttribute('href');
+};
+
+function circuitImage(value) {
+  return typeof value === 'string' && value.length <= 3_000_000 &&
+    /^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/=]*$/.test(value) ? value : null;
+}
+
+function renderCircuits(circuits) {
+  closeCircuit();
+  const list = $('circuits');
+  list.replaceChildren();
+  let count = 0;
+  let images = 0;
+  for (const circuit of Array.isArray(circuits) ? circuits : []) {
+    const image = circuitImage(circuit?.image);
+    const drawing = typeof circuit?.drawing === 'string' ? circuit.drawing.trim() : '';
+    if (!image && !drawing) continue;
+    const title = typeof circuit.title === 'string' && circuit.title.trim() ? circuit.title : 'Quantum circuit';
+    const description = typeof circuit.description === 'string' ? circuit.description : '';
+    const card = node('article', undefined, 'circuit-card');
+    card.append(node('h3', title));
+    if (image) {
+      images++;
+      const preview = node('button', undefined, 'circuit-preview');
+      const thumbnail = node('img');
+      thumbnail.src = image;
+      thumbnail.alt = title;
+      thumbnail.decoding = 'async';
+      preview.type = 'button';
+      preview.setAttribute('aria-label', 'View ' + title + ' at full size');
+      preview.setAttribute('aria-haspopup', 'dialog');
+      preview.setAttribute('aria-controls', 'circuit-dialog');
+      preview.append(thumbnail, node('span', 'View full size ↗'));
+      preview.onclick = () => {
+        setPlaying(false);
+        writeText($('circuit-dialog-title'), title);
+        writeText($('circuit-dialog-description'), description || 'Circuit diagram for the displayed run. Scroll to inspect all gates.');
+        $('circuit-dialog-image').src = image;
+        $('circuit-dialog-image').alt = title;
+        $('circuit-download').href = image;
+        circuitDialog.showModal();
+      };
+      card.append(preview);
+    } else {
+      const text = node('pre', drawing);
+      text.tabIndex = 0;
+      text.setAttribute('aria-label', title + ' text drawing');
+      card.append(text);
+    }
+    if (description) card.append(node('p', description, 'circuit-description'));
+    list.append(card);
+    count++;
+  }
+  writeText($('circuit-help'), images ? 'Select an image to inspect the gates at full size.' : 'Circuit drawing supplied with this run.');
+  $('circuit-panel').hidden = !count;
+}
+
 function render(data, {preserve = false} = {}) {
   const saved = {minute, playing};
   sim = data.simulation;
@@ -609,14 +675,7 @@ function render(data, {preserve = false} = {}) {
   $('run-badge').textContent = badge;
   controls(data.variables || [], data.effective_values || {});
 
-  $('circuits').replaceChildren();
-  const drawings = (data.circuits || []).filter(circuit => circuit.drawing);
-  for (const circuit of drawings) {
-    const card = node('article', undefined, 'circuit-card');
-    card.append(node('h3', circuit.title || 'Circuit drawing'), node('pre', circuit.drawing));
-    $('circuits').append(card);
-  }
-  $('circuit-panel').hidden = !drawings.length;
+  renderCircuits(data.provenance === 'classical_reference' ? [] : data.circuits);
 
   const quantum = data.quantum || {};
   const quantumDetails = [

@@ -92,7 +92,7 @@ def _title(workspace: Workspace, prompt: str, handoff: dict) -> str:
 def _replay(workspace: Workspace, prompt: str, handoff: dict) -> dict | None:
     identity = {"run_id": str(uuid4()), "plan_id": workspace.id, "attempt_id": str(uuid4())}
     try:
-        projected = project_result(handoff, handoff["results"], prompt, identity)
+        projected = project_result(handoff, handoff["results"], prompt, identity, workspace=workspace, saved_image=True)
         projected["result"]["provenance"] = "recorded"
         view = normalize_handoff(projected, "live", prompt, expected_values=projected["result"]["effective_values"])
         view["source"] = {"workspace_id": workspace.id, "file": HANDOFF_FILE}

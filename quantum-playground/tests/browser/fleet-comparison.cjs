@@ -15,7 +15,7 @@ async function seek(page, minute) {
 
 async function check(browser, platform, width, height, reducedMotion = 'no-preference') {
   const context = await browser.newContext({ viewport: { width, height }, reducedMotion,
-    ...(evidence && platform === 'desktop' ? { recordVideo: { dir: evidence, size: { width: 1440, height: 1080 } } } : {}),
+    ...(evidence && !process.env.SKIP_VIDEO && platform === 'desktop' ? { recordVideo: { dir: evidence, size: { width: 1440, height: 1080 } } } : {}),
   });
   const page = await context.newPage();
   const video = page.video();
@@ -26,6 +26,12 @@ async function check(browser, platform, width, height, reducedMotion = 'no-prefe
     await page.locator('#recorded-example').click();
     await page.locator('#results-screen').waitFor();
     await page.locator('#classical-map-view').waitFor();
+    const thumbnail = page.locator('.sidebar #circuit-panel .circuit-preview img').first();
+    await thumbnail.waitFor();
+    await thumbnail.evaluate(image => image.decode());
+    const circuitSource = await thumbnail.getAttribute('src');
+    assert.match(circuitSource, /^data:image\/png;base64,/);
+    assert.match(await page.locator('#circuits').textContent(), /Reconstructed from recorded parameters/);
     assert.equal(await page.locator('#fleet-map').isVisible(), true);
     assert.equal(await page.locator('#classical-map').isVisible(), true);
     assert.match(await page.locator('#reference-check').textContent(), /Exact optimum/);
@@ -42,6 +48,24 @@ async function check(browser, platform, width, height, reducedMotion = 'no-prefe
     if (evidence && platform !== 'small-mobile' && platform !== 'reduced-motion') {
       await page.screenshot({ path: path.join(evidence, `after-${platform}.png`), fullPage: true });
     }
+    const preview = page.locator('#circuits .circuit-preview').first();
+    await preview.click();
+    assert.equal(await page.locator('#circuit-dialog').isVisible(), true);
+    await page.locator('#circuit-dialog-image').evaluate(image => image.decode());
+    assert.equal(await page.locator('#circuit-dialog-image').getAttribute('src'), circuitSource);
+    assert.equal(await page.locator('#circuit-download').getAttribute('href'), circuitSource);
+    if (evidence && platform === 'desktop') {
+      await page.screenshot({ path: path.join(evidence, 'after-dialog-desktop.png'), fullPage: true });
+      const pendingDownload = page.waitForEvent('download');
+      await page.locator('#circuit-download').click();
+      const download = await pendingDownload;
+      assert.equal(download.suggestedFilename(), 'quantum-circuit.png');
+      const bytes = await fs.readFile(await download.path());
+      assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('#circuit-dialog').open);
+    assert.equal(await preview.evaluate(element => document.activeElement === element), true);
 
     // Both canvases use the same seek/play state and can be inspected separately.
     await page.locator('#classical-map').focus();
@@ -72,11 +96,28 @@ async function check(browser, platform, width, height, reducedMotion = 'no-prefe
     assert.equal(await page.locator('#quantum-delivered').textContent(), '2 / 2 delivered');
     assert.equal(await page.locator('#classical-delivered').textContent(), '2 / 2 delivered');
 
-    // Changing mode removes the second replay when only a classical reference is shown.
+    // Different recorded controls display their own circuit rather than the default PNG.
+    await page.locator('#variable-van_2_initial_charge_pct-slider').evaluate(element => {
+      // Recorded controls select indices from their verified values (20%, 35%).
+      element.value = '0';
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await Promise.all([
+      page.waitForResponse(value => value.url().endsWith('/api/run') && value.request().method() === 'POST'),
+      page.locator('#rerun').click(),
+    ]);
+    await page.waitForFunction(previous => {
+      const image = document.querySelector('#circuits img');
+      return image && image.src !== previous && image.complete && image.naturalWidth > 0;
+    }, circuitSource);
+
+    // Changing mode removes the second replay and quantum image for a classical reference.
     await page.locator('#mode').selectOption('reference');
     await page.waitForFunction(() => document.querySelector('#run-badge').textContent === 'Exact reference');
     assert.equal(await page.locator('#classical-map-view').isVisible(), false);
     assert.equal(await page.locator('#comparison-note').isVisible(), false);
+    assert.equal(await page.locator('#circuit-panel').isVisible(), false);
     const config = await (await page.request.get(base + '/api/config')).json();
     if (platform === 'desktop' && config.local_backend_configured && !config.pipeline_backend_configured) {
       // Exercise real local solves and the verified cache without calling a model service.
