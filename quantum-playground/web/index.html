@@ -48,17 +48,34 @@
     </div>
   </section>
 
-  <section class="run-entry" id="progress-screen" aria-labelledby="progress-heading" hidden>
+  <section class="run-entry progress-entry" id="progress-screen" aria-labelledby="progress-heading" hidden>
     <div class="progress-heading">
       <h1 id="progress-heading" tabindex="-1">Pipeline progress</h1>
       <button class="secondary" id="progress-return" type="button" hidden>Back to results</button>
     </div>
+    <p class="progress-intro" id="pipeline-intro">From your problem to a checked solution. Follow each stage and any repairs along the way.</p>
     <div class="panel progress-panel">
       <div class="progress-actions">
         <p id="pipeline-status" class="pipeline-status" role="status" aria-atomic="true">Submitting your problem…</p>
-        <button class="text-button" id="pipeline-detail-toggle" type="button" aria-controls="pipeline-visits" hidden>Hide all steps</button>
+        <span class="pipeline-count" id="pipeline-count" hidden></span>
       </div>
       <ol id="pipeline-stages" class="pipeline-stages" role="list" aria-label="Pipeline stages"></ol>
+      <div class="pipeline-repair" id="pipeline-repair" hidden>
+        <span class="repair-symbol" aria-hidden="true">↶</span>
+        <div><strong id="pipeline-repair-label"></strong><p id="pipeline-repair-detail"></p></div>
+      </div>
+      <section class="pipeline-current" id="pipeline-current" aria-labelledby="pipeline-current-label" hidden>
+        <div class="pipeline-current-heading">
+          <span class="pipeline-current-state" id="pipeline-current-state">Current step</span>
+          <span class="pipeline-repeat-count" id="pipeline-repeat-count" hidden></span>
+        </div>
+        <h2 id="pipeline-current-label">Waiting for the pipeline to start…</h2>
+        <p id="pipeline-current-detail" hidden></p>
+      </section>
+      <div class="pipeline-activity-heading" id="pipeline-activity-heading" hidden>
+        <div><h2>Activity history</h2><p>Each check and repair stays in the record.</p></div>
+        <button class="text-button" id="pipeline-detail-toggle" type="button" aria-controls="pipeline-visits" hidden>Hide all steps</button>
+      </div>
       <ol id="pipeline-visits" class="pipeline-visits" role="list" aria-label="Pipeline stage history" hidden></ol>
     </div>
   </section>

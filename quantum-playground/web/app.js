@@ -272,6 +272,8 @@ function showProgress(title, status, native = false) {
   $('pipeline-stages').hidden = !native;
   $('pipeline-visits').hidden = true;
   $('pipeline-detail-toggle').hidden = true;
+  for (const id of ['pipeline-count', 'pipeline-current', 'pipeline-repair', 'pipeline-activity-heading']) $(id).hidden = true;
+  $('pipeline-intro').hidden = !native;
   if (native) {
     pipelineHistory.reset();
     updatePipelineProgress();
@@ -285,15 +287,33 @@ function updatePipelineProgress(snapshot) {
   const index = stages.findIndex(stage => stage.id === snapshot?.stage);
   const attempt = snapshot?.attempt > 1 ? ' · Attempt ' + snapshot.attempt : '';
   const history = snapshot?.history ?? [];
-  $('pipeline-stages').hidden = Boolean(history.length);
+  const overview = PipelineProgress.describe(snapshot);
+  $('pipeline-intro').hidden = false;
+  $('pipeline-stages').hidden = false;
   pipelineHistory.render(history);
-  if (!history.length) {
-    for (const [i, { row, state }] of stageRows.entries()) {
-      row.setAttribute('data-state', i < index ? 'complete' : i === index ? 'running' : 'pending');
-      row.setAttribute('aria-current', i === index ? 'step' : 'false');
-      writeText(state, i < index ? 'Complete' : i === index ? 'In progress' + attempt : 'Pending');
-    }
+  for (const [i, { row, state }] of stageRows.entries()) {
+    const stage = overview.stages[i];
+    row.setAttribute('data-state', stage.state === 'completed' ? 'complete' : stage.state);
+    row.setAttribute('aria-current', stage.state === 'running' ? 'step' : 'false');
+    writeText(state, stage.status);
   }
+  $('pipeline-count').hidden = false;
+  writeText($('pipeline-count'), `${overview.completed} of ${overview.total} stages complete`);
+  const current = $('pipeline-current');
+  current.hidden = false;
+  current.setAttribute('data-state', snapshot?.status || 'queued');
+  writeText($('pipeline-current-state'), snapshot?.status === 'completed' ? 'Result verified'
+    : snapshot?.status === 'failed' ? 'Needs your attention'
+    : snapshot?.status === 'queued' || !snapshot ? 'Getting started' : 'Current step');
+  writeText($('pipeline-current-label'), overview.current.label);
+  writeText($('pipeline-current-detail'), overview.current.detail || '');
+  $('pipeline-current-detail').hidden = !overview.current.detail;
+  $('pipeline-repeat-count').hidden = !overview.revisionCount;
+  writeText($('pipeline-repeat-count'), `${overview.revisionCount} repair loop${overview.revisionCount === 1 ? '' : 's'}`);
+  $('pipeline-repair').hidden = !overview.repair;
+  writeText($('pipeline-repair-label'), overview.repair?.label || '');
+  writeText($('pipeline-repair-detail'), overview.repair?.detail || '');
+  $('pipeline-activity-heading').hidden = !history.length;
   const activity = stages[index]?.activity;
   const status = snapshot?.status === 'completed' ? 'Pipeline complete.'
     : snapshot?.status === 'failed' ? snapshot.error || 'The pipeline could not produce a verified result.'

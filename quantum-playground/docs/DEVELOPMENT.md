@@ -23,3 +23,24 @@ node --test tests/*.cjs
 ```
 
 The Python suite uses a local stub backend to exercise the live wire contract and rejection paths. It also checks reference cost, schedule continuity, and actual Pygame PNG output. The Node suite exercises typed controls, stale responses, and browser playback.
+
+## Agent loop progress
+
+The progress screen keeps the five-stage overview visible above the activity
+history. It shows the current step, completed stages, and why a check sent work
+back to an earlier stage. A return clears obsolete downstream completion states.
+Completed attempts start collapsed; active attempts and revision findings start
+open. Manual disclosure choices survive polling, including keyboard focus.
+
+The optional browser check serves the real frontend assets with deterministic
+progress responses. It checks desktop, 390px mobile, and 320px mobile layouts,
+keyboard disclosure controls, polling, and recovery from a failed attempt:
+
+```sh
+# Requires Playwright and its Chromium browser; no model API credentials needed.
+node tests/browser/pipeline-progress.cjs
+```
+
+Set `PLAYWRIGHT_MODULE` or `BROWSER_EXECUTABLE` when using an existing installation.
+Set `EVIDENCE_DIR` to an absolute directory to save screenshots. See the
+[before-and-after captures](evidence/agent-loop/README.md).

@@ -445,8 +445,11 @@ async function testDetailedPipelineProgress() {
   const visits = get('pipeline-visits');
   const toggle = get('pipeline-detail-toggle');
   const firstBuild = visits.children[2].children[0];
-  assert.equal(get('pipeline-stages').hidden, true);
-  assert.equal(firstBuild.open, true, 'fine details are visible by default');
+  assert.equal(get('pipeline-stages').hidden, false, 'the stage overview stays visible alongside history');
+  assert.equal(get('pipeline-count').textContent, '2 of 5 stages complete');
+  assert.equal(get('pipeline-current-label').textContent, 'Write solver');
+  assert.equal(visits.children[0].children[0].open, false, 'completed visits start collapsed');
+  assert.equal(firstBuild.open, true, 'the current attempt starts expanded');
   assert.equal(toggle.hidden, false);
   assert.equal(toggle.textContent, 'Hide all steps');
   toggle.onclick();
@@ -466,6 +469,11 @@ async function testDetailedPipelineProgress() {
       steps: [{ id: 6, label: 'Check schedule constraints', status: 'running' }] },
   ];
   await ui.poll({ id, status: 'running', stage: 'test', attempt: 2, history: revisedHistory });
+  assert.equal(get('pipeline-stages').children[3].attrs['aria-current'], 'step');
+  assert.equal(get('pipeline-repeat-count').textContent, '1 repair loop');
+  assert.equal(get('pipeline-repair').hidden, false);
+  assert.match(get('pipeline-repair-label').textContent, /Returned to Build solver/);
+  assert.match(get('pipeline-repair-detail').textContent, /Van 4 missed its delivery deadline/);
   const disclosures = visits.children.map(row => row.children[0]);
   assert.deepEqual(disclosures.map(element => element.children[0].children[0].children[0].textContent),
     ['Parse prompt', 'Plan solution', 'Build solver', 'Run solver', 'Build solver', 'Run solver']);
@@ -502,6 +510,8 @@ async function testDetailedPipelineProgress() {
   assert.equal(get('progress-screen').hidden, false);
   assert.equal(get('progress-return').textContent, 'Back to results');
   assert.equal(get('pipeline-status').textContent, 'Pipeline complete.');
+  assert.equal(get('pipeline-count').textContent, '5 of 5 stages complete');
+  assert.equal(get('pipeline-repair').hidden, true);
   assert.equal(firstTest.open, true);
   assert.equal(visits.children.length, 7);
   get('progress-return').onclick();
