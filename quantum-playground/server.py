@@ -19,6 +19,7 @@ from ev_recorded import LIVE_PROMPT, RECORDED_CONTROLS, RECORDED_PROMPT, REPO_RO
 from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
 from pipeline_live import pipeline_handoff, planner_configured
+from scenario import normalize_scenario, scenario_prompt
 from workspace_runs import (
     SavedResultUnavailable, SavedRunNotFound, SavedRunUnavailable, list_saved_runs, open_saved_run,
     saved_artifact, saved_run,
@@ -221,7 +222,7 @@ def reopen_workspace(run_id):
     return register_view(result, backend=ViewBackend(("native", ""), result["attempt_id"], native_cache_revision(result)))
 
 
-def live_result(prompt, values, previous, previous_backend, *, on_stage=None, on_progress=None):
+def live_result(prompt, values, previous, previous_backend, *, on_stage=None, on_progress=None, scenario=None):
     local_workspace = previous is not None and previous.get("workspace_origin") == "local"
     attempt_id = str(uuid4())
     base = "" if local_workspace else backend_url()
@@ -257,6 +258,9 @@ def live_result(prompt, values, previous, previous_backend, *, on_stage=None, on
                 previous_attempt_id=previous_backend.last_attempt_id,
             )
         handoff = request_handoff(base, payload)
+    elif scenario is not None:
+        handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage,
+                                   on_progress=on_progress, scenario=scenario)
     elif on_stage is not None:
         handoff = pipeline_handoff(prompt, values, previous, attempt_id, on_stage=on_stage, on_progress=on_progress)
     elif use_pipeline:
@@ -267,6 +271,8 @@ def live_result(prompt, values, previous, previous_backend, *, on_stage=None, on
         handoff, "live", prompt, previous,
         expected_values=values if previous is not None else None, expected_attempt_id=attempt_id,
     )
+    if source[0] == "native" and handoff.get("scenario_context") is not None:
+        result["scenario_context"] = handoff["scenario_context"]
     if local_workspace:
         result["workspace_origin"] = "local"
     if source[0] == "native":
@@ -285,14 +291,23 @@ def run_plan(data, *, on_stage=None, on_progress=None):
     previous = None
     previous_backend = None
     values = {}
+    scenario = None
     if "view_id" in data:
         previous, previous_backend = view_state(data["view_id"])
-        if mode != previous["mode"] or "prompt" in data:
+        if mode != previous["mode"] or "prompt" in data or "scenario" in data:
             raise ValueError("Use the displayed plan and its controls for recalculation.")
         prompt = previous["problem"]["original_prompt"]
         values = applied_values(previous["variables"], previous["effective_values"], overrides)
     else:
-        prompt = read_prompt(data)
+        if "scenario" in data:
+            if "prompt" in data or mode != "live":
+                raise ValueError("Submit a scenario or a prompt for a new live run.")
+            if not native_pipeline_configured():
+                raise RequestError(503, "Configure the native planning backend to solve a custom scenario.")
+            scenario = normalize_scenario(data["scenario"])
+            prompt = scenario_prompt(scenario)
+        else:
+            prompt = read_prompt(data)
         if overrides:
             raise ValueError("Start a plan before changing its controls.")
         if (mode == "recorded" and prompt != RECORDED_PROMPT) or (mode == "reference" and prompt != PROMPT):
@@ -300,8 +315,9 @@ def run_plan(data, *, on_stage=None, on_progress=None):
 
     view_backend = None
     if mode == "live":
+        kwargs = {"scenario": scenario} if scenario is not None else {}
         result, view_backend = live_result(
-            prompt, values, previous, previous_backend, on_stage=on_stage, on_progress=on_progress,
+            prompt, values, previous, previous_backend, on_stage=on_stage, on_progress=on_progress, **kwargs,
         )
     else:
         handoff = recorded_handoff(values, previous) if mode == "recorded" else reference_handoff(values, previous)
@@ -317,6 +333,8 @@ def run_plan(data, *, on_stage=None, on_progress=None):
 
 def pipeline_run_snapshot(run):
     snapshot = {key: run[key] for key in ("id", "status", "stage", "attempt")}
+    if run.get("scenario") is not None:
+        snapshot["prompt"] = run["prompt"]
     snapshot["history"] = [
         {**visit, "steps": [dict(step) for step in visit["steps"]]}
         for visit in run["history"]
@@ -391,7 +409,9 @@ def complete_pipeline_run(run):
         run["status"] = "running"
     try:
         result = run_plan(
-            {"mode": "live", "prompt": run["prompt"]}, on_stage=update_stage, on_progress=update_progress,
+            {"mode": "live", **({"scenario": run["scenario"]} if run.get("scenario") is not None
+                                  else {"prompt": run["prompt"]})},
+            on_stage=update_stage, on_progress=update_progress,
         )
     except (RequestError, SolverUnavailable, InvalidHandoff, SolverFailed, UnverifiedResult) as exc:
         outcome = {"status": "failed", "error": str(exc)}
@@ -408,7 +428,7 @@ def complete_pipeline_run(run):
         run.update(outcome)
 
 
-def start_pipeline_run(prompt):
+def start_pipeline_run(prompt, scenario=None):
     if not native_pipeline_configured():
         raise RequestError(503, "Configure the native planning pipeline to run a problem with progress.")
     with PIPELINE_LOCK:
@@ -424,6 +444,8 @@ def start_pipeline_run(prompt):
             del PIPELINE_RUNS[finished]
         run_id = str(uuid4())
         run = {"id": run_id, "status": "queued", "stage": None, "attempt": 0, "prompt": prompt, "history": []}
+        if scenario is not None:
+            run["scenario"] = scenario
         PIPELINE_RUNS[run_id] = run
         snapshot = pipeline_run_snapshot(run)
         try:
@@ -453,7 +475,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             host = None
         if host not in {"127.0.0.1", "::1", "localhost", "localhost."}:
-            raise RequestError(403, "Open Fleet Lab on localhost to access saved runs.")
+            raise RequestError(403, "Open QuantumLoop on localhost to access saved runs.")
 
     def do_GET(self):
         url = urlparse(self.path)
@@ -477,6 +499,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(200, {
                 "backend_configured": external or pipeline or local,
                 "pipeline_backend_configured": pipeline,
+                "scenario_backend_configured": pipeline,
                 "local_backend_configured": local,
                 "saved_run_recalculation_configured": planner_configured(),
             })
@@ -588,6 +611,11 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/run":
                 result = run_plan(data)
             elif self.path == "/api/pipeline-runs":
+                if "scenario" in data:
+                    if "prompt" in data:
+                        raise ValueError("Submit a scenario or a prompt, not both.")
+                    scenario = normalize_scenario(data["scenario"])
+                    return self.send_json(202, start_pipeline_run(scenario_prompt(scenario), scenario))
                 return self.send_json(202, start_pipeline_run(read_prompt(data)))
             elif workspace_id is not None:
                 result = reopen_workspace(workspace_id)
@@ -619,5 +647,5 @@ if __name__ == "__main__":
 
     load_dotenv(REPO_ROOT / ".env")
     port = int(os.environ.get("PORT", 8000))
-    print(f"Fleet Lab: http://127.0.0.1:{port}", flush=True)
+    print(f"QuantumLoop: http://127.0.0.1:{port}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

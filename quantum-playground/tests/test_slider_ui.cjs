@@ -88,6 +88,8 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
   const inspections = new Map();
   const listeners = new Map();
   const motionListeners = [];
+  const builder = { source: null, errors: [], accepted: [] };
+  let submitBuilder;
   const motion = { matches: reduceMotion, addEventListener: (_event, callback) => motionListeners.push(callback) };
   let animationFrame;
 
@@ -144,6 +146,19 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
       },
     },
     document: { getElementById: get, createElement: tag => new Element(tag) },
+    // These tests isolate approved result controls; the editor has its own
+    // state tests and real-browser keyboard/touch coverage.
+    ScenarioBuilder: { create: options => {
+      submitBuilder = options.onSubmit;
+      return {
+        setBusy() {}, setConfigured() {},
+        showMode() {},
+        setError(message) { if (message) builder.errors.push(message); },
+        edit(_scenario, source = null) { builder.source = source; },
+        sourceView() { return builder.source; },
+        acceptResult(view) { builder.source = view; builder.accepted.push(view); },
+      };
+    } },
     FleetMap: {
       create(canvas, options) {
         const log = canvas.id === 'classical-map' ? classicalDrawings : drawings;
@@ -173,11 +188,12 @@ function boot(config, liveExample = liveExamplePrompt, storage = new Map(), samp
       return new Promise(resolve => posts.push({ path, payload: JSON.parse(options.body), respond: resolve }));
     },
   });
-  for (const name of ['fleet.js', 'live-updates.js', 'pipeline-progress.js', 'scenario-controls.js', 'app.js']) {
+  for (const name of ['fleet.js', 'live-updates.js', 'pipeline-progress.js', 'scenario-controls.js', 'scenario-draft.js', 'app.js']) {
     vm.runInContext(fs.readFileSync('web/' + name, 'utf8'), context);
   }
   return {
-    get, posts, polls, historyReads, drawings, classicalDrawings, animations, listeners, storage,
+    get, posts, polls, historyReads, drawings, classicalDrawings, animations, listeners, storage, builder,
+    submitBuilder: (scenario, reuse) => submitBuilder(scenario, reuse),
     inspect: inspections.get('fleet-map'), inspectClassical: inspections.get('classical-map'),
     reduceMotion(value) { motion.matches = value; motionListeners.forEach(callback => callback({ matches: value })); },
     advance: now => animationFrame(now),
@@ -408,6 +424,57 @@ async function testPlannerControls() {
   assert.deepEqual(posts[2].payload, {
     mode: 'live', view_id: 'view-range-rerun', variables: { [chargeKey]: 24, price: 0.25, automation: true },
   });
+}
+
+async function testBuilderReuseKeepsItsOwnSourceAcrossNavigation() {
+  const Draft = require('../web/scenario-draft.js');
+  const ui = boot({ backend_configured: true, pipeline_backend_configured: true });
+  await flush();
+  const scenario = charge => {
+    const draft = Draft.seed();
+    draft.vehicles.find(vehicle => vehicle.id === 'V2').initial_charge_pct = charge;
+    return draft;
+  };
+  const response = (charge, attempt) => ({
+    ...liveFixture(charge, attempt),
+    scenario_context: { effective_scenario: scenario(charge), bindings: {
+      [chargeKey]: ['vehicles', 'V2', 'initial_charge_pct'],
+    } },
+  });
+  const first = response(35, 'builder-first');
+  const initial = ui.submitBuilder(scenario(35), null);
+  assert.equal(ui.posts[0].path, '/api/pipeline-runs');
+  await ui.respond({ id: 'builder-job', status: 'queued', stage: null, attempt: 0 });
+  await ui.poll({ id: 'builder-job', status: 'completed', stage: 'verify', attempt: 1, result: first });
+  await initial;
+  assert.equal(ui.builder.source.view_id, first.view_id);
+
+  for (const [charge, attempt] of [[30, 'builder-second'], [25, 'builder-third']]) {
+    ui.get('new-problem').onclick();
+    const source = ui.builder.source;
+    const pending = ui.submitBuilder(scenario(charge), { view_id: source.view_id, variables: { [chargeKey]: charge } });
+    assert.deepEqual(ui.posts.at(-1).payload, { mode: 'live', view_id: source.view_id, variables: { [chargeKey]: charge } });
+    const updated = response(charge, attempt);
+    await ui.respond(updated);
+    await pending;
+    assert.equal(ui.get('results-screen').hidden, false);
+    assert.equal(ui.builder.source.view_id, updated.view_id, 'a successful settings solve advances the draft reuse source');
+  }
+
+  const retained = ui.builder.source;
+  ui.mode('recorded');
+  await ui.respond({ ...fixture(35, 'unrelated', 'recorded'), run_id: 'unrelated-run', plan_id: 'unrelated-plan' });
+  ui.get('scrub').value = '60';
+  ui.get('scrub').oninput();
+  ui.get('new-problem').onclick();
+  const pending = ui.submitBuilder(scenario(20), { view_id: retained.view_id, variables: { [chargeKey]: 20 } });
+  await ui.respond(response(20, 'builder-returned'));
+  await pending;
+  assert.equal(ui.get('results-screen').hidden, false, 'reuse validates against the retained draft source rather than the unrelated displayed run');
+  assert.equal(ui.builder.source.attempt_id, 'builder-returned');
+  assert.equal(ui.drawings.at(-1).minute, 0, 'reopening the draft does not retain the unrelated replay clock');
+  assert.deepEqual(ui.builder.errors, []);
+  assert.equal(ui.posts.filter(post => post.path === '/api/pipeline-runs').length, 1, 'numeric reuse does not restart planning');
 }
 
 async function testResumedPipelineClarification() {
@@ -829,6 +896,7 @@ async function main() {
   await testReferenceAndRecorded();
   await testLocalSolver();
   await testPlannerControls();
+  await testBuilderReuseKeepsItsOwnSourceAcrossNavigation();
   await testDetailedPipelineProgress();
   await testResumedPipelineClarification();
   await testExternalBackend();

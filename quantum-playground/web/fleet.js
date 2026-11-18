@@ -1,5 +1,11 @@
 /* Pure schedule replay helpers; time is minutes after start_hour. */
 (function(root) {
+  function depotsFor(sim) {
+    return Object.hasOwn(sim, 'depots') ? sim.depots : [{id: 'P1', position: sim.depot}];
+  }
+  function depotFor(sim, van) {
+    return Object.hasOwn(sim, 'depots') ? sim.depots.find(depot => depot.id === van.depot_id)?.position : sim.depot;
+  }
   function stateAt(van, minute, depot) {
     let position=depot, battery=van.initial_battery_kwh, status='At depot';
     for (const e of van.events) {
@@ -23,17 +29,21 @@
     return new Set(sim.vans.flatMap(v=>v.events.filter(e=>e.type==='deliver'&&e.end_min<=minute&&e.end_min<=sim.duration_min).map(e=>e.delivery_id)));
   }
   function validate(sim) {
-    if(!sim||sim.kind!=='ev_fleet'||!Array.isArray(sim.vans)||!sim.vans.length||!Array.isArray(sim.chargers)||!Array.isArray(sim.deliveries)||!sim.grid) return false;
+    if(!sim||sim.kind!=='ev_fleet'||!Array.isArray(sim.vans)||!sim.vans.length||sim.vans.length>6||!Array.isArray(sim.chargers)||!Array.isArray(sim.deliveries)||!sim.grid) return false;
     const finite=x=>typeof x==='number'&&Number.isFinite(x);
     if(!Number.isInteger(sim.grid.width)||!Number.isInteger(sim.grid.height)||sim.grid.width<2||sim.grid.height<2||sim.grid.width>50||sim.grid.height>50) return false;
-    const point=p=>Array.isArray(p)&&p.length===2&&p.every(finite)&&p[0]>=0&&p[1]>=0&&p[0]<sim.grid.width&&p[1]<sim.grid.height;
-    if(!finite(sim.duration_min)||sim.duration_min<=0||!finite(sim.start_hour)||!finite(sim.battery_capacity_kwh)||sim.battery_capacity_kwh<=0||!finite(sim.reserve_pct)||!point(sim.depot)) return false;
+    const point=p=>Array.isArray(p)&&p.length===2&&p.every(Number.isInteger)&&p[0]>=0&&p[1]>=0&&p[0]<sim.grid.width&&p[1]<sim.grid.height;
+    if(!finite(sim.duration_min)||sim.duration_min<=0||!finite(sim.start_hour)||!finite(sim.battery_capacity_kwh)||sim.battery_capacity_kwh<=0||!finite(sim.reserve_pct)) return false;
+    const depots=depotsFor(sim);
+    if(Object.hasOwn(sim,'depots')&&Object.hasOwn(sim,'depot')) return false;
+    if(!Array.isArray(depots)||!depots.length||depots.length>6||depots.some(d=>!d||typeof d.id!=='string'||!d.id.trim()||!point(d.position))||new Set(depots.map(d=>d.id)).size!==depots.length) return false;
+    if(!sim.vans.every(v=>point(depotFor(sim,v)))) return false;
     if(!sim.chargers.every(c=>point(c.position))||!sim.deliveries.every(d=>point(d.position))) return false;
     return sim.vans.every(v=>finite(v.initial_battery_kwh)&&Array.isArray(v.events)&&v.events.every(e=>{
       if(!['drive','wait','charge','deliver'].includes(e.type)||!finite(e.start_min)||!finite(e.end_min)||e.start_min<0||e.end_min<e.start_min||!finite(e.battery_start_kwh)||!finite(e.battery_end_kwh)||!point(e.position)) return false;
       return e.type!=='drive'||(Array.isArray(e.path)&&e.path.length>=2&&e.path.every(point)&&e.path.every((p,i)=>i===0||Math.abs(p[0]-e.path[i-1][0])+Math.abs(p[1]-e.path[i-1][1])===1));
     }));
   }
-  const api={stateAt,deliveredAt,validate};
+  const api={stateAt,deliveredAt,validate,depotsFor,depotFor};
   if(typeof module!=='undefined')module.exports=api;else root.FleetReplay=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

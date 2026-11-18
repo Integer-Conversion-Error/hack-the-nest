@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 const chargeControlId = 'van_2_initial_charge_pct';
-const pendingRunKey = 'fleet-lab-pending-pipeline';
+const pendingRunKey = 'quantumloop-pending-pipeline';
+const legacyPendingRunKey = 'fleet-lab-pending-pipeline';
 const colors = ['#185f55', '#315b8f', '#8a4d27', '#75527c', '#a42b46', '#6c650d'];
 const provenanceLabels = {
   classical_reference: 'Exact reference',
@@ -50,6 +51,7 @@ const classicalCanvas = $('classical-map');
 const map = FleetMap.create(mapCanvas, { colors, onInspect: inspect, motionAllowed: () => !reducedMotion });
 const classicalMap = FleetMap.create(classicalCanvas, { colors,
   onInspect: target => inspect(target, 'classical'), motionAllowed: () => !reducedMotion });
+const builder = ScenarioBuilder.create({ onSubmit: submitScenario });
 
 const node = (tag, text, cls) => {
   const element = document.createElement(tag);
@@ -171,6 +173,8 @@ function updateButtons() {
   $('rerun').textContent = immediate ? 'Retry solver'
     : selectedMode === 'recorded' ? 'Load recorded result' : 'Apply changes';
   controlPanel?.setDisabled(busy || !canApply);
+  builder.setBusy(busy);
+  $('edit-scenario').disabled = busy;
   return changes;
 }
 
@@ -226,8 +230,13 @@ function acceptResult(data, payload) {
   if (payload.prompt && data.problem?.original_prompt !== payload.prompt) {
     throw Error('The verified result does not match the submitted prompt.');
   }
-  if (payload.view_id && (payload.view_id !== result.view_id || data.run_id !== result.run_id || data.plan_id !== result.plan_id ||
-      data.attempt_id === result.attempt_id || data.view_id === result.view_id ||
+  if (payload.scenario && (!data.scenario_context ||
+      !ScenarioDraft.same(payload.scenario, data.scenario_context.effective_scenario))) {
+    throw Error('The verified result does not match the submitted scenario.');
+  }
+  const source = payload.sourceView || result;
+  if (payload.view_id && (payload.view_id !== source?.view_id || data.run_id !== source.run_id || data.plan_id !== source.plan_id ||
+      data.attempt_id === source.attempt_id || data.view_id === source.view_id ||
       Object.entries(payload.variables).some(([id, value]) => data.effective_values?.[id] !== value))) {
     throw Error('The recalculation did not match the requested plan and settings.');
   }
@@ -262,9 +271,11 @@ function showResult(data, payload) {
     pipelineSnapshot.history?.length && pipelineSnapshot.result?.plan_id === data.plan_id);
   if (!payload.view_id) $('original-prompt').open = false;
   showScreen('results');
-  render(data, {preserve: !!payload.view_id});
+  render(data, {preserve: Boolean(payload.view_id && previous?.view_id === payload.view_id)});
   result = data;
-  renderChanges(data.evaluation, payload.view_id ? previous?.evaluation : null);
+  if (payload.scenario) builder.acceptResult(data);
+  $('edit-scenario').hidden = !data.scenario_context;
+  renderChanges(data.evaluation, payload.view_id ? (payload.sourceView || previous)?.evaluation : null);
   setStatus(data.cached ? 'Reused verified result' : '');
 }
 
@@ -367,7 +378,8 @@ $('progress-return').onclick = () => {
 
 function pendingRun() {
   try {
-    const stored = JSON.parse(window.sessionStorage.getItem(pendingRunKey));
+    const stored = JSON.parse(window.sessionStorage.getItem(pendingRunKey) ||
+      window.sessionStorage.getItem(legacyPendingRunKey));
     if (typeof stored?.id === 'string' && typeof stored.prompt === 'string') return stored;
   } catch {
     // The current run still works when browser storage is unavailable.
@@ -379,12 +391,13 @@ function savePendingRun(run) {
   try {
     if (run) window.sessionStorage.setItem(pendingRunKey, JSON.stringify(run));
     else window.sessionStorage.removeItem(pendingRunKey);
+    window.sessionStorage.removeItem(legacyPendingRunKey);
   } catch {
     // Storage only affects resuming after a reload.
   }
 }
 
-async function startPipeline(prompt, id) {
+async function startPipeline(prompt, id, scenario) {
   busy = true;
   pipelineSnapshot = null;
   $('failed-pipeline-progress').hidden = true;
@@ -394,11 +407,12 @@ async function startPipeline(prompt, id) {
   updateButtons();
   try {
     const snapshot = await PipelineProgress.follow({
-      request, prompt, id,
+      request, prompt, scenario, id,
       onSnapshot(job) {
+        if (typeof job.prompt === 'string') prompt = job.prompt;
         if (!id) {
           id = job.id;
-          savePendingRun({ id, prompt });
+          savePendingRun({ id, prompt, ...(scenario ? { scenario } : {}) });
         }
         pipelineSnapshot = job;
         updatePipelineProgress(job);
@@ -406,13 +420,35 @@ async function startPipeline(prompt, id) {
       onDisconnect: () => writeText($('pipeline-status'), 'Connection interrupted. Reconnecting to your run…'),
     });
     if (snapshot.status === 'failed') throw Error(snapshot.error || 'The pipeline could not produce a verified result.');
-    showResult(snapshot.result, { mode: 'live', prompt });
+    showResult(snapshot.result, { mode: 'live', prompt, scenario });
   } catch (e) {
     $('failed-pipeline-progress').hidden = !pipelineSnapshot?.history?.length;
     showScreen('prompt');
     composerError(e.status === 404 ? 'This pipeline run is no longer available. Submit your problem to run again.' : e.message);
+    if (scenario) builder.setError(e.message);
   } finally {
     savePendingRun(null);
+    busy = false;
+    updateButtons();
+  }
+}
+
+async function submitScenario(scenario, reuse) {
+  if (busy) return;
+  if (!reuse) return startPipeline('', undefined, scenario);
+  const sourceView = builder.sourceView();
+  busy = true;
+  updateButtons();
+  builder.setError('');
+  showProgress('Recalculate settings', 'Running the approved solver and checking the new schedule…');
+  try {
+    const payload = { mode: 'live', view_id: reuse.view_id, variables: reuse.variables };
+    const data = await request('/api/run', payload);
+    showResult(data, { ...payload, scenario, sourceView });
+  } catch (e) {
+    showScreen('prompt');
+    builder.setError(e.message);
+  } finally {
     busy = false;
     updateButtons();
   }
@@ -544,6 +580,7 @@ async function selectSavedRun(id, button) {
     $('history-identity').textContent = [runDate(run.created_at), run.id].filter(Boolean).join(' · ');
     $('history-prompt').textContent = run.prompt;
     $('history-open').hidden = !run.can_open;
+    $('history-edit-scenario').hidden = !run.can_edit;
     $('history-open').disabled = false;
     $('history-artifact-section').hidden = !run.artifacts.length;
     $('history-artifacts').replaceChildren(...run.artifacts.map(artifact => {
@@ -584,6 +621,17 @@ async function openSavedResult() {
 
 $('run-history').onclick = showHistory;
 $('history-open').onclick = openSavedResult;
+$('edit-scenario').onclick = () => {
+  if (busy || !result?.scenario_context) return;
+  setPlaying(false);
+  builder.edit(result.scenario_context.effective_scenario, result);
+  showScreen('prompt');
+};
+$('history-edit-scenario').onclick = () => {
+  if (!selectedRun?.can_edit || !selectedRun.scenario) return;
+  builder.edit(selectedRun.scenario);
+  showScreen('prompt');
+};
 
 const circuitDialog = $('circuit-dialog');
 function closeCircuit() {
@@ -704,7 +752,7 @@ function render(data, {preserve = false} = {}) {
   const evaluation = data.evaluation;
   writeMetric('score', money(evaluation.objective_value));
   $('feasible').textContent = 'Checks passed';
-  renderSolverComparison(evaluation, data.provenance === 'classical_reference');
+  renderSolverComparison(evaluation, data.provenance === 'classical_reference', Boolean(data.scenario_context));
   $('costs').replaceChildren(...Object.entries(evaluation.costs || {})
     .map(([label, value]) => node('span', label + ' · ' + money(value))));
   $('explanation').textContent = data.explanation || '';
@@ -732,7 +780,7 @@ function render(data, {preserve = false} = {}) {
   $('frame-status').hidden = true;
   updatePlayback();
 }
-function renderSolverComparison(evaluation, isReference) {
+function renderSolverComparison(evaluation, isReference, candidateScope = false) {
   const baseline = evaluation.classical;
   const classical = !isReference && baseline?.feasible === true && Number.isFinite(baseline.objective_value);
   const reference = classical ? baseline.objective_value : evaluation.reference_value;
@@ -744,7 +792,8 @@ function renderSolverComparison(evaluation, isReference) {
   $('reference-label').textContent = classical ? 'Classical cost' : 'Reference cost';
   writeMetric('reference-score', Number.isFinite(reference) ? money(reference) : '—');
   $('reference-check').hidden = !classical;
-  $('reference-check').textContent = baseline?.optimality_proven === true ? 'Feasible · Exact optimum' : 'Feasible';
+  $('reference-check').textContent = baseline?.optimality_proven === true
+    ? candidateScope ? 'Feasible · Exact over candidates' : 'Feasible · Exact optimum' : 'Feasible';
   $('reference-gap').hidden = isReference || !Number.isFinite(gap);
   $('gap-label').textContent = classical ? 'Gap to classical' : 'Gap to reference';
   const sign = Math.abs(gap) >= 0.005 ? (gap < 0 ? '−' : '+') : '';
@@ -854,7 +903,7 @@ function updatePlayback() {
     writeText($('classical-delivered'), classicalDone.size + ' / ' + classicalSim.deliveries.length + ' delivered');
   }
   sim.vans.forEach((van, i) => {
-    const state = FleetReplay.stateAt(van, minute, sim.depot);
+    const state = FleetReplay.stateAt(van, minute, FleetReplay.depotFor(sim, van));
     const {status, energy, fill, color} = vanCards[i];
     const percent = state.battery / sim.battery_capacity_kwh * 100;
     writeText(status, state.status);
@@ -953,7 +1002,7 @@ function updateInspector() {
 
   let details;
   if (kind === 'van') {
-    const state = FleetReplay.stateAt(item, minute, replay.depot);
+    const state = FleetReplay.stateAt(item, minute, FleetReplay.depotFor(replay, item));
     const upcoming = item.events.find(event => event.end_min > minute);
     const percent = (state.battery / replay.battery_capacity_kwh * 100).toFixed(0);
     details = [item.name || id, state.status, state.battery.toFixed(2) + ' kWh (' + percent + '%)',
@@ -1039,6 +1088,7 @@ async function init() {
     liveExamplePrompt = example.live_prompt || examplePrompt;
     localBackendConfigured = Boolean(config.local_backend_configured);
     pipelineBackendConfigured = Boolean(config.pipeline_backend_configured);
+    builder.setConfigured(Boolean(config.scenario_backend_configured ?? config.pipeline_backend_configured));
     savedRunRecalculationConfigured = Boolean(config.saved_run_recalculation_configured ?? config.pipeline_backend_configured);
     backendConfigured = localBackendConfigured || pipelineBackendConfigured || Boolean(config.backend_configured);
     populateSamples(example.samples);
@@ -1050,7 +1100,10 @@ async function init() {
     note.hidden = !note.textContent;
     initialized = true;
     updateButtons();
-    if (stored) startPipeline(stored.prompt, stored.id);
+    if (stored) {
+      if (!stored.scenario) builder.showMode('prompt');
+      startPipeline(stored.prompt, stored.id, stored.scenario);
+    }
   } catch {
     $('composer-note').hidden = true;
     composerError('Unable to load the local service. Start the dashboard server and refresh.');

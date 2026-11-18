@@ -1,5 +1,49 @@
 # Verified EV handoff
 
+## Interactive scenario inputs
+
+`POST /api/pipeline-runs` also accepts `{ "scenario": { ... } }`. The `scenario`
+and text `prompt` fields are mutually exclusive. The server validates the complete version-1
+scenario, generates the deterministic prompt, and returns that prompt in job
+snapshots. This route requires native planning. `/api/config` advertises that
+capability as `scenario_backend_configured`.
+
+The structured input contains `schema_version: 1`, `title`, `grid`, `depots`,
+`chargers`, `deliveries`, `vehicles`, `fleet`, `timing`, and `costs`. Each vehicle
+has a `depot_id` and `initial_charge_pct`; each delivery has a `vehicle_id`,
+`position`, `deadline_min`, and `service_min`. Chargers supply `power_kw` and
+named `{id, start_min, end_min}` slots. IDs are stable (`P1`, `C1`, `D1`, `V1`,
+and `S1` within each charger). See `scenario.py` for the complete validation and
+`example_scenario()` for an executable example. Source JSON and the generated
+prompt are each bounded to 64 KB, separately from the existing 10,000-character
+text prompt limit.
+
+The host saves an immutable `scenario.json` with its digest in workspace
+metadata. It independently verifies every stop, depot, route, charging slot,
+battery trajectory, service time, and USD component against the effective
+scenario. Those checks run during initial pipeline tests, settings
+recalculation, and saved-result opening, including the classical replay when
+present. The generated solver cannot edit the source file.
+
+Numeric reuse retains `/api/run {mode:"live", view_id, variables}`. Only
+server-owned field bindings intersected with approved numeric controls can be
+applied; changed topology and other inputs require a new pipeline job. Every
+builder result includes host-computed `scenario_context` with `base_digest`,
+`effective_digest`, `effective_scenario`, and the approved `bindings`. Paths
+address entities by stable ID. Recalculation never modifies the original
+scenario or saved default result. History exposes `can_edit` and the scenario
+artifact, including incomplete builder runs; the displayed attempt's context
+is used when editing its effective inputs.
+
+## Multiple-depot replay (v2)
+
+VisualizationHandoff v2 uses `simulation.depots: [{id,position}]` and each
+van's `depot_id` instead of the v1 shared `simulation.depot`. Every van starts
+at its home depot. Builder scenarios also require returning there. Classical
+and quantum replays must have identical depots and per-vehicle stop/home
+assignments. Both renderers and validation continue to accept legacy v1
+single-depot scenes; all other handoff identity and verification rules remain.
+
 ## Native pipeline
 
 With Gemini or OpenRouter [configured](../../backend/MODEL_PROVIDERS.md), the dashboard starts the native `backend.pipeline` in an EV fleet workspace. The generated solver supplies a timed `simulation`, the effective control values, the cost breakdown, and its feasibility verification. When a feasible classical solution is computed, `reference` includes its method, cost, feasibility, optimality status, and optional timed replay. Test checks the replay contract before GO. The dashboard translates the approved workspace `handoff.json` into the response below, using the workspace ID as the plan ID.

@@ -149,6 +149,26 @@ def named_items(items, label):
     return by_id
 
 
+def replay_depots(sim):
+    """Expose legacy shared-depot and v2 per-vehicle depots without changing the replay."""
+    if "depots" in sim:
+        require("depot" not in sim, "Use either depots or the legacy depot field, not both.")
+        depots = sim["depots"]
+        by_id = named_items(depots, "depot")
+        require(1 <= len(by_id) <= 6, "The EV scene supports one to six depots.")
+        return depots
+    return [{"id": "P1", "position": sim.get("depot")}]
+
+
+def depot_for(sim, van):
+    if "depots" not in sim:
+        return sim.get("depot")
+    depots = {depot["id"]: depot for depot in replay_depots(sim)}
+    key = van.get("depot_id")
+    require(is_text(key) and key in depots, f"Unknown home depot for {van.get('id', 'van')}.")
+    return depots[key]["position"]
+
+
 def validate_replay(sim):
     require(isinstance(sim, dict) and sim.get("kind") == "ev_fleet", "Missing EV fleet scene.")
     grid = sim.get("grid")
@@ -175,13 +195,13 @@ def validate_replay(sim):
             and 0 <= value[0] < grid["width"] and 0 <= value[1] < grid["height"]
         )
 
-    depot = sim.get("depot")
+    depots = replay_depots(sim)
     chargers = named_items(sim.get("chargers"), "charger")
     deliveries = named_items(sim.get("deliveries"), "delivery")
     vans = named_items(sim.get("vans"), "van")
     require(1 <= len(vans) <= 6, "The EV scene supports one to six vans.")
     require(
-        point(depot) and all(point(item.get("position")) for item in (*chargers.values(), *deliveries.values())),
+        all(point(item.get("position")) for item in (*depots, *chargers.values(), *deliveries.values())),
         "A scene entity is outside the grid.",
     )
     require(
@@ -200,7 +220,7 @@ def validate_replay(sim):
             and len(set(required)) == len(required),
             f"Invalid assignment for {van_id}.",
         )
-        position = depot
+        position = depot_for(sim, van)
         previous_end = 0
         van_delivered = set()
         for event in events:
@@ -288,7 +308,9 @@ def normalize_classical_replay(classical, simulation):
 
     require(
         all(classical[key] == simulation[key]
-            for key in ("depot", "start_hour", "duration_min", "battery_capacity_kwh", "reserve_pct"))
+            for key in ("start_hour", "duration_min", "battery_capacity_kwh", "reserve_pct"))
+        and {depot["id"]: depot["position"] for depot in replay_depots(classical)}
+            == {depot["id"]: depot["position"] for depot in replay_depots(simulation)}
         and all(classical["grid"][key] == simulation["grid"][key] for key in ("width", "height", "block_km"))
         and same_entities("chargers", "position")
         and same_entities("deliveries", "position", "deadline_min"),
@@ -297,10 +319,14 @@ def normalize_classical_replay(classical, simulation):
     classical_vans = {van["id"]: van for van in classical["vans"]}
     require(
         len(classical_vans) == len(simulation["vans"])
-        and all(van["id"] in classical_vans and math.isclose(
-            van["initial_battery_kwh"], classical_vans[van["id"]]["initial_battery_kwh"], rel_tol=0, abs_tol=1e-7,
-        ) for van in simulation["vans"]),
-        "The classical map must use the same vans and starting batteries.",
+        and all(van["id"] in classical_vans
+                and depot_for(classical, classical_vans[van["id"]]) == depot_for(simulation, van)
+                and classical_vans[van["id"]].get("depot_id", "P1") == van.get("depot_id", "P1")
+                and set(classical_vans[van["id"]]["delivery_ids"]) == set(van["delivery_ids"])
+                and math.isclose(van["initial_battery_kwh"], classical_vans[van["id"]]["initial_battery_kwh"],
+                                 rel_tol=0, abs_tol=1e-7)
+                for van in simulation["vans"]),
+        "The classical map must use the same vans and starting batteries, home depots, and delivery assignments.",
     )
     # Color assignments in the renderer follow the van order.
     return {**classical, "vans": [classical_vans[van["id"]] for van in simulation["vans"]]}
@@ -308,7 +334,7 @@ def normalize_classical_replay(classical, simulation):
 
 def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=None, expected_attempt_id=None):
     require(isinstance(handoff, dict) and type(handoff.get("schema_version")) is int
-            and handoff["schema_version"] == 1, "Expected a VisualizationHandoff with schema_version 1.")
+            and handoff["schema_version"] in (1, 2), "Expected a VisualizationHandoff with schema_version 1 or 2.")
     result = handoff.get("result")
     require(isinstance(result, dict), "Missing RunResult in the handoff.")
     identity = {key: handoff.get(key) for key in ("run_id", "plan_id", "attempt_id")}
@@ -359,6 +385,8 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
 
     simulation = result.get("simulation")
     delivered_count = validate_replay(simulation)
+    require((handoff["schema_version"] == 2) == ("depots" in simulation),
+            "Multi-depot replays require VisualizationHandoff schema_version 2.")
     van_2_charge = effective.get("van_2_initial_charge_pct")
     if van_2_charge is not None:
         van_2 = next((van for van in simulation["vans"] if van["id"] == "V2"), None)

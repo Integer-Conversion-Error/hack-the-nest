@@ -1,4 +1,4 @@
-# Fleet Lab development
+# QuantumLoop development
 
 From the repository root, install the frontend requirements and start `python quantum-playground/server.py`. The server listens on loopback at port 8000 by default. Set `PORT` to use a different port.
 
@@ -23,6 +23,25 @@ node --test tests/*.cjs
 ```
 
 The Python suite uses a local stub backend to exercise the live wire contract and rejection paths. It also checks reference cost, schedule continuity, and actual Pygame PNG output. The Node suite exercises typed controls, stale responses, and browser playback.
+
+## Scenario authoring
+
+`scenario.py` owns the canonical structured schema, stable numeric bindings,
+source digest, deterministic prompt, and independent schedule verification.
+The editor's pure state helpers are in `web/scenario-draft.js`; its DOM and SVG
+interaction live in `web/scenario-builder.js`. Verified replay remains separate.
+
+Run the browser authoring check with Playwright/Chromium installed:
+
+```sh
+PYTHON=python3 node tests/browser/scenario-builder.cjs
+```
+
+It runs the real frontend against deterministic test responses and checks
+authoring, draft restoration, settings reuse, location-triggered planning,
+failure recovery, keyboard/touch editing, and responsive layouts. It does not
+claim a model-provider or quantum execution. Set `EVIDENCE_DIR` to capture the
+running UI; `PLAYWRIGHT_MODULE` and `BROWSER_EXECUTABLE` select local installs.
 
 ## Agent loop progress
 

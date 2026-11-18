@@ -42,6 +42,7 @@ async function check(browser, url, platform, width, height) {
   });
   try {
     await page.goto(url);
+    await page.locator('#prompt-mode').click();
     await page.locator('#problem-prompt').fill('Dispatch two electric vans to four deliveries. Respect delivery windows and battery reserve.');
     await page.locator('#generate').click();
     await page.locator('#pipeline-visits li.pipeline-visit').last().waitFor();
@@ -86,6 +87,7 @@ async function check(browser, url, platform, width, height) {
       ] };
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
+    await page.locator('#prompt-mode').click();
     await page.locator('#problem-prompt').fill('Dispatch our vans to the deliveries.');
     await page.locator('#generate').click();
     await page.locator('#failed-pipeline-progress').waitFor();

@@ -6,12 +6,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from fleet_handoff import is_text, normalize_handoff
-from pipeline_live import project_result
+from pipeline_live import load_scenario, project_result
 
 from backend.workspace import META_FILE, PROMPT_FILE, Workspace, WorkspaceError, open_workspace, workspace_root
 
 HANDOFF_FILE = "handoff.json"
 ARTIFACTS = {
+    "scenario": ("Scenario inputs", "scenario.json"),
     "problem": ("Problem statement", "PROBLEM.md", "problem.json"),
     "plan": ("Plan", "PLAN.md", "plan.json"),
     "build": ("Build report", "build.json"),
@@ -95,11 +96,20 @@ def _replay(workspace: Workspace, prompt: str, handoff: dict) -> dict | None:
         projected = project_result(handoff, handoff["results"], prompt, identity, workspace=workspace, saved_image=True)
         projected["result"]["provenance"] = "recorded"
         view = normalize_handoff(projected, "live", prompt, expected_values=projected["result"]["effective_values"])
+        if projected.get("scenario_context") is not None:
+            view["scenario_context"] = projected["scenario_context"]
         view["source"] = {"workspace_id": workspace.id, "file": HANDOFF_FILE}
         json.dumps(view, allow_nan=False)
     except (KeyError, TypeError, ValueError, RecursionError):
         return None
     return view
+
+
+def _scenario(workspace: Workspace) -> dict | None:
+    try:
+        return load_scenario(workspace)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        return None
 
 
 def _inspect(workspace: Workspace) -> tuple[dict, str, dict | None]:
@@ -124,6 +134,7 @@ def _inspect(workspace: Workspace) -> tuple[dict, str, dict | None]:
         "created_at": created_at,
         "status": "verified" if replay is not None else "saved" if approved else "incomplete",
         "can_open": replay is not None,
+        "can_edit": _scenario(workspace) is not None,
     }
     return summary, prompt, replay
 
@@ -160,7 +171,9 @@ def saved_run(run_id: str) -> dict:
         {"key": key, "label": definition[0], "filename": path.name}
         for key, definition in ARTIFACTS.items() if (path := _artifact(workspace, key)) is not None
     ]
-    return {**summary, "prompt": prompt, "artifacts": artifacts}
+    scenario = _scenario(workspace)
+    return {**summary, "prompt": prompt, "artifacts": artifacts,
+            **({"scenario": scenario} if scenario is not None else {})}
 
 
 def open_saved_run(run_id: str) -> dict:

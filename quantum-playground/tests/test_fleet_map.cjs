@@ -18,17 +18,22 @@ function createContext(overrides) {
 }
 
 function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position: [grid.width - 2, grid.height - 2] }],
-  motionAllowed = () => true) {
-  const vans = Array.from({ length: count }, (_, index) => ({
+  motionAllowed = () => true, depots = null) {
+  const vans = Array.from({ length: count }, (_, index) => {
+    const home = depots?.[index % depots.length] ?? { position: depot };
+    return {
     id: `V${index + 1}`,
+    ...(depots ? { depot_id: home.id } : {}),
     initial_battery_kwh: 4,
     events: [{
-      type: 'drive', position: depot, path: [depot, [depot[0] + 1, depot[1]]],
+      type: 'drive', position: home.position, path: [home.position, [home.position[0] + 1, home.position[1]]],
       start_min: index, end_min: index + 2, battery_start_kwh: 4, battery_end_kwh: 3.8,
     }],
-  }));
+    };
+  });
   const simulation = {
-    kind: 'ev_fleet', grid, depot, vans, deliveries: [{ id: 'D1', position: [0, grid.height - 1] }],
+    kind: 'ev_fleet', grid, ...(depots ? { depots } : { depot }), vans,
+    deliveries: [{ id: 'D1', position: [0, grid.height - 1] }],
     chargers,
     start_hour: 8, duration_min: 120, battery_capacity_kwh: 20, reserve_pct: 15,
   };
@@ -61,6 +66,7 @@ function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position:
   const map = browser.FleetMap.create(canvas, { colors, onInspect: hit => inspected.push(hit), motionAllowed });
   map.setSimulation(simulation);
   map.draw(0, vans[0].id);
+  if (depots) depots.forEach(home => assert.ok(labels.has(home.id), 'draw every home-depot label'));
 
   assert.equal(streetPaths[0], grid.width + grid.height, 'draw every street for this grid');
   assert.equal(new Set(routeStrokes).size, count, 'all routes use distinct colors');
@@ -91,6 +97,8 @@ testMap({ width: 12, height: 12 }, { width: 300, height: 225, left: 16, top: 48 
 testMap({ width: 12, height: 12 }, { width: 300, height: 225, left: 16, top: 48 }, [0, 0], 6);
 testMap({ width: 6, height: 6 }, { width: 840, height: 540, left: 0, top: 0 }, [2, 2], 2);
 testMap({ width: 20, height: 14 }, { width: 460, height: 250, left: 16, top: 48 }, [3, 3], 5);
+testMap({ width: 12, height: 12 }, { width: 300, height: 225, left: 16, top: 48 }, null, 2,
+  undefined, undefined, [{ id: 'P1', position: [1, 1] }, { id: 'P2', position: [8, 8] }]);
 const motion = testMap({ width: 6, height: 6 }, { width: 840, height: 540, left: 0, top: 0 }, [2, 2], 2);
 const paused = motion.draw(0.5, false);
 assert.ok(motion.draw(0.5, true) > paused, 'moving vans get a short trail based on recent positions');

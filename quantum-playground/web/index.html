@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fleet Lab</title>
+  <title>QuantumLoop</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <a class="brand" href="/">Fleet Lab</a>
+  <a class="brand" href="/">QuantumLoop</a>
   <div class="header-actions">
     <button class="secondary" id="run-history" type="button">Run history</button>
     <div class="result-navigation" id="result-navigation" hidden>
@@ -27,6 +27,12 @@
 <main>
   <section class="run-entry" id="prompt-screen" aria-labelledby="problem-heading">
     <h1 id="problem-heading" tabindex="-1">Your problem</h1>
+    <div class="entry-modes" role="tablist" aria-label="Create a problem">
+      <button id="builder-mode" type="button" role="tab" aria-selected="true" aria-controls="scenario-builder">Build scenario</button>
+      <button id="prompt-mode" type="button" role="tab" aria-selected="false" aria-controls="prompt-composer">Write prompt</button>
+    </div>
+    <div id="scenario-builder" role="tabpanel" aria-labelledby="builder-mode"></div>
+    <div id="prompt-composer" role="tabpanel" aria-labelledby="prompt-mode" hidden>
     <p class="entry-intro">Describe the fleet dispatch problem you want to optimize.</p>
     <form class="panel composer" id="prompt-form" novalidate>
       <label class="sr-only" for="problem-prompt">Your problem</label>
@@ -42,6 +48,7 @@
         </div>
       </div>
     </form>
+    </div>
     <div class="preview-actions">
       <button class="text-button" id="failed-pipeline-progress" type="button" aria-controls="progress-screen" hidden>View pipeline progress</button>
       <button class="text-button" id="recorded-example" type="button" disabled>View recorded run</button>
@@ -95,7 +102,10 @@
             <h2 id="history-detail-heading" tabindex="-1"></h2>
             <p class="hint history-identity" id="history-identity"></p>
           </div>
-          <button class="primary" id="history-open" type="button" hidden>Open results</button>
+          <div class="history-toolbar-actions">
+            <button class="secondary" id="history-edit-scenario" type="button" hidden>Edit scenario</button>
+            <button class="primary" id="history-open" type="button" hidden>Open results</button>
+          </div>
         </div>
         <details class="history-section" open>
           <summary>Original prompt</summary>
@@ -112,6 +122,7 @@
   <section id="results-screen" aria-labelledby="results-heading" hidden>
   <div class="results-title">
     <h1 id="results-heading" tabindex="-1">EV fleet dispatch</h1>
+    <button class="secondary" id="edit-scenario" type="button" hidden>Edit scenario</button>
     <button class="secondary" id="result-pipeline-progress" type="button" aria-controls="progress-screen" hidden>Pipeline progress</button>
   </div>
   <div class="workspace">
@@ -272,6 +283,8 @@
 <script src="live-updates.js"></script>
 <script src="pipeline-progress.js"></script>
 <script src="scenario-controls.js"></script>
+<script src="scenario-draft.js"></script>
+<script src="scenario-builder.js"></script>
 <script src="fleet-map.js"></script>
 <script src="app.js"></script>
 </body>

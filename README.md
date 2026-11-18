@@ -1,4 +1,4 @@
-# Hack The Nest: Quantum Optimization Agent
+# QuantumLoop
 
 Describe an optimization problem in plain English. The agent turns it into a quantum algorithm, runs it on the Quantum Rings simulator, checks the answer, and saves the result.
 

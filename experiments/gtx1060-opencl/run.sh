@@ -4,7 +4,11 @@ set -eu
 
 experiment_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 repository_dir=$(CDPATH= cd -- "$experiment_dir/../.." && pwd -P)
-state_dir=${GPU_PROBE_STATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/fleet-lab/gtx1060-opencl}
+state_dir=${GPU_PROBE_STATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/quantumloop/gtx1060-opencl}
+# Keep an existing prepared environment usable after the product rename.
+if [ -z "${GPU_PROBE_STATE_DIR:-}" ] && [ ! -d "$state_dir" ] && [ -d "${XDG_CACHE_HOME:-$HOME/.cache}/fleet-lab/gtx1060-opencl" ]; then
+    state_dir=${XDG_CACHE_HOME:-$HOME/.cache}/fleet-lab/gtx1060-opencl
+fi
 if [ ! -x "$state_dir/venv/bin/python" ] || [ ! -f "$state_dir/redirect.so" ]; then
     printf 'Prepare the isolated state first: sh %s/prepare.sh\n' "$experiment_dir" >&2
     exit 1

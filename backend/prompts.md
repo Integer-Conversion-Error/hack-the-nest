@@ -349,12 +349,20 @@ Proposed plan
 
 ## planning.ev_fleet
 
-The EV dashboard supports one to four vans on a street grid of 2 to 50
+The EV dashboard supports one to six vans on a street grid of 2 to 50
 intersections per axis and an objective in USD. Plan for a replay with timed
 drive, wait, charge, and delivery events, the actual control values, a USD cost
 breakdown, and independent feasibility evidence. Use the effective inputs in
 both the solver and verifier. Report `unsupported` if the problem cannot fit the
 scene.
+
+Builder scenarios may have several depots and up to ten assigned stops per van.
+Keep every location, home-depot assignment, and delivery assignment from the
+source scenario. The solver chooses the stop order and may charge between
+deliveries, including revisiting a station in different available slots. Do not
+inherit a one-stop or one-charge restriction from an example. Use bounded
+candidate generation for long routes rather than enumerating all permutations;
+state the candidate search limits and the scope of any optimality claim.
 
 Plan to produce a feasible classical baseline over the same candidate set and
 effective controls when the worker budget allows it. Describe how to verify the
@@ -455,7 +463,7 @@ Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
 ## build.ev_fleet
 
 This workspace feeds the EV dashboard. The input must describe an EV fleet
-optimization on a street grid, with one to four vans and an objective in USD.
+optimization on a street grid, with one to six vans and an objective in USD.
 Plan the delivered schedule and output fields alongside the solver. If the
 problem cannot be represented as that scene, report it as unsupported in Plan.
 
@@ -465,17 +473,22 @@ Pass the effective inputs to both the solver and its independent verifier.
 In addition to the standard results.json fields, emit:
 
 - A top-level simulation object with kind "ev_fleet", grid {width, height,
-  block_km}, depot [x, y], chargers [{id, position}], deliveries [{id, position,
+  block_km}, depots [{id, position}], chargers [{id, position}], deliveries [{id, position,
   deadline_min}], start_hour, duration_min, battery_capacity_kwh, reserve_pct,
   and vans. The grid represents 2 to 50 intersections on each axis. Positions
   are pairs of zero-based integer coordinates in the grid. The start hour is
   local time expressed as a number of hours from midnight. All minute values
   in the simulation are elapsed from the start. Give each station and delivery
-  a distinct ID within its type.
-- Each van has id, initial_battery_kwh, delivery_ids, and events. Vary the
+  a distinct ID within its type. This is the v2 multi-depot replay format.
+  Legacy single-depot prompts may instead emit the v1 depot [x, y] field and
+  omit depots and each van's depot_id; do not mix the two depot formats.
+- Each v2 van has id, depot_id, initial_battery_kwh, delivery_ids, and events. Vary the
   initial battery when it is controlled. When the plan exposes
-  van_2_initial_charge_pct, Van 2 must have ID "V2". Each van begins at the
-  depot. Include its return drive when required by the problem.
+  van_2_initial_charge_pct, Van 2 must have ID "V2". Each van begins at its
+  assigned depot and returns there when required by the problem. Preserve all
+  assigned deliveries, support several deliveries per van, and choose their
+  order. Charging may occur between deliveries and may revisit a station in
+  different slots; follow the source scenario rather than example restrictions.
 - Each event has type ("drive", "wait", "charge", or "deliver"), start_min,
   end_min, position at the start, battery_start_kwh, and battery_end_kwh.
   Events within a van are chronological, fit in the simulation duration, and

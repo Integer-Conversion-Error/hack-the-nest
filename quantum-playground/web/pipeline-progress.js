@@ -206,10 +206,10 @@
     return { render, reset };
   }
 
-  async function follow({ request, prompt, id, onSnapshot, onDisconnect }) {
+  async function follow({ request, prompt, scenario, id, onSnapshot, onDisconnect }) {
     let snapshot;
     if (!id) {
-      snapshot = validate(await request(path, { prompt }));
+      snapshot = validate(await request(path, scenario ? { scenario } : { prompt }));
       id = snapshot.id;
       onSnapshot(snapshot);
     }

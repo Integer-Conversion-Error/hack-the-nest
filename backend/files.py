@@ -22,7 +22,7 @@ from backend.workspace import Workspace, WorkspaceError, write_atomic
 READ_ONLY_FILES = frozenset(
     {
         "prompt.md", "meta.json", "problem.json", "PROBLEM.md", "plan.json", "PLAN.md",
-        "qr_runtime.py", "build.json", "build_review.json", "results.json", "circuit.png", "test.json", "final.json", "handoff.json", "model_usage.json", "model_usage.jsonl",
+        "qr_runtime.py", "scenario.json", "build.json", "build_review.json", "results.json", "circuit.png", "test.json", "final.json", "handoff.json", "model_usage.json", "model_usage.jsonl",
     }
 )
 WRITABLE_SUFFIXES = frozenset({".py", ".json", ".md", ".txt"})

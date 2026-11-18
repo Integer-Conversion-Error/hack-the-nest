@@ -3,6 +3,7 @@ import io
 import os
 import math
 from threading import Lock
+from fleet_handoff import depot_for, replay_depots
 
 RENDER_LOCK = Lock()
 COLORS = ['#8af1d0', '#a0abff', '#ffc177', '#fa8faf', '#73c9ff', '#c1df72']
@@ -82,7 +83,7 @@ def vehicle_layout(sim, minute):
     shared_locations = {}
     for van in sim['vans']:
         van_id = van['id']
-        position, battery = state_at(van, minute, sim['depot'])
+        position, battery = state_at(van, minute, depot_for(sim, van))
         center = map_point(sim, position)
         angle = truck_angle(van, minute)
         dimensions = (52, 40) if abs(angle) in (0, 180) else (40, 52)
@@ -279,19 +280,20 @@ def render_png(sim, minute, selected=None, playing=False, speed=4, resolution=2)
             art.line(color,(x,y-1),(x,y+6),1)
             if complete:art.lines('#7ee7c2',[(x+6,y-12),(x+9,y-9),(x+15,y-16)],2)
             art.text(delivery['id'],(x,y+15),'#d6e3ef',16,True)
-        x,y=xy(sim['depot'])
-        if density < 1:
-            art.rect('#1a3044', (x-radius, y-radius, 2*radius, 2*radius), radius=4)
-            art.rect('#5a8da5', (x-radius, y-radius, 2*radius, 2*radius), width=1, radius=4)
-            if radius >= 9:
-                art.text('HQ', (x, y), '#c2ecf2', 16, True)
-        else:
-            art.rect('#1a3044',(x-22,y-19,44,36),radius=6)
-            art.rect('#5a8da5',(x-22,y-19,44,36),width=1,radius=6)
-            art.rect('#284b61',(x-15,y-14,30,8),radius=2)
-            for dx in (-10,-2,6):art.line('#68b3bd',(x+dx,y-13),(x+dx,y-7))
-            art.rect('#112535',(x-12,y-1,24,18),radius=2)
-            art.text('HQ',(x,y+7),'#c2ecf2',18,True)
+        for depot in replay_depots(sim):
+            x,y=xy(depot['position'])
+            if density < 1:
+                art.rect('#1a3044', (x-radius, y-radius, 2*radius, 2*radius), radius=4)
+                art.rect('#5a8da5', (x-radius, y-radius, 2*radius, 2*radius), width=1, radius=4)
+                if radius >= 9:
+                    art.text(depot['id'] if 'depots' in sim else 'HQ', (x, y), '#c2ecf2', 16, True)
+            else:
+                art.rect('#1a3044',(x-22,y-19,44,36),radius=6)
+                art.rect('#5a8da5',(x-22,y-19,44,36),width=1,radius=6)
+                art.rect('#284b61',(x-15,y-14,30,8),radius=2)
+                for dx in (-10,-2,6):art.line('#68b3bd',(x+dx,y-13),(x+dx,y-7))
+                art.rect('#112535',(x-12,y-1,24,18),radius=2)
+                art.text(depot['id'] if 'depots' in sim else 'HQ',(x,y+7),'#c2ecf2',18,True)
         for charger in sim['chargers']:
             x,y=xy(charger['position'])
             active=any(e['type']=='charge' and e.get('charger_id')==charger['id'] and e['start_min']<=minute<e['end_min'] for v in sim['vans'] for e in v['events'])
