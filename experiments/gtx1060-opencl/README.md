@@ -31,7 +31,8 @@ sh experiments/gtx1060-opencl/run.sh --output "$GPU_PROBE_STATE_DIR/results.json
 ```
 
 Without `GPU_PROBE_STATE_DIR`, the scripts use
-`${XDG_CACHE_HOME:-$HOME/.cache}/fleet-lab/gtx1060-opencl`. Preparation downloads
+`${XDG_CACHE_HOME:-$HOME/.cache}/quantumloop/gtx1060-opencl`. Existing environments
+under the former `fleet-lab` directory are reused automatically. Preparation downloads
 Ubuntu userspace packages from the configured APT repositories, extracts them
 into that directory, records their exact versions, creates an isolated Python
 environment, and compiles a small path-redirection helper. It does not install

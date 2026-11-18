@@ -151,6 +151,9 @@ def _review_policy(workspace: Workspace, limits: tuple[int, int]) -> tuple[str, 
     context = {}
     if workspace.meta.get("scene_type") == "ev_fleet":
         context["dashboard_requirements"] = load_prompt("planning.ev_fleet")
+    if workspace.meta.get("scenario_digest"):
+        context["scenario_digest"] = workspace.meta["scenario_digest"]
+        context["scenario"] = json.loads(workspace.resolve("scenario.json").read_text(encoding="utf-8"))
     return system, context
 
 

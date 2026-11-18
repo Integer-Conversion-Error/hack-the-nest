@@ -1,4 +1,4 @@
-# Fleet Lab
+# QuantumLoop
 
 A local dashboard for planning, solving, and replaying EV dispatch schedules.
 
@@ -10,6 +10,35 @@ python quantum-playground/server.py
 ```
 
 Open **http://127.0.0.1:8000**. Use the prompt screen to start a new run or open the recorded example. With the built-in live backend, the EV example starts Van 2 at 35% charge. Move the slider to any whole percentage from 20% to 35% to launch a fresh solve and update the map when its schedule passes verification.
+
+## Build a situation on the map
+
+Select **Build scenario** to place depots, chargers, and delivery stops on the
+street grid. Drag a marker, use its X/Y fields, move a focused marker with the
+arrow keys, or select **Move selected** and tap a new intersection. The inspector
+also provides a list for selecting objects at the same location.
+
+Assign each vehicle a home depot and any number of stops up to ten. The solver
+chooses their visit order and charging schedule, including charging between
+deliveries. A situation supports up to six vehicles, six depots, six single-plug
+chargers with four slots each, and sixty delivery stops. The settings inspector
+includes battery, shift, speed, energy, and cost inputs. Vehicles must return to
+their own depot before the shift ends; delivery due times incur lateness costs.
+
+The browser saves your current draft, including unfinished fields. **Edit
+scenario** reopens the inputs from a displayed result or a builder-created saved
+run. Changing only numeric settings covered by the approved solver's controls
+offers **Recalculate settings**. Moving locations, changing assignments or
+entities, and settings outside those controls offer **Plan new scenario**.
+Both actions check a new schedule before displaying it. A failed solve leaves
+the draft available for correction.
+
+Custom scenarios require the native planning backend configured below. The
+editor remains usable without credentials; the built-in fixed-example solver
+and existing external backends retain their current workflows. Longer routes
+use bounded candidates, so an exact classical comparison proves optimality over
+those candidates rather than all possible routes. Geographic maps and road
+routing are tracked in [issue #6](https://github.com/Integer-Conversion-Error/hack-the-nest/issues/6).
 
 The example worker uses the local QAOA simulator by default. To run it through Quantum Rings, install `QuantumRingsLib` in the same environment and set `QR_ACCOUNT` and `QR_KEY` in the repository root's ignored `.env`.
 

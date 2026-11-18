@@ -275,7 +275,7 @@
       }
     }
 
-    const caption = kind === 'depot' ? 'Depot' : id;
+    const caption = kind === 'depot' ? (id || 'Depot') : id;
     const captionX = chargingPoint ? x + side * marker * 1.9 : x;
     const captionY = chargingPoint ? y : y + direction * (badge + Math.max(7, marker * 0.7));
     const captionBounds = label(context, caption, captionX, clamp(captionY, 11, view.height - 11),
@@ -390,14 +390,14 @@
           for (const [index, fraction] of [1, 0.65, 0.3].entries()) {
             const at = Math.max(drive.start_min, minute - lookback * fraction);
             if (at === drive.start_min) continue;
-            const point = view.point(root.FleetReplay.stateAt(vehicle.van, at, simulation.depot).position);
+            const point = view.point(root.FleetReplay.stateAt(vehicle.van, at, root.FleetReplay.depotFor(simulation, vehicle.van)).position);
             context.globalAlpha = selectedVan && vehicle.van.id !== selectedVan ? 0.1 : 0.13 + index * 0.08;
             circle(context, point[0], point[1], marker * (0.15 + index * 0.045), vehicle.color);
           }
         });
         context.globalAlpha = 1;
       }
-      const positions = vehicles.map(({ van }) => view.point(root.FleetReplay.stateAt(van, minute, simulation.depot).position));
+      const positions = vehicles.map(({ van }) => view.point(root.FleetReplay.stateAt(van, minute, root.FleetReplay.depotFor(simulation, van)).position));
       const displayPositions = placeVehicles(positions, view, marker);
       displayPositions.forEach((point, index) => {
         const origin = positions[index];
@@ -416,13 +416,17 @@
       }
 
       hitTargets = [];
-      const depot = view.point(simulation.depot);
+      const depots = root.FleetReplay.depotsFor(simulation);
       const stop = item => {
         const target = item.kind === 'depot' ? null : { kind: item.kind, id: item.id };
-        drawStop(context, item, view.point(item.position), marker, target, view, depot);
+        const point = view.point(item.position);
+        const depot = depots.map(candidate => view.point(candidate.position)).reduce((nearest, candidate) =>
+          Math.hypot(candidate[0] - point[0], candidate[1] - point[1]) < Math.hypot(nearest[0] - point[0], nearest[1] - point[1])
+            ? candidate : nearest);
+        drawStop(context, item, point, marker, target, view, depot);
         if (target) hitTargets.push(target);
       };
-      stop({ kind: 'depot', position: simulation.depot });
+      depots.forEach(depot => stop({ ...depot, id: simulation.depots ? depot.id : undefined, kind: 'depot' }));
       simulation.chargers.forEach(charger => stop({
         ...charger, kind: 'charger', active: activeChargers.has(charger.id),
       }));

@@ -10,7 +10,26 @@ from uuid import uuid4
 
 from circuit_images import captured_circuit
 from ev_live import SolverFailed, SolverUnavailable
-from fleet_handoff import UnverifiedResult, applied_values, is_number, is_text, normalize_controls, normalize_handoff, require
+from backend.workspace import WorkspaceError
+from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, is_number, is_text, normalize_controls, normalize_handoff, require
+from scenario import normalize_scenario, scenario_context, scenario_digest, scenario_prompt, validate_scenario_result
+
+
+def load_scenario(workspace):
+    """Load a pipeline-owned source, rejecting missing or changed builder input."""
+    try:
+        digest = workspace.meta.get("scenario_digest")
+        path = workspace.resolve("scenario.json")
+        if digest is None:
+            require(not path.exists(), "The scenario has no approved source identity.")
+            return None
+        source = normalize_scenario(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, WorkspaceError):
+        require(False, "The original scenario is unavailable. Start a new scenario run.")
+    require(scenario_digest(source) == digest and scenario_prompt(source) == workspace.prompt,
+            "The original scenario changed. Start a new scenario run.")
+    return source
+
 
 def planner_configured():
     from backend.model_provider import model_configured
@@ -33,7 +52,7 @@ def planner_session(workspace=None):
         raise SolverFailed(str(exc)) from None
 
 
-def project_result(artifact, output, prompt, identity, *, workspace=None, saved_image=False):
+def project_result(artifact, output, prompt, identity, *, workspace=None, saved_image=False, source_scenario=None):
     """Translate a native solver result using the approved plan and the solver's own replay."""
     require(isinstance(output, dict) and output.get("status") == "ok", "The fleet solver did not succeed.")
     solution = output.get("solution")
@@ -86,8 +105,17 @@ def project_result(artifact, output, prompt, identity, *, workspace=None, saved_
         captured = captured_circuit(workspace, output, saved=saved_image)
         if captured is not None and isinstance(circuits, list):
             circuits = [*circuits, captured]
+    source = load_scenario(workspace) if workspace is not None else source_scenario
+    context = None
+    if source is not None:
+        try:
+            context = scenario_context(source, normalize_controls(artifact["controls"]), output.get("controls", {}))
+            validate_scenario_result(context["effective_scenario"], output)
+        except ValueError as exc:
+            raise InvalidHandoff(str(exc)) from None
     return {
-        "schema_version": 1,
+        "schema_version": 2 if "depots" in simulation else 1,
+        **({"scenario_context": context} if context is not None else {}),
         **identity,
         "scene_type": "ev_fleet",
         "problem": {
@@ -106,13 +134,15 @@ def project_result(artifact, output, prompt, identity, *, workspace=None, saved_
             "evaluation": evaluation,
             "quantum": quantum_details,
             "circuits": circuits,
+            **({"assumptions": ["Route search uses bounded candidates. An exact classical comparison proves optimality over those candidates."]}
+               if context is not None else {}),
         },
     }
 
 
 def pipeline_handoff(
     prompt, values, previous, attempt_id, *,
-    on_stage: Callable[[str], None] | None = None, on_progress=None,
+    on_stage: Callable[[str], None] | None = None, on_progress=None, scenario=None,
 ):
     """Plan a new dispatch, or run and verify fresh values in a copy of the approved workspace."""
     try:
@@ -148,6 +178,13 @@ def pipeline_handoff(
                 on_progress("Prepare the dispatch workspace", status="running")
             with planner_session() as client:
                 workspace = init_workspace(prompt, name="fleet", scene_type="ev_fleet")
+                if scenario is not None:
+                    source = normalize_scenario(scenario)
+                    require(prompt == scenario_prompt(source), "The scenario does not match the submitted problem.")
+                    workspace.resolve("scenario.json").write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
+                    metadata = workspace.meta
+                    metadata["scenario_digest"] = scenario_digest(source)
+                    workspace.resolve("meta.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
                 if on_progress is not None:
                     on_progress("Prepare the dispatch workspace", status="completed")
                 identity = {"run_id": str(uuid4()), "plan_id": workspace.id, "attempt_id": attempt_id}
@@ -162,7 +199,7 @@ def pipeline_handoff(
                     controls = normalize_controls(draft["controls"])
                     defaults = {control["id"]: control["default"] for control in controls}
                     expected = applied_values(controls, defaults, overrides)
-                    handoff = project_result(draft, output, prompt, identity)
+                    handoff = project_result(draft, output, prompt, identity, source_scenario=load_scenario(workspace))
                     normalize_handoff(handoff, "live", prompt, expected_values=expected)
 
                 artifact = run_pipeline(
@@ -174,6 +211,7 @@ def pipeline_handoff(
             return project_result(artifact, artifact["results"], prompt, identity, workspace=workspace, saved_image=True)
 
         workspace = open_workspace(previous["plan_id"])
+        load_scenario(workspace)
         identity = {"run_id": previous["run_id"], "plan_id": workspace.id, "attempt_id": attempt_id}
         artifact = json.loads(workspace.resolve(HANDOFF_JSON).read_text(encoding="utf-8"))
         if (workspace.meta.get("scene_type") not in (None, "ev_fleet") or artifact.get("decision") != "GO"

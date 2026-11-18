@@ -122,6 +122,7 @@ async function check(browser, platform, width, height, reducedMotion = 'no-prefe
     if (platform === 'desktop' && config.local_backend_configured && !config.pipeline_backend_configured) {
       // Exercise real local solves and the verified cache without calling a model service.
       await page.locator('#new-problem').click();
+      await page.locator('#prompt-mode').click();
       await page.locator('#load-example').click();
       await page.locator('#generate').click();
       await page.locator('#results-screen').waitFor();
