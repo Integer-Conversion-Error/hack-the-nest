@@ -1,0 +1,6 @@
+package	version	architecture
+libclang-common-21-dev	1:21.1.8-6ubuntu1	amd64
+libclc-21-dev	1:21.1.8-6ubuntu1	all
+libclc-21	1:21.1.8-6ubuntu1	all
+libllvmspirvlib21.1	21.1.5-1	amd64
+mesa-opencl-icd	26.0.8-1ubuntu0.3	amd64

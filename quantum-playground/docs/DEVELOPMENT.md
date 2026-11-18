@@ -68,3 +68,11 @@ The same browser check validates the left circuit sidebar, image loading,
 full-size viewing, keyboard dismissal, PNG download, and image updates when
 recorded controls change. Set `SKIP_VIDEO=1` for screenshot-only capture. See the
 [circuit sidebar screenshots](evidence/circuit-sidebar/README.md).
+
+## Experimental GTX 1060 execution
+
+The [OpenCL circuit probe](../../experiments/gtx1060-opencl/README.md) captures
+GPU-only Bell, bit-order, and EV QAOA checks on the connected GTX 1060 through
+Qrack and Rusticl/Nouveau. Its setup stays outside the checkout and does not
+replace the system driver. This is a standalone experiment; the dashboard and
+agent-generated solvers do not select this backend yet.
