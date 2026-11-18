@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from backend.build import ENTRY_POINT, BuildError
 from backend.build_phase import BuildNotApproved, run_build_phase
 from backend.build_review import BUILD_REVIEW_JSON, BuildReview
+from backend.model_provider import ModelError, model_run
 from backend.final_check import FinalDecision, describe, run_final_checks
 from backend.plan import PLAN_JSON, load_plan
 from backend.planning import ClarificationRequired, PlanningError, run_planning
@@ -102,6 +103,7 @@ def write_handoff(workspace: Workspace, decision: FinalDecision) -> dict:
     return handoff
 
 
+@model_run
 def run_pipeline(
     workspace: Workspace,
     *,
@@ -227,7 +229,7 @@ def main() -> None:
     except BuildNotApproved as error:
         sys.exit(f"Stopped in Build: {error}\nRemaining issues:\n{error.review.feedback()}")
     except (
-        OSError, BuildError, PipelineError, PlanningError, ProblemStatementError,
+        OSError, BuildError, ModelError, PipelineError, PlanningError, ProblemStatementError,
         PromptError, ValidationError, WorkspaceError,
     ) as error:
         sys.exit(f"Pipeline failed: {error}")

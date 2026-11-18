@@ -30,6 +30,7 @@ from pydantic import BaseModel, ValidationError
 
 from backend.build import BuildError
 from backend.build_phase import BuildNotApproved, run_build_phase
+from backend.model_provider import ModelError, model_run
 from backend.plan import PLAN_JSON, PlanControl, load_plan
 from backend.problem_statement import ENV_FILE
 from backend.progress import ProgressCallback, progress_step, report
@@ -130,6 +131,7 @@ def control_variants(workspace: Workspace) -> list[dict]:
     return variants
 
 
+@model_run
 def test_once(
     workspace: Workspace,
     *,
@@ -180,6 +182,7 @@ def test_once(
     return round_
 
 
+@model_run
 def run_test_phase(
     workspace: Workspace,
     *,
@@ -260,7 +263,7 @@ def main() -> None:
         sys.exit(f"Test phase stopped: {error}\nRemaining issues:\n{error.last_round.feedback()}")
     except BuildNotApproved as error:
         sys.exit(f"Test phase stopped in Build: {error}\nRemaining issues:\n{error.review.feedback()}")
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Test phase failed: {error}")
 
     print(f"\nReady for Final Go/No-Go after {rounds} test round(s).")

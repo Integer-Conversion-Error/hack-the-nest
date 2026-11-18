@@ -18,13 +18,14 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.build import DEFAULT_MODEL, BuildError, build_contract, gemini_client, generate
+from backend.build import DEFAULT_MODEL, BuildError, build_contract
+from backend.model_provider import generate, model_name, model_run
+from backend.model_types import ModelError
 from backend.build_review import compare_with_plan
 from backend.plan import load_plan, render_markdown
 from backend.problem_statement import ENV_FILE, load_problem_statement
@@ -44,7 +45,7 @@ class FinalIssue(BaseModel):
 
 
 class _ModelCheck(BaseModel):
-    """What Gemini returns for checks 1 and 2."""
+    """The model's response for checks 1 and 2."""
 
     verdict: Literal["matches", "falls_short"]
     summary: str = Field(description="Two or three sentences on how well the two documents agree.")
@@ -86,13 +87,12 @@ def _judge(
     response = generate(
         client, model, system, message,
         on_progress=on_progress,
-        response_mime_type="application/json",
-        response_json_schema=_ModelCheck.model_json_schema(),
+        stage="final_review", schema=_ModelCheck.model_json_schema(),
     )
     try:
         judged = _ModelCheck.model_validate_json(response.text or "")
     except ValidationError as error:
-        raise BuildError(f"Gemini returned no usable result for the check '{name}'.") from error
+        raise BuildError(f"The model returned no usable result for the check '{name}'.") from error
     return FinalCheck(
         name=name,
         returns_to=returns_to,
@@ -153,16 +153,18 @@ CHECKS = (
 )
 
 
+@model_run
 def run_final_checks(
     workspace: Workspace, *, model: str | None = None, client=None, on_progress: ProgressCallback | None = None,
 ) -> FinalDecision:
     """Run the three checks in order, stop at the first failure, and save the decision."""
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    client = client or gemini_client()
+    build_review_model = model_name(DEFAULT_MODEL, model, stage="build_review")
+    model = model_name(DEFAULT_MODEL, model, stage="final_review")
 
     def run_check(label, check):
         with progress_step(on_progress, label) as step:
-            result = check(workspace, client, model, on_progress=on_progress)
+            check_model = build_review_model if check is check_implementation_against_plan else model
+            result = check(workspace, client, check_model, on_progress=on_progress)
             if result.passed:
                 step.completed(result.summary)
             else:
@@ -213,7 +215,7 @@ def main() -> None:
     try:
         workspace = open_workspace(args.workspace_id)
         decision = run_final_checks(workspace)
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Final check failed: {error}")
 
     print(describe(decision))

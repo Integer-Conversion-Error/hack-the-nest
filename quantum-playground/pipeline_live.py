@@ -1,7 +1,6 @@
 """Bridge the native agent pipeline to the verified fleet visualization."""
 
 import json
-import os
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,31 +12,24 @@ from ev_live import SolverFailed, SolverUnavailable
 from fleet_handoff import UnverifiedResult, applied_values, is_number, normalize_controls, normalize_handoff, require
 
 def planner_configured():
-    return bool(os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip())
+    from backend.model_provider import model_configured
+
+    return model_configured()
 
 
 @contextmanager
-def planner_session():
+def planner_session(workspace=None):
     try:
-        from google import genai
-        from google.genai.errors import APIError
-
-        from backend.planning import gemini_transport_errors
+        from backend.model_provider import ModelConfigurationError, ModelError, model_session
     except ImportError:
         raise SolverUnavailable("Install the repository requirements to enable the planning backend.") from None
     try:
-        client = genai.Client()
-    except ValueError:
-        raise SolverUnavailable("Configure GEMINI_API_KEY or GOOGLE_API_KEY to run the planner.") from None
-    try:
-        with client:
+        with model_session(workspace=workspace) as client:
             yield client
-    except APIError as exc:
-        raise SolverFailed(f"The planning service returned HTTP {exc.code}. Check the Gemini key and model configuration.") from None
-    except TimeoutError:
-        raise
-    except gemini_transport_errors():
-        raise SolverFailed("Could not reach the planning service. Retry the dispatch.") from None
+    except ModelConfigurationError as exc:
+        raise SolverUnavailable(str(exc)) from None
+    except ModelError as exc:
+        raise SolverFailed(str(exc)) from None
 
 
 def project_result(artifact, output, prompt, identity):
@@ -175,7 +167,7 @@ def pipeline_handoff(
                 raise UnverifiedResult("The fleet solver could not verify the requested settings.")
             handoff = project_result(artifact, outcome.results, prompt, identity)
             normalize_handoff(handoff, "live", prompt, previous, expected_values=values)
-            with planner_session() as client:
+            with planner_session(workspace=workspace) as client:
                 review = evaluate_semantics(attempt, [outcome], client=client)
             if not review.matches:
                 raise UnverifiedResult("The recalculated schedule did not pass independent review.")

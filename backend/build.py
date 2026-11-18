@@ -1,6 +1,6 @@
 """Build step 1 of the agent loop: the agent writes the solver's Python files.
 
-Gemini reads the problem statement and the approved plan, then creates, reads,
+The configured model reads the problem statement and the approved plan, then creates, reads,
 updates and deletes files in the workspace through the tools in
 backend/files.py until it calls `finish`. It cannot run code here; running
 main.py belongs to the Test step.
@@ -17,16 +17,16 @@ Usage:
 
 import argparse
 import json
-import os
 import shutil
 import sys
-import time
 from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
 from backend import files
+from backend.model_provider import generate, model_name, model_run
+from backend.model_types import Message, ModelError, Tool
 from backend.plan import PLAN_JSON, load_plan
 from backend.problem_statement import ENV_FILE, PROBLEM_JSON, load_problem_statement
 from backend.progress import ProgressCallback, progress_step, report
@@ -40,8 +40,6 @@ TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 DEFAULT_MODEL = "gemini-4-hydrogen"  # override with the GEMINI_MODEL environment variable
 DEFAULT_MAX_TURNS = 40
-REQUEST_ATTEMPTS = 4
-RETRYABLE_CODES = (408, 429, 500, 502, 503, 504)
 
 _PATH = {"type": "string", "description": "File path relative to the workspace, e.g. 'main.py'."}
 _CONTENT = {"type": "string", "description": "The complete text of the file."}
@@ -51,7 +49,7 @@ def _schema(properties: dict) -> dict:
     return {"type": "object", "properties": properties, "required": list(properties)}
 
 
-# name -> (description for Gemini, parameter schema, function to call or None for finish)
+# name -> (description for the model, parameter schema, function to call or None for finish)
 TOOLS: dict[str, tuple[str, dict, Callable | None]] = {
     "list_files": ("List every file in the workspace with its size.", _schema({}), files.list_files),
     "read_file": ("Read a file's content.", _schema({"path": _PATH}), files.read_file),
@@ -103,15 +101,6 @@ def build_contract(planning, workspace: Workspace | None = None) -> str:
     return contract
 
 
-def gemini_client():
-    from google import genai
-
-    try:
-        return genai.Client()
-    except ValueError as error:
-        raise BuildError("Configure GEMINI_API_KEY before running Build.") from error
-
-
 def source_files(workspace: Workspace) -> list[str]:
     """Paths of the Python files the agent wrote."""
     return [
@@ -147,31 +136,7 @@ def unfinished_issues(workspace: Workspace) -> list[str]:
     return issues
 
 
-def generate(
-    client, model: str, system: str, contents, *, on_progress: ProgressCallback | None = None, **config_fields,
-):
-    """One Gemini request, retried on temporary service errors."""
-    from google.genai import errors, types
-
-    config = types.GenerateContentConfig(system_instruction=system, **config_fields)
-    for attempt in range(1, REQUEST_ATTEMPTS + 1):
-        try:
-            return client.models.generate_content(model=model, contents=contents, config=config)
-        except errors.APIError as error:
-            if error.code not in RETRYABLE_CODES or attempt == REQUEST_ATTEMPTS:
-                report(
-                    on_progress, "Gemini request stopped", status="failed",
-                    detail=f"The service returned HTTP {error.code} on request {attempt}.",
-                )
-                raise BuildError(f"Gemini request failed (HTTP {error.code}): {error.message}") from error
-            delay = 2**attempt
-            report(
-                on_progress, "Retry the Gemini request",
-                detail=f"HTTP {error.code}. Waiting {delay} seconds before request {attempt + 1} of {REQUEST_ATTEMPTS}.",
-            )
-            time.sleep(delay)
-
-
+@model_run
 def run_build(
     workspace: Workspace,
     feedback: str | None = None,
@@ -189,8 +154,6 @@ def run_build(
     on_event: called with a one-line description of each tool call, for progress output.
     on_progress: structured updates for each agent turn and file operation.
     """
-    from google.genai import types
-
     with progress_step(on_progress, "Load the problem and approved plan"):
         for required, stage in ((PROBLEM_JSON, "Init"), (PLAN_JSON, "Plan")):
             if not workspace.resolve(required).is_file():
@@ -202,7 +165,7 @@ def run_build(
         shutil.copyfile(TEMPLATES / RUNTIME_HELPER, workspace.resolve(RUNTIME_HELPER))
         step.completed(RUNTIME_HELPER)
 
-    # Prompts are read from prompts.md now, before Gemini is called.
+    # Prompts are read from prompts.md now, before the model is called.
     system = load_prompt("build.system", contract=build_contract(planning, workspace))
     message = load_prompt(
         "build.user",
@@ -214,36 +177,29 @@ def run_build(
         message += "\n\n" + load_prompt("build.retry", feedback=feedback)
 
     tools = [
-        types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(name=name, description=description, parameters_json_schema=schema)
-                for name, (description, schema, _) in TOOLS.items()
-            ]
-        )
+        Tool(name=name, description=description, parameters=schema)
+        for name, (description, schema, _) in TOOLS.items()
     ]
-    tool_config = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY"))
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    client = client or gemini_client()
-
-    contents = [types.Content(role="user", parts=[types.Part(text=message)])]
+    model = model_name(DEFAULT_MODEL, model, stage="build")
+    contents = [Message(role="user", text=message)]
     summary = None
     for turn in range(1, max_turns + 1):
         with progress_step(on_progress, f"Build agent turn {turn}") as step:
             response = generate(
-                client, model, system, contents, on_progress=on_progress, tools=tools, tool_config=tool_config,
+                client, model, system, contents, on_progress=on_progress, stage="build", tools=tools, tool_choice="required",
             )
-            calls = response.function_calls or []
+            calls = response.tool_calls
             detail = f"Requested file operations: {len(calls)}." if calls else "No file operations returned."
             step.completed(detail)
         if not calls:
-            contents.append(types.Content(role="user", parts=[types.Part(text=load_prompt("build.nudge"))]))
+            contents.append(Message(role="user", text=load_prompt("build.nudge")))
             report(on_progress, "Ask the build agent to continue")
             continue
-        contents.append(response.candidates[0].content)  # keep the model's turn exactly as sent
+        contents.append(response.message)  # preserve adapter-owned assistant state for tool replay
 
         replies = []
         for call in calls:
-            args = dict(call.args or {})
+            args = dict(call.arguments)
             with progress_step(on_progress, TOOL_LABELS.get(call.name, "Handle a solver file request")) as step:
                 if call.name == "finish":
                     issues = unfinished_issues(workspace)
@@ -269,9 +225,9 @@ def run_build(
                     status = f"syntax error, {result['syntax_error']}"
                 on_event(f"turn {turn}: {call.name} {args.get('path', '')} ({status})".replace("  ", " "))
             replies.append(
-                types.Part(function_response=types.FunctionResponse(name=call.name, response=result, id=call.id))
+                Message(role="tool", name=call.name, result=result, tool_call_id=call.id)
             )
-        contents.append(types.Content(role="user", parts=replies))
+        contents.extend(replies)
 
         if summary is not None:
             with progress_step(on_progress, "Save the solver build record"):
@@ -297,7 +253,7 @@ def main() -> None:
     try:
         workspace = open_workspace(args.workspace_id)
         result = run_build(workspace, args.feedback, max_turns=args.max_turns, on_event=print)
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Build failed: {error}")
 
     print(f"\nFinished in {result.turns} turn(s). Files: {', '.join(result.files)}")

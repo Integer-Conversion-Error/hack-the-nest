@@ -1,7 +1,7 @@
 """Test step 3: evaluate semantics.
 
 Compares the implementation and its run results with the problem statement.
-The plan is assumed to match the problem statement already. Gemini does this
+The plan is assumed to match the problem statement already. The configured model does this
 in a fresh conversation, reading the problem statement, the source files and
 the results of each run.
 
@@ -10,12 +10,12 @@ the results of each run.
 """
 
 import json
-import os
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.build import DEFAULT_MODEL, BuildError, gemini_client, generate, source_files
+from backend.build import DEFAULT_MODEL, BuildError, source_files
+from backend.model_provider import generate, model_name, model_run
 from backend.problem_statement import load_problem_statement
 from backend.progress import ProgressCallback
 from backend.prompt_loader import load_prompt
@@ -34,7 +34,7 @@ class SemanticIssue(BaseModel):
 
 
 class _ModelReview(BaseModel):
-    """What Gemini returns."""
+    """The model's review response."""
 
     verdict: Literal["matches", "falls_short"]
     summary: str = Field(description="Two or three sentences on whether the solver solves the stated problem.")
@@ -93,6 +93,7 @@ def describe_runs(runs: list[RunOutcome]) -> str:
     return "\n\n".join(parts)
 
 
+@model_run
 def evaluate_semantics(
     workspace: Workspace,
     runs: list[RunOutcome],
@@ -106,11 +107,11 @@ def evaluate_semantics(
     listing = "\n\n".join(
         f"=== {path} ===\n{workspace.resolve(path).read_text(encoding='utf-8')}" for path in source_files(workspace)
     )
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    model = model_name(DEFAULT_MODEL, model, stage="semantic_review")
     response = generate(
-        client or gemini_client(),
+        client,
         model,
-        # Prompts are read from prompts.md now, before Gemini is called.
+        # Prompts are read from prompts.md now, before the model is called.
         load_prompt("test_semantics.system"),
         load_prompt(
             "test_semantics.user",
@@ -119,15 +120,14 @@ def evaluate_semantics(
             files=listing,
         ),
         on_progress=on_progress,
-        response_mime_type="application/json",
-        response_json_schema=_ModelReview.model_json_schema(),
+        stage="semantic_review", schema=_ModelReview.model_json_schema(),
     )
     try:
         judged = _ModelReview.model_validate_json(response.text or "")
     except ValidationError as error:
-        raise BuildError("Gemini returned no usable semantic review.") from error
+        raise BuildError("The model returned no usable semantic review.") from error
 
-    # The verdict follows from the issues, whatever label Gemini chose.
+    # The verdict follows from the issues, whatever label the model chose.
     return SemanticReview(
         verdict="falls_short" if judged.issues else "matches",
         summary=judged.summary,

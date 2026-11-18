@@ -21,7 +21,7 @@ Install the backend requirements in the same Python environment.
 python -m pip install -r requirements.txt
 ```
 
-Set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `QR_ACCOUNT`, and `QR_KEY` in the repository root's `.env`. Set `GEMINI_MODEL` if your key requires a specific model. Restart the dashboard, enter an EV fleet problem under **Your problem**, and select **Run pipeline**. From a results or history screen, select **New problem** to return to the prompt box.
+Set `QR_ACCOUNT` and `QR_KEY` in the repository root's `.env`. Gemini is the default model provider: set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), with an optional `GEMINI_MODEL` override. To use OpenRouter, set `MODEL_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, and `OPENROUTER_MODEL`. The [model provider guide](../backend/MODEL_PROVIDERS.md) covers models per stage, shared retries, and usage tracking. Restart the dashboard, enter an EV fleet problem under **Your problem**, and select **Run pipeline**. From a results or history screen, select **New problem** to return to the prompt box.
 
 Choose a sample and select **Load sample** to fill the prompt box. Edit the text before running if you want to change the scenario.
 

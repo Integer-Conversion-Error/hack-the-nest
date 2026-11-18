@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from backend.build import ENTRY_POINT, BuildError, run_build
 from backend.build_review import BuildReview, compare_with_plan
+from backend.model_provider import ModelError, model_run
 from backend.problem_statement import ENV_FILE
 from backend.progress import ProgressCallback, report
 from backend.prompt_loader import PromptError
@@ -47,6 +48,7 @@ class BuildPhaseResult(BaseModel):
     review: BuildReview
 
 
+@model_run
 def run_build_phase(
     workspace: Workspace,
     feedback: str | None = None,
@@ -122,7 +124,7 @@ def main() -> None:
         result = run_build_phase(workspace, args.feedback, max_rounds=args.max_rounds, on_event=print)
     except BuildNotApproved as error:
         sys.exit(f"Build phase stopped: {error}\nRemaining issues:\n{error.review.feedback()}")
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Build phase failed: {error}")
 
     print(f"\nReady for Test after {result.rounds} round(s).")

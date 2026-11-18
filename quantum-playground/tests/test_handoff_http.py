@@ -57,6 +57,22 @@ class HandoffTests(unittest.TestCase):
         self.addCleanup(planner_env.stop)
         self.dashboard_url = self.serve(QuietDashboard)
 
+    def test_openrouter_enables_the_native_pipeline_without_exposing_credentials(self):
+        with patch.dict(os.environ, {
+            "QUANTUM_BACKEND_URL": "", "MODEL_PROVIDER": "openrouter",
+            "OPENROUTER_API_KEY": "private-openrouter-key", "OPENROUTER_MODEL": "fixture/model",
+        }, clear=True):
+            with self.request("/api/config") as response:
+                body = response.read().decode("utf-8")
+            config = json.loads(body)
+            self.assertTrue(config["pipeline_backend_configured"])
+            self.assertTrue(config["saved_run_recalculation_configured"])
+            self.assertNotIn("private-openrouter-key", body)
+
+            with patch.dict(os.environ, {"OPENROUTER_MODEL": ""}):
+                with self.request("/api/config") as response:
+                    self.assertFalse(json.load(response)["pipeline_backend_configured"])
+
     def serve(self, handler):
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)

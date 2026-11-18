@@ -14,7 +14,6 @@ Usage:
 
 import argparse
 import ast
-import os
 import sys
 from typing import Literal
 
@@ -27,11 +26,11 @@ from backend.build import (
     BuildError,
     BuildResult,
     build_contract,
-    gemini_client,
-    generate,
     source_files,
     unfinished_issues,
 )
+from backend.model_provider import generate, model_name, model_run
+from backend.model_types import ModelError
 from backend.plan import PLAN_JSON, PlanningResult, load_plan, render_markdown
 from backend.problem_statement import ENV_FILE, load_problem_statement
 from backend.progress import ProgressCallback, progress_step
@@ -52,7 +51,7 @@ class PlanIssue(BaseModel):
 
 
 class _ModelReview(BaseModel):
-    """What Gemini returns."""
+    """The model's review response."""
 
     verdict: Literal["matches", "falls_short"]
     summary: str = Field(description="Two or three sentences on how well the implementation matches the plan.")
@@ -88,7 +87,7 @@ class BuildReview(BaseModel):
 def automatic_issues(
     workspace: Workspace, planning: PlanningResult, *, on_progress: ProgressCallback | None = None,
 ) -> list[str]:
-    """Problems found by inspecting the files, without Gemini and without running anything."""
+    """Problems found by inspecting the files, without a model call and without running anything."""
     with progress_step(on_progress, "Check the entry point and Python syntax") as step:
         issues = unfinished_issues(workspace)
         if issues:
@@ -132,6 +131,7 @@ def automatic_issues(
     return issues
 
 
+@model_run
 def compare_with_plan(
     workspace: Workspace, *, model: str | None = None, client=None, on_progress: ProgressCallback | None = None,
 ) -> BuildReview:
@@ -156,12 +156,12 @@ def compare_with_plan(
         f"=== {path} ===\n{workspace.resolve(path).read_text(encoding='utf-8')}" for path in sources
     )
 
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    model = model_name(DEFAULT_MODEL, model, stage="build_review")
     with progress_step(on_progress, "Review the solver files against the approved plan") as step:
         response = generate(
-            client or gemini_client(),
+            client,
             model,
-            # Prompts are read from prompts.md now, before Gemini is called.
+            # Prompts are read from prompts.md now, before the model is called.
             load_prompt("build_review.system", contract=build_contract(planning, workspace)),
             load_prompt(
                 "build_review.user",
@@ -172,13 +172,12 @@ def compare_with_plan(
                 files=listing,
             ),
             on_progress=on_progress,
-            response_mime_type="application/json",
-            response_json_schema=_ModelReview.model_json_schema(),
+            stage="build_review", schema=_ModelReview.model_json_schema(),
         )
         try:
             judged = _ModelReview.model_validate_json(response.text or "")
         except ValidationError as error:
-            raise BuildError("Gemini returned no usable review.") from error
+            raise BuildError("The model returned no usable review.") from error
 
         if found or judged.issues:
             notes = [judged.summary] + [
@@ -190,7 +189,7 @@ def compare_with_plan(
         else:
             step.completed(judged.summary)
 
-    # The verdict follows from the issues, whatever label Gemini chose.
+    # The verdict follows from the issues, whatever label the model chose.
     review = BuildReview(
         verdict="falls_short" if found or judged.issues else "matches",
         summary=judged.summary,
@@ -216,7 +215,7 @@ def main() -> None:
     try:
         workspace = open_workspace(args.workspace_id)
         review = compare_with_plan(workspace)
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Review failed: {error}")
 
     print(f"Verdict: {review.verdict.upper()}")

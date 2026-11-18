@@ -1,5 +1,5 @@
 """Init step 2 of the agent loop: rewrite the user's natural-language prompt
-into a precise, structured problem statement with Gemini.
+into a precise, structured problem statement with the configured model.
 
 Prompt text comes from backend/prompts.md (problem_statement.* sections),
 re-read on every call.
@@ -17,14 +17,15 @@ Usage from a terminal (re-parse an existing workspace):
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from backend.progress import ProgressCallback, progress_step
+from backend.model_provider import generate, model_name, model_run
+from backend.model_types import ModelError
 from backend.prompt_loader import PromptError, load_prompt
 from backend.workspace import Workspace, WorkspaceError, open_workspace
 
@@ -37,11 +38,11 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class ProblemStatementError(Exception):
-    """Raised when Gemini returns nothing usable."""
+    """Raised when the model returns nothing usable."""
 
 
-# --- Schema Gemini must fill in ------------------------------------------------
-# Field descriptions are sent to Gemini as part of the schema, so they double
+# --- Schema the model must fill in ------------------------------------------------
+# Field descriptions are sent to the model as part of the schema, so they double
 # as instructions.
 
 class Parameter(BaseModel):
@@ -110,6 +111,7 @@ class ProblemStatement(BaseModel):
     )
 
 
+@model_run
 def parse_problem_statement(
     workspace: Workspace,
     feedback: str | None = None,
@@ -121,15 +123,11 @@ def parse_problem_statement(
     """Turn the workspace's prompt.md into problem.json and PROBLEM.md, and return the result.
 
     feedback: issues found by Final Go/No-Go when this step is being redone.
-    client:   an existing google.genai.Client; one is created from GEMINI_API_KEY if omitted.
+    client: an existing provider-neutral model client or session; created from configuration if omitted.
     """
-    from google import genai
-    from google.genai import types
+    model = model_name(DEFAULT_MODEL, model, stage="interpret")
 
-    client = client or genai.Client()
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-
-    # Prompts are read from prompts.md now, before Gemini is called.
+    # Prompts are read from prompts.md now, before the model is called.
     limits = workspace.meta["limits"]
     system_instruction = load_prompt(
         "problem_statement.system",
@@ -144,22 +142,19 @@ def parse_problem_statement(
 
     label = "Revise the problem statement" if feedback else "Interpret the original prompt"
     with progress_step(on_progress, label):
-        response = client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-                response_schema=ProblemStatement,
-            ),
+        response = generate(
+            client, model, system_instruction, contents,
+            stage="interpret", schema=ProblemStatement.model_json_schema(), on_progress=on_progress,
         )
 
     with progress_step(on_progress, "Check the problem statement") as step:
-        problem = response.parsed
-        if not isinstance(problem, ProblemStatement):
+        try:
+            problem = ProblemStatement.model_validate_json(response.text)
+        except ValidationError as error:
             step.failed("The model did not return a usable problem statement.")
-            reason = response.candidates[0].finish_reason if response.candidates else "no candidates"
-            raise ProblemStatementError(f"Gemini returned no valid problem statement (finish reason: {reason}).")
+            raise ProblemStatementError(
+                f"The model returned no valid problem statement (finish reason: {response.finish_reason})."
+            ) from error
         if problem.is_optimization_problem:
             step.completed(f"{problem.title} · Proposed method: {problem.quantum.method}")
         else:
@@ -227,7 +222,7 @@ def main() -> None:
     try:
         workspace = open_workspace(args.workspace_id)
         problem = parse_problem_statement(workspace, feedback=args.feedback)
-    except (WorkspaceError, PromptError, ProblemStatementError) as error:
+    except (WorkspaceError, PromptError, ProblemStatementError, ModelError) as error:
         sys.exit(f"Could not parse problem statement: {error}")
 
     print(f"Wrote {workspace.resolve(PROBLEM_MD)}")
