@@ -119,6 +119,7 @@ def pipeline_handoff(
         from pydantic import ValidationError
 
         from backend.build import BuildError
+        from backend.build_review import solver_fingerprint
         from backend.pipeline import HANDOFF_JSON, PipelineError, run_pipeline
         from backend.plan import load_plan
         from backend.planning import ClarificationRequired, PlanningError
@@ -182,7 +183,10 @@ def pipeline_handoff(
             attempt = Workspace(workspace.id, Path(directory))
             copytree(workspace.path, attempt.path, dirs_exist_ok=True,
                      ignore=ignore_patterns("__pycache__", "results.json", "test.json", HANDOFF_JSON))
+            approved_inputs = solver_fingerprint(attempt)
             outcome = run_solver(attempt, values)
+            if solver_fingerprint(attempt) != approved_inputs:
+                raise UnverifiedResult("The solver inputs changed during recalculation. Start a new dispatch to verify them.")
             if outcome.timed_out:
                 raise TimeoutError("The fleet solver timed out while recalculating the requested settings.")
             if not outcome.passed:
@@ -191,6 +195,8 @@ def pipeline_handoff(
             normalize_handoff(handoff, "live", prompt, previous, expected_values=values)
             with planner_session(workspace=workspace) as client:
                 review = evaluate_semantics(attempt, [outcome], client=client)
+            if solver_fingerprint(attempt) != approved_inputs:
+                raise UnverifiedResult("The solver inputs changed during review. Recalculate the settings again.")
             if not review.matches:
                 raise UnverifiedResult("The recalculated schedule did not pass independent review.")
             return handoff

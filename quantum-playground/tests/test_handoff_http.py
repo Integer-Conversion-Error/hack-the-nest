@@ -796,11 +796,13 @@ class HandoffTests(unittest.TestCase):
         def needs_input(_request, *, on_stage, on_progress):
             on_stage("init")
             on_stage("plan")
-            on_progress("Review the prompt", status="running", detail="Fixture credential fixture-key")
+            on_progress("Review the prompt", status="running",
+                        detail="Fixture credentials fixture-key and fixture-openrouter-key")
             raise UnverifiedResult("Which depot is the starting point?")
 
         with (
-            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": "", "GEMINI_API_KEY": "fixture-key"}),
+            patch.dict(os.environ, {"QUANTUM_BACKEND_URL": "", "GEMINI_API_KEY": "fixture-key",
+                                    "OPENROUTER_API_KEY": "fixture-openrouter-key"}),
             patch("server.run_plan", side_effect=needs_input) as runner,
         ):
             job_id = self.start_pipeline("An EV fleet with an unspecified depot.")["id"]
@@ -810,7 +812,8 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(snapshot["error"], "Which depot is the starting point?")
         self.assertEqual(snapshot["history"][-1]["status"], "failed")
         self.assertEqual(snapshot["history"][-1]["steps"], [
-            {"id": 1, "label": "Review the prompt", "status": "failed", "detail": "Fixture credential [redacted]"},
+            {"id": 1, "label": "Review the prompt", "status": "failed",
+             "detail": "Fixture credentials [redacted] and [redacted]"},
         ])
         self.assertNotIn("result", snapshot)
 

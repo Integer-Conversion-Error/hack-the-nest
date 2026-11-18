@@ -362,7 +362,9 @@ def complete_pipeline_run(run):
             })
 
     protected = sorted(
-        {os.getenv(key, "").strip() for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "QR_KEY", "QR_ACCOUNT")} - {""},
+        {os.getenv(key, "").strip() for key in (
+            "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "QR_KEY", "QR_ACCOUNT",
+        )} - {""},
         key=len, reverse=True,
     )
 

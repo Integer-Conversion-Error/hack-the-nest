@@ -98,7 +98,12 @@ def captured_circuit(workspace, output, *, saved=False):
             if report_path.resolve() != report_path:
                 return None
             report = json.loads(report_path.read_bytes())
-            default = report["runs"][0]
+            if not isinstance(report, dict):
+                return None
+            runs = report.get("runs")
+            if not isinstance(runs, list) or not runs or not isinstance(runs[0], dict):
+                return None
+            default = runs[0]
             if (default.get("controls") != {} or default.get("exit_code") != 0 or default.get("timed_out") is not False
                     or default.get("issues") != []
                     or json.dumps(default.get("results"), sort_keys=True) != json.dumps(output, sort_keys=True)

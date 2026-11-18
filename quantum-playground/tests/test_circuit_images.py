@@ -100,6 +100,16 @@ class CircuitImageTests(unittest.TestCase):
         path.unlink()
         self.assertIsNone(captured_circuit(self.workspace, self.output, saved=True))
 
+    def test_saved_capture_ignores_malformed_optional_test_report(self):
+        path = self.workspace.resolve("test.json")
+        for report in (None, [], 0, {}, {"runs": {}}, {"runs": []},
+                       *({"runs": [entry]} for entry in (None, "damaged", 0, []))):
+            with self.subTest(report=report):
+                path.write_text(json.dumps(report), encoding="utf-8")
+                self.assertIsNone(captured_circuit(self.workspace, self.output, saved=True))
+        path.write_text("[" * 1200 + "0" + "]" * 1200, encoding="utf-8")
+        self.assertIsNone(captured_circuit(self.workspace, self.output, saved=True))
+
     def test_captured_image_never_follows_paths_or_symlinks(self):
         altered = {**self.output, "quantum": {"circuit_diagram": {"file": "../circuit.png"}}}
         self.assertIsNone(captured_circuit(self.workspace, altered))
@@ -125,7 +135,7 @@ class CircuitImageTests(unittest.TestCase):
         self.assertEqual(project_result(artifact, output, "Fleet", identity)["result"]["circuits"], output["circuits"])
 
     def test_saved_workspace_reopen_exposes_only_its_matching_default_image(self):
-        from workspace_runs import open_saved_run
+        from workspace_runs import list_saved_runs, open_saved_run
 
         original = reference_handoff({})
         output = {
@@ -148,6 +158,12 @@ class CircuitImageTests(unittest.TestCase):
         with patch.dict("os.environ", {"QUANTUM_WORKSPACES_ROOT": self.directory.name}):
             first = open_saved_run(self.workspace.id)
             self.assertEqual(first["circuits"][0]["image"], image(self.bytes))
+            self.workspace.resolve("test.json").write_text(json.dumps({"runs": [None]}), encoding="utf-8")
+            self.assertEqual(open_saved_run(self.workspace.id)["circuits"], [])
+            summaries = list_saved_runs()
+            self.assertEqual(len(summaries), 1)
+            self.assertTrue(summaries[0]["can_open"], "a damaged optional image report must not hide a verified run")
+            self.workspace.resolve("test.json").write_text(json.dumps(report), encoding="utf-8")
             self.workspace.resolve("circuit.png").write_bytes(png((0, 100, 50)))
             self.assertEqual(open_saved_run(self.workspace.id)["circuits"], [])
         self.assertEqual(first["circuits"][0]["image"], image(self.bytes))
