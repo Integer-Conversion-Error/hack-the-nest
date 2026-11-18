@@ -37,24 +37,109 @@
     return snapshot;
   }
 
+  function describe(snapshot) {
+    if (snapshot == null) {
+      snapshot = { id: 'pending', status: 'queued', stage: null, attempt: 0 };
+    }
+    validate(snapshot);
+    const history = snapshot.history ?? [];
+    const latest = new Map();
+    for (const [index, visit] of history.entries()) {
+      const targetIndex = stages.findIndex(stage => stage.id === visit.stage);
+      const source = history[index - 1];
+      if (source && targetIndex < stages.findIndex(stage => stage.id === source.stage)) {
+        // Returning to an earlier stage invalidates its downstream approvals.
+        for (const stage of stages.slice(targetIndex + 1)) latest.delete(stage.id);
+        if (source.status === 'revising' || source.status === 'failed') latest.set(source.stage, source);
+      }
+      latest.set(visit.stage, visit);
+    }
+    const activeIndex = stages.findIndex(stage => stage.id === snapshot.stage);
+    const stageDescriptions = stages.map((stage, index) => {
+      let state = latest.get(stage.id)?.status ?? 'pending';
+      if (snapshot.status === 'completed') state = 'completed';
+      else if (!history.length && activeIndex >= 0) {
+        state = index < activeIndex ? 'completed' : index === activeIndex
+          ? snapshot.status === 'failed' ? 'failed' : 'running' : 'pending';
+      }
+      const attempt = !history.length && state === 'running' && snapshot.attempt > 1
+        ? ' · Attempt ' + snapshot.attempt : '';
+      return { id: stage.id, label: stage.label, state, status: (visitStates[state] ?? 'Pending') + attempt };
+    });
+
+    const visit = (snapshot.status === 'running'
+      ? history.findLast(item => item.status === 'running') : undefined) ?? history.at(-1);
+    const stage = stages.find(item => item.id === (visit?.stage ?? snapshot.stage));
+    const step = (snapshot.status === 'running'
+      ? visit?.steps.findLast(item => item.status === 'running') : undefined) ?? visit?.steps.at(-1);
+    let current = {
+      label: step?.label || stage?.label || 'Waiting to start',
+      detail: step?.detail || stage?.activity || 'Waiting for the pipeline to start…',
+    };
+    if (snapshot.status === 'completed') {
+      current = { label: 'Pipeline complete', detail: 'Your verified result is ready.' };
+    } else if (snapshot.status === 'failed') {
+      current.detail = typeof snapshot.error === 'string' && snapshot.error
+        ? snapshot.error : step?.detail || 'The pipeline could not produce a verified result.';
+    }
+
+    let repair = null;
+    if (snapshot.status !== 'completed') {
+      for (let index = history.length - 1; index > 0; index--) {
+        const source = history[index - 1];
+        const target = history[index];
+        const sourceIndex = stages.findIndex(item => item.id === source.stage);
+        const targetIndex = stages.findIndex(item => item.id === target.stage);
+        if (targetIndex >= sourceIndex) continue;
+        const finding = source.steps.findLast(item => item.status === 'failed')
+          ?? source.steps.findLast(item => item.detail) ?? source.steps.at(-1);
+        const reason = finding?.detail || finding?.label || 'The previous check requested a revision.';
+        repair = {
+          label: 'Returned to ' + stages[targetIndex].label,
+          detail: stages[sourceIndex].label + ': ' + reason + ' · Attempt ' + target.attempt,
+        };
+        break;
+      }
+    }
+
+    return {
+      stages: stageDescriptions,
+      completed: stageDescriptions.filter(item => item.state === 'completed').length,
+      total: stages.length,
+      // A backward transition starts one repair loop; its following re-test is part of that loop.
+      revisionCount: history.filter((item, index) => index > 0 &&
+        stages.findIndex(stage => stage.id === item.stage) <
+        stages.findIndex(stage => stage.id === history[index - 1].stage)).length,
+      current, repair,
+    };
+  }
+
   function createHistoryView(list, toggle, node, writeText) {
     const visits = new Map();
-    let expandAll = true;
+    // null follows stage status; explicit show/hide-all choices apply to new visits too.
+    let expandAll = null;
 
     function updateToggle() {
       const anyOpen = [...visits.values()].some(({ disclosure }) => disclosure.open);
-      if (!anyOpen && visits.size) expandAll = false;
-      writeText(toggle, anyOpen || expandAll ? 'Hide all steps' : 'Show all steps');
+      writeText(toggle, anyOpen ? 'Hide all steps' : 'Show all steps');
+    }
+
+    function setOpen(item, open) {
+      item.expectedOpen = open;
+      if (item.disclosure.open !== open) item.disclosure.open = open;
     }
 
     toggle.onclick = () => {
       expandAll = ![...visits.values()].some(({ disclosure }) => disclosure.open);
-      for (const { disclosure } of visits.values()) disclosure.open = expandAll;
+      for (const item of visits.values()) {
+        item.manualOpen = expandAll;
+        setOpen(item, expandAll);
+      }
       updateToggle();
     };
 
     function reset() {
-      expandAll = true;
+      expandAll = null;
       visits.clear();
       list.replaceChildren();
       render([]);
@@ -63,8 +148,6 @@
     function addVisit(visit) {
       const row = node('li', undefined, 'pipeline-visit');
       const disclosure = node('details');
-      disclosure.open = expandAll;
-      disclosure.ontoggle = updateToggle;
       const summary = node('summary');
       const title = node('span', undefined, 'pipeline-visit-title');
       title.append(node('strong', stages.find(stage => stage.id === visit.stage).label),
@@ -76,7 +159,15 @@
       disclosure.append(summary, steps);
       row.append(disclosure);
       list.append(row);
-      const item = { disclosure, summary, state, steps, stepRows: new Map() };
+      const item = { disclosure, summary, state, steps, stepRows: new Map(),
+        expectedOpen: disclosure.open, manualOpen: expandAll };
+      disclosure.ontoggle = () => {
+        if (disclosure.open !== item.expectedOpen) {
+          item.manualOpen = disclosure.open;
+          item.expectedOpen = disclosure.open;
+        }
+        updateToggle();
+      };
       visits.set(visit.id, item);
       return item;
     }
@@ -84,6 +175,9 @@
     function render(history) {
       for (const visit of history) {
         const item = visits.get(visit.id) ?? addVisit(visit);
+        // A user may toggle immediately before the next poll, before ontoggle fires.
+        if (item.disclosure.open !== item.expectedOpen) item.manualOpen = item.disclosure.open;
+        setOpen(item, item.manualOpen ?? visit.status !== 'completed');
         item.summary.setAttribute('data-state', visit.status);
         item.summary.setAttribute('aria-current', visit.status === 'running' ? 'step' : 'false');
         writeText(item.state, visitStates[visit.status]);
@@ -139,5 +233,5 @@
     return snapshot;
   }
 
-  globalThis.PipelineProgress = { createHistoryView, follow, stages };
+  globalThis.PipelineProgress = { createHistoryView, describe, follow, stages };
 })();

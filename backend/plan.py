@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, StrictStr, model_validator
 
+from backend.structured_edit import StructuredEdit
 from backend.workspace import Workspace
 
 PLAN_JSON = "plan.json"
@@ -130,6 +131,12 @@ class Plan(BaseModel):
     def selected(self) -> SolverExample:
         return next(solver for solver in self.solver_examples if solver.name == self.selected_solver)
 
+    def implementation_json(self) -> str:
+        """Render requirements and the selected design for downstream model calls."""
+        fields = self.model_dump(mode="json", exclude_none=True, exclude={"solver_examples"})
+        fields["selected_design"] = self.selected.model_dump(mode="json", exclude_none=True)
+        return json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+
 
 class PlanDraft(BaseModel):
     status: Literal["ready", "needs_clarification", "unsupported"]
@@ -156,9 +163,12 @@ class PlanReview(BaseModel):
     issues: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
     reason: str | None = None
+    refresh_research: bool = False
 
     @model_validator(mode="after")
     def check_verdict(self) -> "PlanReview":
+        if self.refresh_research and self.verdict != "revise":
+            raise ValueError("A research refresh requires a revision issue.")
         if self.verdict == "approve" and (self.issues or self.questions):
             raise ValueError("Approval requires empty issues and questions lists.")
         if self.verdict == "revise" and not any(issue.strip() for issue in self.issues):
@@ -168,6 +178,25 @@ class PlanReview(BaseModel):
         if self.verdict in {"unsupported", "needs_reinterpretation"}:
             if not (self.reason or "").strip() and not any(issue.strip() for issue in self.issues):
                 raise ValueError("This verdict requires a reason or an issue to fix.")
+        return self
+
+
+class PlanRevision(BaseModel):
+    status: Literal["ready", "needs_clarification", "unsupported"]
+    edits: list[StructuredEdit] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def check_status(self) -> "PlanRevision":
+        if self.status != "ready" and self.edits:
+            raise ValueError("A response that requests clarification or reports unsupported input cannot include edits.")
+        if self.status == "ready" and self.questions:
+            raise ValueError("A ready revision cannot include questions.")
+        if self.status == "needs_clarification" and not any(question.strip() for question in self.questions):
+            raise ValueError("Clarification requires a question.")
+        if self.status == "unsupported" and not (self.reason or "").strip():
+            raise ValueError("Unsupported input requires a reason.")
         return self
 
 
@@ -198,6 +227,9 @@ class PlanningResult(BaseModel):
     max_qubits: StrictInt = Field(ge=1)
     worker_seconds: StrictInt = Field(ge=1)
     review: PlanReview
+    fidelity_fingerprint: str | None = None
+    research_scope: str | None = None
+    answers: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_approval(self) -> "PlanningResult":

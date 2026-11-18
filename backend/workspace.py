@@ -13,6 +13,7 @@ Usage from a terminal:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from tempfile import TemporaryDirectory
 
 WORKSPACES_ROOT = Path(__file__).resolve().parent.parent / "workspaces"
 
@@ -56,6 +58,20 @@ class Workspace:
         if not target.is_relative_to(self.path):
             raise WorkspaceError(f"Path escapes the workspace: {relative_path!r}")
         return target
+
+
+def fingerprint(*values) -> str:
+    """Identify the exact JSON inputs to an approval or saved run."""
+    payload = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def write_atomic(path: Path, data: bytes) -> None:
+    """Keep the previous artifact intact if the replacement cannot be published."""
+    with TemporaryDirectory(dir=path.parent, prefix=".publish-") as staging:
+        replacement = Path(staging) / path.name
+        replacement.write_bytes(data)
+        replacement.replace(path)
 
 
 def _slugify(text: str, max_length: int = 40) -> str:

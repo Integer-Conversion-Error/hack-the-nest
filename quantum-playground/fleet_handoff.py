@@ -4,6 +4,7 @@ import math
 import re
 from fractions import Fraction
 
+from circuit_images import valid_png_image
 
 class InvalidHandoff(ValueError):
     pass
@@ -243,6 +244,68 @@ def validate_replay(sim):
     return len(delivered)
 
 
+def normalize_classical_comparison(evaluation):
+    classical = evaluation.get("classical")
+    if classical is None:
+        return evaluation
+    require(
+        isinstance(classical, dict)
+        and is_text(classical.get("method"))
+        and is_number(classical.get("objective_value"))
+        and classical.get("feasible") is True
+        and type(classical.get("optimality_proven")) is bool,
+        "Invalid classical solver comparison.",
+    )
+    if "selected_options" in classical:
+        options = classical["selected_options"]
+        require(isinstance(options, list) and all(map(is_text, options)), "Invalid classical route options.")
+    value = classical["objective_value"]
+    gap = evaluation["objective_value"] - value
+    tolerance = 2e-6  # Allow for independently rounded USD values and gaps.
+    require(is_number(gap) and (not classical["optimality_proven"] or gap >= -tolerance),
+            "The classical comparison contradicts the verified objective.")
+    for key, expected in (("reference_value", value), ("gap", gap)):
+        if key in evaluation:
+            reported = evaluation[key]
+            require(is_number(reported) and math.isclose(reported, expected, rel_tol=0, abs_tol=tolerance),
+                    "The reported gap or reference cost does not match the classical result.")
+    return {
+        **evaluation,
+        "reference_value": value,
+        "gap": evaluation.get("gap", gap),
+    }
+
+
+def normalize_classical_replay(classical, simulation):
+    validate_replay(classical)
+    require(classical.get("counts", {}) == {}, "The classical schedule cannot include circuit measurements.")
+
+    def same_entities(key, *fields):
+        def by_id(scene):
+            return {item["id"]: tuple(item[field] for field in fields) for item in scene[key]}
+
+        return by_id(classical) == by_id(simulation)
+
+    require(
+        all(classical[key] == simulation[key]
+            for key in ("depot", "start_hour", "duration_min", "battery_capacity_kwh", "reserve_pct"))
+        and all(classical["grid"][key] == simulation["grid"][key] for key in ("width", "height", "block_km"))
+        and same_entities("chargers", "position")
+        and same_entities("deliveries", "position", "deadline_min"),
+        "The classical map must use the same fleet scenario and operating hours.",
+    )
+    classical_vans = {van["id"]: van for van in classical["vans"]}
+    require(
+        len(classical_vans) == len(simulation["vans"])
+        and all(van["id"] in classical_vans and math.isclose(
+            van["initial_battery_kwh"], classical_vans[van["id"]]["initial_battery_kwh"], rel_tol=0, abs_tol=1e-7,
+        ) for van in simulation["vans"]),
+        "The classical map must use the same vans and starting batteries.",
+    )
+    # Color assignments in the renderer follow the van order.
+    return {**classical, "vans": [classical_vans[van["id"]] for van in simulation["vans"]]}
+
+
 def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=None, expected_attempt_id=None):
     require(isinstance(handoff, dict) and type(handoff.get("schema_version")) is int
             and handoff["schema_version"] == 1, "Expected a VisualizationHandoff with schema_version 1.")
@@ -322,8 +385,13 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
     explanation = result.get("explanation", "")
     counts = simulation.get("counts", {})
     require(
-        isinstance(circuits, list) and all(isinstance(circuit, dict) and is_text(circuit.get("drawing"))
-                                          for circuit in circuits)
+        isinstance(circuits, list) and len(circuits) <= 16
+        and all(isinstance(circuit, dict)
+                and (is_text(circuit.get("drawing")) or valid_png_image(circuit.get("image")))
+                and ("image" not in circuit or valid_png_image(circuit["image"]))
+                and ("title" not in circuit or is_text(circuit["title"]))
+                and ("description" not in circuit or isinstance(circuit["description"], str))
+                for circuit in circuits)
         and isinstance(quantum, dict) and isinstance(assumptions, list) and all(map(is_text, assumptions))
         and isinstance(explanation, str) and isinstance(counts, dict)
         and all(re.fullmatch(r"[01]+", bits) and type(count) is int and count >= 0 for bits, count in counts.items()),
@@ -338,12 +406,19 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
         "variables": controls,
         "effective_values": effective,
         "simulation": simulation,
-        "evaluation": evaluation,
+        "evaluation": normalize_classical_comparison(evaluation),
         "circuits": circuits,
         "quantum": quantum,
         "assumptions": assumptions,
         "explanation": explanation,
     }
+    classical = result.get("classical_simulation")
+    if classical is not None:
+        require(
+            mode != "reference" and view["evaluation"].get("classical") is not None,
+            "A second map requires a feasible classical comparison.",
+        )
+        view["classical_simulation"] = normalize_classical_replay(classical, simulation)
     if mode == "recorded":
         source = result.get("source")
         require(

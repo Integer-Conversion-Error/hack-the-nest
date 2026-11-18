@@ -1,16 +1,12 @@
 """The whole agent loop, from a user's prompt to a GO handoff for the frontend:
 
-  Init            new workspace, parse the prompt into a problem statement
-  Plan            research, draft and review a solver plan
-  Build           write the solver files, compare them with the plan
-  Test            run main.py, evaluate the run, evaluate semantics
-  Final Go/No-Go  three checks; a failed check sends the work back:
-                    problem statement vs prompt  -> Init (parse), then Plan, Build, Test
-                    plan vs problem statement    -> Plan, then Build, Test
-                    implementation vs plan       -> Build, then Test
-  GO              write handoff.json for the frontend
+  Init   Parse and check the problem statement against the original prompt.
+  Plan   Review the proposed solver for fidelity and feasibility before Build.
+  Build  Review existing files or write a new solver. Patch specific findings.
+  Test   Verify solver runs and record GO once the current artifacts pass.
 
-A workspace can be resumed: stages whose output already exists are skipped.
+Resume reuses approvals for matching inputs and repairs existing artifacts only
+when a check identifies an issue.
 
 Usage:
     python -m backend.pipeline example-user-prompts/ev-fleet-dispatch-optimization.md
@@ -27,13 +23,29 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from backend.build import ENTRY_POINT, BuildError
+from backend.build import DEFAULT_MODEL, ENTRY_POINT, BuildError
 from backend.build_phase import BuildNotApproved, run_build_phase
-from backend.build_review import BUILD_REVIEW_JSON, BuildReview
-from backend.final_check import FinalDecision, describe, run_final_checks
-from backend.plan import PLAN_JSON, load_plan
-from backend.planning import ClarificationRequired, PlanningError, run_planning
+from backend.build_review import solver_fingerprint
+from backend.final_check import (
+    FINAL_JSON,
+    FinalCheck,
+    FinalDecision,
+    check_implementation_against_plan,
+    check_plan_against_problem,
+    check_problem_against_prompt,
+    describe,
+    save_decision,
+)
+from backend.model_provider import ModelError, model_name, model_run, model_session
 from backend.progress import ProgressCallback, progress_step, report
+from backend.plan import PLAN_JSON, load_plan
+from backend.planning import (
+    ClarificationRequired,
+    PlanningError,
+    ReinterpretationRequired,
+    planning_answers,
+    run_planning,
+)
 from backend.problem_statement import (
     ENV_FILE,
     PROBLEM_JSON,
@@ -41,13 +53,13 @@ from backend.problem_statement import (
     load_problem_statement,
     parse_problem_statement,
 )
-from backend.prompt_loader import PromptError, load_prompt
+from backend.prompt_loader import PromptError
 from backend.runner import CIRCUIT_DIAGRAM, RESULTS_JSON
 from backend.testing import TestNotPassed, run_test_phase
-from backend.workspace import Workspace, WorkspaceError, init_workspace, open_workspace
+from backend.workspace import Workspace, WorkspaceError, fingerprint, init_workspace, open_workspace, write_atomic
 
 HANDOFF_JSON = "handoff.json"
-DEFAULT_MAX_FINAL_ROUNDS = 3  # the first decision plus up to two trips back
+DEFAULT_MAX_FINAL_ROUNDS = 3  # one review and up to two scoped repairs per gate
 PipelineStage = Literal["init", "plan", "build", "test", "verify"]
 
 
@@ -56,18 +68,114 @@ class PipelineError(Exception):
 
 
 class NoGo(PipelineError):
-    """Final Go/No-Go still fails after the allowed rounds."""
+    """A review still fails after the allowed repair rounds."""
 
     def __init__(self, message: str, decision: FinalDecision) -> None:
         super().__init__(message)
         self.decision = decision
 
 
-def _build_is_approved(workspace: Workspace) -> bool:
-    review = workspace.resolve(BUILD_REVIEW_JSON)
-    if not review.is_file() or not workspace.resolve(ENTRY_POINT).is_file():
-        return False
-    return BuildReview.model_validate_json(review.read_text(encoding="utf-8")).matches
+def _requirements_id(workspace: Workspace) -> str:
+    return fingerprint(workspace.prompt, workspace.meta, load_problem_statement(workspace).model_dump(mode="json"))
+
+
+def _prepare_requirements(
+    workspace: Workspace, answers: Sequence[str], client, model: str, max_rounds: int, say: Callable[[str], None],
+    *, on_stage: Callable[[PipelineStage], None] | None = None, on_progress: ProgressCallback | None = None,
+) -> tuple[FinalCheck, FinalCheck, str]:
+    if on_stage is not None:
+        on_stage("init")
+    if not workspace.resolve(PROBLEM_JSON).is_file():
+        say("##### Init: parsing the prompt into a problem statement")
+        parse_problem_statement(workspace, client=client, on_progress=on_progress)
+
+    init_repairs = 0
+    plan_repairs = 0
+    plan_feedback = None
+    previous_draft = None
+
+    def repair_problem(check: FinalCheck) -> None:
+        nonlocal init_repairs
+        feedback = "\n".join(check.issues)
+        while init_repairs < max_rounds - 1:
+            init_repairs += 1
+            if on_stage is not None:
+                on_stage("init")
+            report(on_progress, "Return to prompt parsing", detail=feedback)
+            say(f"##### Init: repairing the problem statement\n{feedback}")
+            try:
+                parse_problem_statement(workspace, feedback=feedback, client=client, on_progress=on_progress)
+                return
+            except ProblemStatementError as error:
+                feedback = "\n".join([*check.issues, str(error)])
+        decision = save_decision(workspace, [check], model)
+        raise NoGo(f"The problem statement could not be repaired. {feedback}", decision)
+
+    while True:
+        problem = load_problem_statement(workspace)
+        if not problem.is_optimization_problem:
+            raise PipelineError(f"The prompt was rejected: {problem.rejection_reason}")
+        before = _requirements_id(workspace)
+        with progress_step(on_progress, "Check the problem statement against the prompt") as step:
+            problem_check = check_problem_against_prompt(workspace, client, model, on_progress=on_progress)
+            if problem_check.passed:
+                step.completed(problem_check.summary)
+            else:
+                step.failed("\n".join([problem_check.summary, *problem_check.issues]))
+        if before != _requirements_id(workspace):
+            raise PipelineError("The prompt or problem changed during its review. Resume to check the current inputs.")
+        if not problem_check.passed:
+            repair_problem(problem_check)
+            continue
+
+        if on_stage is not None:
+            on_stage("plan")
+        planning = load_plan(workspace) if workspace.resolve(PLAN_JSON).is_file() else None
+        if planning is not None and not plan_feedback:
+            limits = workspace.meta["limits"]
+            qubits = limits["max_qubits"]
+            if problem.quantum.qubit_budget is not None:
+                qubits = min(qubits, problem.quantum.qubit_budget)
+            if planning.max_qubits > qubits or planning.worker_seconds > limits["run_timeout_seconds"]:
+                plan_feedback = "Check the existing plan against the tighter qubit and worker-time limits. Update only what is affected."
+            elif planning_answers(planning.answers, answers) != planning.answers:
+                plan_feedback = "Apply the new user clarifications to the existing plan. Preserve everything still valid."
+
+        if planning is None or plan_feedback:
+            if plan_feedback:
+                report(on_progress, "Return to planning", detail=plan_feedback)
+            say("##### Plan: repairing the saved plan" if planning or previous_draft else "##### Plan")
+            try:
+                planning = run_planning(
+                    workspace, plan_feedback, answers=answers, client=client, previous_draft=previous_draft,
+                    on_progress=on_progress,
+                )
+            except ReinterpretationRequired as error:
+                previous_draft = error.checkpoint
+                plan_feedback = "The problem statement was corrected. Update only the parts of the plan affected by the correction."
+                repair_problem(FinalCheck(
+                    name="Problem statement against the original prompt", returns_to="init",
+                    verdict="falls_short", summary=str(error), issues=[str(error)],
+                ))
+                continue
+            say(f"Selected solver: {planning.plan.selected.name} (approved after {planning.attempts} attempt(s))")
+
+        plan_id = fingerprint(before, planning.model_dump(mode="json"))
+        with progress_step(on_progress, "Check the plan against the problem statement") as step:
+            plan_check = check_plan_against_problem(workspace, client, model, on_progress=on_progress)
+            if plan_check.passed:
+                step.completed(plan_check.summary)
+            else:
+                step.failed("\n".join([plan_check.summary, *plan_check.issues]))
+        if plan_id != fingerprint(_requirements_id(workspace), load_plan(workspace).model_dump(mode="json")):
+            raise PipelineError("The problem or plan changed during its review. Resume to check the current inputs.")
+        if plan_check.passed:
+            return problem_check, plan_check, plan_id
+        if plan_repairs == max_rounds - 1:
+            decision = save_decision(workspace, [problem_check, plan_check], model)
+            raise NoGo("The plan still fails its fidelity review.", decision)
+        plan_repairs += 1
+        plan_feedback = "\n".join(plan_check.issues)
 
 
 def write_handoff(workspace: Workspace, decision: FinalDecision) -> dict:
@@ -98,10 +206,12 @@ def write_handoff(workspace: Workspace, decision: FinalDecision) -> dict:
         "results": json.loads(workspace.resolve(RESULTS_JSON).read_text(encoding="utf-8")),
         "final_checks": [{"name": check.name, "summary": check.summary} for check in decision.checks],
     }
-    workspace.resolve(HANDOFF_JSON).write_text(json.dumps(handoff, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    output = json.dumps(handoff, indent=2, ensure_ascii=False) + "\n"
+    write_atomic(workspace.resolve(HANDOFF_JSON), output.encode("utf-8"))
     return handoff
 
 
+@model_run
 def run_pipeline(
     workspace: Workspace,
     *,
@@ -116,53 +226,45 @@ def run_pipeline(
     """Take a workspace from wherever it is to a GO handoff. Returns the handoff.
 
     answers: the user's replies to planning's clarifying questions, if any.
-    on_stage: reports every stage entry, including returns to earlier stages.
-    on_progress: reports step changes and the reason for any return to an earlier stage.
     validate_results: an optional check of the result and requested overrides, raising ValueError on failure.
     Raises NoGo, PipelineError, or the stage's own error when a stage cannot finish.
     """
+    if max_final_rounds < 1:
+        raise PipelineError("Allow at least one review per gate.")
     say = on_event or (lambda message: None)
+    model = model_name(DEFAULT_MODEL, stage="final_review")
+    build_review_model = model_name(DEFAULT_MODEL, stage="build_review")
+    workspace.resolve(HANDOFF_JSON).unlink(missing_ok=True)
+    workspace.resolve(FINAL_JSON).unlink(missing_ok=True)
+    problem_check, plan_check, plan_id = _prepare_requirements(
+        workspace, answers, client, model, max_final_rounds, say, on_stage=on_stage, on_progress=on_progress,
+    )
 
-    def enter(stage: PipelineStage, message: str) -> None:
+    feedback = None
+    for _ in range(max_final_rounds):
         if on_stage is not None:
-            on_stage(stage)
-        say(message)
-
-    def plan(feedback: str | None = None) -> None:
-        enter("plan", "##### Plan")
-        result = run_planning(workspace, feedback, answers=answers, client=client, on_progress=on_progress)
-        say(f"Selected solver: {result.plan.selected.name} (approved after {result.attempts} attempt(s))")
-
-    def build(feedback: str | None = None) -> None:
-        enter("build", "##### Build")
-        run_build_phase(workspace, feedback, client=client, on_event=on_event, on_progress=on_progress)
-
-    def test() -> None:
+            on_stage("build")
+        say("##### Build")
+        run_build_phase(workspace, feedback, client=client, on_event=on_event, on_progress=on_progress, review_existing=True)
         say("##### Test")
-        run_test_phase(
-            workspace, client=client, on_event=on_event, on_stage=on_stage,
-            on_progress=on_progress, validate_results=validate_results,
-        )
+        run_test_phase(workspace, client=client, on_event=on_event, on_stage=on_stage, on_progress=on_progress,
+                       validate_results=validate_results, reuse=True)
 
-    # --- Forward pass, skipping stages whose output already exists
-    if not workspace.resolve(PROBLEM_JSON).is_file():
-        enter("init", "##### Init: parsing the prompt into a problem statement")
-        parse_problem_statement(workspace, client=client, on_progress=on_progress)
-    problem = load_problem_statement(workspace)
-    if not problem.is_optimization_problem:
-        raise PipelineError(f"The prompt was rejected: {problem.rejection_reason}")
-    say(f"Problem: {problem.title} ({problem.quantum.method})")
-
-    if not workspace.resolve(PLAN_JSON).is_file():
-        plan()
-    if not _build_is_approved(workspace):
-        build()
-    test()
-
-    # --- Final Go/No-Go, going back to the stage a failed check points at
-    for round_number in range(1, max_final_rounds + 1):
-        enter("verify", f"##### Final Go/No-Go (round {round_number} of {max_final_rounds})")
-        decision = run_final_checks(workspace, client=client, on_progress=on_progress)
+        if plan_id != fingerprint(_requirements_id(workspace), load_plan(workspace).model_dump(mode="json")):
+            raise PipelineError("The problem or plan changed during Build or Test. Resume to check the current inputs.")
+        tested_inputs = solver_fingerprint(workspace)
+        if on_stage is not None:
+            on_stage("verify")
+        say("##### Final Go/No-Go")
+        with progress_step(on_progress, "Check the implementation against the plan") as step:
+            implementation_check = check_implementation_against_plan(workspace, client, build_review_model, on_progress=on_progress)
+            if implementation_check.passed:
+                step.completed(implementation_check.summary)
+            else:
+                step.failed("\n".join([implementation_check.summary, *implementation_check.issues]))
+        if solver_fingerprint(workspace) != tested_inputs:
+            raise PipelineError("Solver inputs changed during Final review. Resume to verify the current implementation.")
+        decision = save_decision(workspace, [problem_check, plan_check, implementation_check], model)
         say(describe(decision))
         if decision.go:
             report(on_progress, "Approve the result", status="completed")
@@ -170,31 +272,10 @@ def run_pipeline(
                 handoff = write_handoff(workspace, decision)
             say(f"##### GO. Wrote {workspace.resolve(HANDOFF_JSON)}")
             return handoff
-        if round_number == max_final_rounds:
-            report(
-                on_progress, "Verification stopped", status="failed",
-                detail=f"No approval after {max_final_rounds} verification rounds.",
-            )
-            break
+        feedback = decision.feedback()
+        report(on_progress, "Return to Build", detail=feedback)
 
-        issues = decision.feedback()
-        target = {"init": "prompt parsing", "plan": "planning", "build": "Build"}.get(decision.failed_stage, "Build")
-        failed_check = next((check for check in decision.checks if not check.passed), None)
-        report(on_progress, f"Return to {target}", detail=issues or (failed_check.summary if failed_check else None))
-        if decision.failed_stage == "init":
-            enter("init", "##### Init: revising the problem statement")
-            parse_problem_statement(workspace, feedback=issues, client=client, on_progress=on_progress)
-            if not load_problem_statement(workspace).is_optimization_problem:
-                raise PipelineError("The revised problem statement was rejected.")
-            plan(load_prompt("final.problem_changed", issues=issues))
-            build(load_prompt("final.plan_changed", issues=issues))
-        elif decision.failed_stage == "plan":
-            plan(issues)
-            build(load_prompt("final.plan_changed", issues=issues))
-        else:
-            build(issues)
-        test()
-
+    report(on_progress, "Verification stopped", status="failed", detail=f"No approval after {max_final_rounds} verification rounds.")
     raise NoGo(f"Final Go/No-Go still fails after {max_final_rounds} rounds.", decision)
 
 
@@ -206,7 +287,8 @@ def main() -> None:
     parser.add_argument("prompt_file", nargs="?", type=Path, help="Markdown/text file with the user's prompt")
     parser.add_argument("--workspace", help="Resume an existing workspace instead of starting from a prompt file")
     parser.add_argument("--answer", action="append", default=[], help="Answer to a planning question, repeat as needed")
-    parser.add_argument("--max-final-rounds", type=int, default=DEFAULT_MAX_FINAL_ROUNDS)
+    parser.add_argument("--max-final-rounds", type=int, default=DEFAULT_MAX_FINAL_ROUNDS,
+                        help="Maximum reviews and scoped repairs per gate")
     args = parser.parse_args()
     if bool(args.prompt_file) == bool(args.workspace):
         parser.error("Give either a prompt file or --workspace.")
@@ -217,7 +299,10 @@ def main() -> None:
         else:
             workspace = init_workspace(args.prompt_file.read_text(encoding="utf-8"), name=args.prompt_file.stem)
         print(f"Workspace: {workspace.id}")
-        handoff = run_pipeline(workspace, answers=args.answer, max_final_rounds=args.max_final_rounds, on_event=print)
+        with model_session() as client:
+            handoff = run_pipeline(
+                workspace, answers=args.answer, client=client, max_final_rounds=args.max_final_rounds, on_event=print,
+            )
     except ClarificationRequired as error:
         sys.exit(f"{error}\nRerun with --workspace {workspace.id} and --answer for each question.")
     except NoGo as error:
@@ -227,7 +312,7 @@ def main() -> None:
     except BuildNotApproved as error:
         sys.exit(f"Stopped in Build: {error}\nRemaining issues:\n{error.review.feedback()}")
     except (
-        OSError, BuildError, PipelineError, PlanningError, ProblemStatementError,
+        OSError, BuildError, ModelError, PipelineError, PlanningError, ProblemStatementError,
         PromptError, ValidationError, WorkspaceError,
     ) as error:
         sys.exit(f"Pipeline failed: {error}")

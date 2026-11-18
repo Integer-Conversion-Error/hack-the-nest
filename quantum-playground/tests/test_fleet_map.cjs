@@ -17,7 +17,8 @@ function createContext(overrides) {
   }, overrides);
 }
 
-function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position: [grid.width - 2, grid.height - 2] }]) {
+function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position: [grid.width - 2, grid.height - 2] }],
+  motionAllowed = () => true) {
   const vans = Array.from({ length: count }, (_, index) => ({
     id: `V${index + 1}`,
     initial_battery_kwh: 4,
@@ -39,10 +40,12 @@ function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position:
   const streetPaths = [];
   const listeners = new Map();
   const inspected = [];
+  const circles = [];
   const context = createContext({
     translate(x, y) { bodies.push([x, y]); },
     fillText(text, x, y) { labels.set(text, [x, y]); },
     stroke(route) { if (route instanceof CanvasPath) routeStrokes.push(this.strokeStyle); },
+    arc(...args) { circles.push(args); },
   });
   const canvas = {
     getContext: () => context,
@@ -55,7 +58,7 @@ function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position:
   const browser = vm.createContext({ Path2D: CanvasPath, FleetReplay });
   vm.runInContext(fs.readFileSync(path.resolve(__dirname, '../web/fleet-map.js'), 'utf8'), browser);
   const colors = Array.from({ length: count }, (_, index) => `#00000${index}`);
-  const map = browser.FleetMap.create(canvas, { colors, onInspect: hit => inspected.push(hit) });
+  const map = browser.FleetMap.create(canvas, { colors, onInspect: hit => inspected.push(hit), motionAllowed });
   map.setSimulation(simulation);
   map.draw(0, vans[0].id);
 
@@ -76,6 +79,10 @@ function testMap(grid, viewport, depot, count, chargers = [{ id: 'C3', position:
   });
   chargers.forEach(({ id }) => click(labels.get(id), 'charger', id));
   click(labels.get('D1'), 'delivery', 'D1');
+  return {
+    draw(minute, playing) { circles.length = 0; map.draw(minute, null, playing); return circles.length; },
+    clear() { map.setSimulation(null); map.draw(0); },
+  };
 }
 
 const chargers = [{ id: 'C1', position: [5, 4] }, { id: 'C2', position: [6, 5] }, { id: 'C3', position: [5, 6] }];
@@ -84,4 +91,12 @@ testMap({ width: 12, height: 12 }, { width: 300, height: 225, left: 16, top: 48 
 testMap({ width: 12, height: 12 }, { width: 300, height: 225, left: 16, top: 48 }, [0, 0], 6);
 testMap({ width: 6, height: 6 }, { width: 840, height: 540, left: 0, top: 0 }, [2, 2], 2);
 testMap({ width: 20, height: 14 }, { width: 460, height: 250, left: 16, top: 48 }, [3, 3], 5);
-console.log('PASS: responsive street grid, selected routes, and click targets for vans at a shared stop, a charger, and a delivery');
+const motion = testMap({ width: 6, height: 6 }, { width: 840, height: 540, left: 0, top: 0 }, [2, 2], 2);
+const paused = motion.draw(0.5, false);
+assert.ok(motion.draw(0.5, true) > paused, 'moving vans get a short trail based on recent positions');
+assert.equal(motion.draw(0.5, false), paused, 'pause and scrub frames have no motion trail');
+assert.doesNotThrow(() => motion.clear(), 'an absent classical replay can clear its map');
+const reduced = testMap({ width: 6, height: 6 }, { width: 840, height: 540, left: 0, top: 0 }, [2, 2], 2,
+  undefined, () => false);
+assert.equal(reduced.draw(0.5, true), reduced.draw(0.5, false), 'reduced motion suppresses decorative vehicle trails');
+console.log('PASS: responsive map, selected routes, accessible inspection targets, and reduced-motion-aware vehicle trails');

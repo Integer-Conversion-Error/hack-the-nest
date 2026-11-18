@@ -1,14 +1,7 @@
-"""Final Go/No-Go: three checks, in order, before the result goes to the frontend.
+"""Review problem fidelity and plan fidelity, then record the decision at handoff.
 
-  1. Problem statement against the user's original prompt   -> bad: back to Init (parse)
-  2. Plan against the problem statement                     -> bad: back to Plan
-  3. Implementation against the plan                        -> bad: back to Build
-  Then GO.
-
-Checking stops at the first check that fails, because everything after it
-would be redone anyway. Going back is expensive, so a failed check is run a
-second time and only counts if it fails again. This module only decides;
-backend/pipeline.py acts on the decision.
+The pipeline runs each review before starting its downstream work. A standalone
+Final check evaluates the current artifacts and reuses matching approvals.
 
 Reads   <workspace>/prompt.md, problem.json, plan.json and the solver files
 Writes  <workspace>/final.json
@@ -18,19 +11,22 @@ Usage:
 """
 
 import argparse
-import os
+import json
 import sys
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.build import DEFAULT_MODEL, BuildError, build_contract, gemini_client, generate
-from backend.build_review import compare_with_plan
-from backend.plan import load_plan, render_markdown
+from backend.build import DEFAULT_MODEL, BuildError, build_contract
+from backend.build_review import BuildReview, compare_with_plan
+from backend.model_provider import generate, model_name, model_provider, model_run
+from backend.model_types import ModelError
+from backend.progress import ProgressCallback, progress_step, report
+from backend.plan import PlanningResult, load_plan
+from backend.planning import plan_fidelity_fingerprint
 from backend.problem_statement import ENV_FILE, load_problem_statement
-from backend.progress import ProgressCallback, progress_step
 from backend.prompt_loader import PromptError, load_prompt
-from backend.workspace import Workspace, WorkspaceError, open_workspace
+from backend.workspace import Workspace, WorkspaceError, fingerprint, open_workspace, write_atomic
 
 FINAL_JSON = "final.json"
 
@@ -44,7 +40,7 @@ class FinalIssue(BaseModel):
 
 
 class _ModelCheck(BaseModel):
-    """What Gemini returns for checks 1 and 2."""
+    """The model's response for checks 1 and 2."""
 
     verdict: Literal["matches", "falls_short"]
     summary: str = Field(description="Two or three sentences on how well the two documents agree.")
@@ -53,10 +49,11 @@ class _ModelCheck(BaseModel):
 
 class FinalCheck(BaseModel):
     name: str
-    returns_to: Stage  # the stage that has to redo its work if this check fails
+    returns_to: Stage
     verdict: Literal["matches", "falls_short"]
     summary: str
     issues: list[str]
+    fingerprint: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -81,18 +78,16 @@ class FinalDecision(BaseModel):
 
 def _judge(
     client, model: str, name: str, returns_to: Stage, system: str, message: str,
-    on_progress: ProgressCallback | None,
+    *, on_progress: ProgressCallback | None = None,
 ) -> FinalCheck:
     response = generate(
         client, model, system, message,
-        on_progress=on_progress,
-        response_mime_type="application/json",
-        response_json_schema=_ModelCheck.model_json_schema(),
+        stage="final_review", schema=_ModelCheck.model_json_schema(), on_progress=on_progress,
     )
     try:
         judged = _ModelCheck.model_validate_json(response.text or "")
     except ValidationError as error:
-        raise BuildError(f"Gemini returned no usable result for the check '{name}'.") from error
+        raise BuildError(f"The model returned no usable result for the check '{name}'.") from error
     return FinalCheck(
         name=name,
         returns_to=returns_to,
@@ -102,18 +97,34 @@ def _judge(
     )
 
 
+def _review(
+    workspace: Workspace, client, model: str, name: str, stage: Stage, system: str, message: str,
+    *, on_progress: ProgressCallback | None = None,
+) -> FinalCheck:
+    signature = fingerprint(model_provider(), model, system, message, _ModelCheck.model_json_schema())
+    path = workspace.resolve(f".review-{stage}.json")
+    try:
+        saved = FinalCheck.model_validate_json(path.read_bytes())
+    except (FileNotFoundError, ValidationError):
+        saved = None
+    if saved is not None and saved.passed and saved.returns_to == stage and saved.fingerprint == signature:
+        report(on_progress, "Reuse the fidelity review", status="completed", detail=saved.summary)
+        return saved
+    result = _judge(client, model, name, stage, system, message, on_progress=on_progress)
+    if result.passed:
+        result.fingerprint = signature
+        write_atomic(path, result.model_dump_json().encode("utf-8"))
+    return result
+
+
 def check_problem_against_prompt(
     workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
 ) -> FinalCheck:
-    return _judge(
-        client, model, "Problem statement against the original prompt", "init",
+    return _review(
+        workspace, client, model, "Problem statement against the original prompt", "init",
         load_prompt("final.problem.system"),
-        load_prompt(
-            "final.problem.user",
-            prompt=workspace.prompt,
-            problem=load_problem_statement(workspace).model_dump_json(indent=2),
-        ),
-        on_progress,
+        load_prompt("final.problem.user", prompt=workspace.prompt, problem=load_problem_statement(workspace).model_dump_json()),
+        on_progress=on_progress,
     )
 
 
@@ -121,22 +132,30 @@ def check_plan_against_problem(
     workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
 ) -> FinalCheck:
     planning = load_plan(workspace)
-    return _judge(
-        client, model, "Plan against the problem statement", "plan",
+    if planning.fidelity_fingerprint and planning.fidelity_fingerprint == plan_fidelity_fingerprint(workspace, model=model):
+        report(on_progress, "Reuse the approved plan review", status="completed", detail="The plan and fidelity review policy are unchanged.")
+        return approved_plan_check(planning)
+    return _review(
+        workspace, client, model, "Plan against the problem statement", "plan",
         load_prompt("final.plan.system", contract=build_contract(planning, workspace)),
         load_prompt(
             "final.plan.user",
-            problem=load_problem_statement(workspace).model_dump_json(indent=2),
-            plan=render_markdown(planning),
+            problem=load_problem_statement(workspace).model_dump_json(),
+            plan=planning.plan.implementation_json(),
+            answers=json.dumps(planning.answers, ensure_ascii=False),
         ),
-        on_progress,
+        on_progress=on_progress,
     )
 
 
-def check_implementation_against_plan(
-    workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
-) -> FinalCheck:
-    review = compare_with_plan(workspace, model=model, client=client, on_progress=on_progress)
+def approved_plan_check(planning: PlanningResult) -> FinalCheck:
+    return FinalCheck(
+        name="Plan against the problem statement", returns_to="plan", verdict="matches",
+        summary=planning.review.reason or "Planning verified the selected solver against the problem statement.", issues=[],
+    )
+
+
+def build_check(review: BuildReview) -> FinalCheck:
     return FinalCheck(
         name="Implementation against the plan",
         returns_to="build",
@@ -146,6 +165,12 @@ def check_implementation_against_plan(
     )
 
 
+def check_implementation_against_plan(
+    workspace: Workspace, client, model: str, *, on_progress: ProgressCallback | None = None,
+) -> FinalCheck:
+    return build_check(compare_with_plan(workspace, model=model, client=client, on_progress=on_progress))
+
+
 CHECKS = (
     ("Check the problem statement against the prompt", check_problem_against_prompt),
     ("Check the plan against the problem statement", check_plan_against_problem),
@@ -153,16 +178,25 @@ CHECKS = (
 )
 
 
+def save_decision(workspace: Workspace, checks: list[FinalCheck], model: str) -> FinalDecision:
+    failed = next((check.returns_to for check in checks if not check.passed), None)
+    decision = FinalDecision(decision="NO_GO" if failed else "GO", failed_stage=failed, checks=checks, model=model)
+    write_atomic(workspace.resolve(FINAL_JSON), (decision.model_dump_json(indent=2) + "\n").encode("utf-8"))
+    return decision
+
+
+@model_run
 def run_final_checks(
     workspace: Workspace, *, model: str | None = None, client=None, on_progress: ProgressCallback | None = None,
 ) -> FinalDecision:
     """Run the three checks in order, stop at the first failure, and save the decision."""
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    client = client or gemini_client()
+    build_review_model = model_name(DEFAULT_MODEL, model, stage="build_review")
+    model = model_name(DEFAULT_MODEL, model, stage="final_review")
 
     def run_check(label, check):
         with progress_step(on_progress, label) as step:
-            result = check(workspace, client, model, on_progress=on_progress)
+            check_model = build_review_model if check is check_implementation_against_plan else model
+            result = check(workspace, client, check_model, on_progress=on_progress)
             if result.passed:
                 step.completed(result.summary)
             else:
@@ -181,10 +215,8 @@ def run_final_checks(
         if not result.passed:
             break
     failed = None if checks[-1].passed else checks[-1].returns_to
-    decision = FinalDecision(decision="NO_GO" if failed else "GO", failed_stage=failed, checks=checks, model=model)
     with progress_step(on_progress, "Save the verification decision"):
-        workspace.resolve(FINAL_JSON).write_text(decision.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    return decision
+        return save_decision(workspace, checks, model)
 
 
 def describe(decision: FinalDecision) -> str:
@@ -213,7 +245,7 @@ def main() -> None:
     try:
         workspace = open_workspace(args.workspace_id)
         decision = run_final_checks(workspace)
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Final check failed: {error}")
 
     print(describe(decision))

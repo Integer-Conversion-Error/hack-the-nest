@@ -9,7 +9,7 @@ Steps the agent goes through: **Init → Plan → Build → Test → Final Go/No
 - Python 3.11 or newer (tested with 3.12)
 - Git
 - A Quantum Rings account and license key: <https://www.quantumrings.com>
-- A Gemini API key: <https://aistudio.google.com/apikey>
+- A [Gemini API key](https://aistudio.google.com/apikey) or an [OpenRouter API key](https://openrouter.ai/settings/keys)
 
 ## 2. Get the code
 
@@ -51,13 +51,19 @@ Copy the example file:
 cp .env.example .env
 ```
 
-Open `.env` and fill in the three values:
+Open `.env` and fill in your Quantum Rings credentials and selected model provider:
 
 ```
 QR_KEY=your-quantum-rings-key
 QR_ACCOUNT=your-quantum-rings-account-email
 GEMINI_API_KEY=your-gemini-key
 ```
+
+Gemini remains the default. To use OpenRouter, set `MODEL_PROVIDER=openrouter`,
+`OPENROUTER_API_KEY`, and `OPENROUTER_MODEL` instead. You can choose separate
+models for interpretation, research, planning, building, and reviews. See the
+[model provider guide](backend/MODEL_PROVIDERS.md) for configuration, shared
+retry budgets, and the usage artifacts written to each workspace.
 
 `.env` is ignored by git. Never commit it.
 

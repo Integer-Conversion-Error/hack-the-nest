@@ -44,6 +44,13 @@ class LocalEvSolverTests(unittest.TestCase):
                 self.assertEqual(result["controls"], {"van_2_initial_charge_pct": charge})
                 self.assertEqual(result["objective"]["unit"], "USD")
                 self.assertAlmostEqual(result["reference"]["objective_value"], reference_cost, places=6)
+                classical = result["classical"]
+                self.assertTrue(classical["optimality_proven"])
+                self.assertEqual(classical["objective"], {
+                    "value": reference_cost, "unit": "USD", "direction": "minimize",
+                })
+                self.assertEqual(classical["solution"]["verification"], {"feasible": True, "violations": []})
+                self.assertEqual(classical["solution"]["vans"][1]["initial_soc_pct"], charge)
                 self.assert_measured_solution(result["quantum"], result["solution"], qubits)
                 self.assert_verified_schedule(result, charge)
 

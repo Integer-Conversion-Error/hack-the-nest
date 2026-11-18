@@ -8,11 +8,12 @@ statement constants, without importing dispatch_model or qubo_ising.
 from __future__ import annotations
 
 import itertools
-from typing import Any
-
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from . import validate_van2_charge_pct
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 RAW_PROBLEM = {
@@ -252,6 +253,8 @@ def verify_solution(
 
     qubo_sweep: dict[str, Any] | None = None
     if qubo_matrix is not None and qubo_const is not None:
+        import numpy as np
+
         n = qubo_matrix.shape[0]
         min_qubo_val = float("inf")
         min_qubo_bits: list[tuple[int, ...]] = []

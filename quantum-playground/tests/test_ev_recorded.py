@@ -2,8 +2,11 @@ import json
 import unittest
 from unittest.mock import patch
 
-from ev_recorded import RECORDED_PROMPT, RECORDING_DIR, recorded_handoff
+from ev_recorded import RECORDED_PROMPT, RECORDING_DIR, project_ev_result, recorded_handoff
 from fleet_handoff import InvalidHandoff, validate_replay
+from backend.ev_dispatch.classical import solve_classical
+from backend.ev_dispatch.dispatch_model import generate_feasible_options, simulate_schedule_timeline
+from backend.ev_dispatch.verifier import independent_evaluate_pair
 
 
 CONTROL = "van_2_initial_charge_pct"
@@ -29,6 +32,12 @@ class RecordedHandoffTests(unittest.TestCase):
         self.assertEqual(evaluation["objective_value"], output["objective"]["value"])
         self.assertEqual(evaluation["reference_value"], output["reference"]["objective_value"])
         self.assertEqual(evaluation["gap"], output["solution"]["verification"]["optimality_gap_usd"])
+
+        classical = result["classical_simulation"]
+        self.assertEqual(validate_replay(classical), 2)
+        self.assertEqual(classical["counts"], {})
+        self.assertEqual([van["option_id"] for van in classical["vans"]], output["reference"]["selected_options"])
+        self.assertEqual(classical["vans"][1]["initial_battery_kwh"], simulation["vans"][1]["initial_battery_kwh"])
 
         for van, option in zip(simulation["vans"], output["solution"]["vans"], strict=True):
             self.assertEqual(van["option_id"], option["option_id"])
@@ -96,6 +105,59 @@ class RecordedHandoffTests(unittest.TestCase):
     def test_rejects_a_value_without_a_recording(self):
         with self.assertRaises(ValueError):
             recorded_handoff({CONTROL: 30})
+
+    def test_recorded_measurements_remain_playable_if_exact_routes_cannot_be_reconstructed(self):
+        output = read_recording("handoff.json")["results"]
+        output["reference"]["selected_options"] = ["Van1_Slot2", "Van2_Direct"]
+
+        with patch("ev_recorded._recording", return_value=(output, "handoff.json", "Final GO handoff")):
+            result = recorded_handoff({})["result"]
+
+        self.assertNotIn("classical_simulation", result)
+        self.assertEqual(result["simulation"]["counts"], output["quantum"]["counts"])
+
+    def test_live_projects_the_provided_exact_schedule_beside_a_different_sampled_schedule(self):
+        output = read_recording("handoff.json")["results"]
+        output["classical"] = solve_classical(35)
+        sampled = independent_evaluate_pair("Slot 2", "Direct", 35)
+        self.assertTrue(sampled["feasible"])
+        options, _ = generate_feasible_options(35)
+        selected = [option for option in options if option.option_id in sampled["selected_options"]]
+        timeline = simulate_schedule_timeline(selected)
+        costs = {key: round(value, 6) for key, value in sampled["cost_breakdown"].items()}
+        output["solution"].update(
+            vans=[option.to_dict() for option in selected],
+            selected_options=sampled["selected_options"],
+            charger_bookings=timeline.charger_bookings,
+            cost_breakdown=costs,
+        )
+        output["solution"]["verification"].update(
+            optimality_gap_usd=20.5,
+            matches_classical_optimum=False,
+            independent_cost_breakdown=costs,
+        )
+        output["objective"]["value"] = costs["total_cost"]
+        output["reference"]["matches_quantum_solution"] = False
+        # The historical run measured this feasible assignment as bitstring 00110.
+        quantum = output["quantum"]
+        quantum["best_bitstring"] = "00110"
+        quantum["best_bitstring_share"] = round(quantum["counts"]["00110"] / quantum["shots"], 6)
+        identity = {"run_id": "run", "plan_id": "plan", "attempt_id": "attempt"}
+        with patch("ev_recorded.solve_classical", side_effect=AssertionError("Use the provided live result.")):
+            result = project_ev_result(output, identity, provenance="live", explanation="Verified.")["result"]
+
+        measured, classical = result["simulation"], result["classical_simulation"]
+        self.assertEqual(validate_replay(measured), 2)
+        self.assertEqual(validate_replay(classical), 2)
+        self.assertEqual(measured["vans"][0]["option_id"], "Van1_Slot2")
+        self.assertEqual(classical["vans"][0]["option_id"], "Van1_Slot1")
+        measured_charge = next(event for event in measured["vans"][0]["events"] if event["type"] == "charge")
+        classical_charge = next(event for event in classical["vans"][0]["events"] if event["type"] == "charge")
+        self.assertEqual(measured_charge["start_min"], 60)
+        self.assertEqual(classical_charge["start_min"], 30)
+        self.assertGreater(measured["counts"]["00110"], 0)
+        self.assertEqual(classical["counts"], {})
+        self.assertEqual(result["evaluation"]["gap"], 20.5)
 
 
 if __name__ == "__main__":

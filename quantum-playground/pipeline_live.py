@@ -1,7 +1,6 @@
 """Bridge the native agent pipeline to the verified fleet visualization."""
 
 import json
-import os
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,38 +8,32 @@ from shutil import copytree, ignore_patterns
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
+from circuit_images import captured_circuit
 from ev_live import SolverFailed, SolverUnavailable
-from fleet_handoff import UnverifiedResult, applied_values, is_number, normalize_controls, normalize_handoff, require
+from fleet_handoff import UnverifiedResult, applied_values, is_number, is_text, normalize_controls, normalize_handoff, require
 
 def planner_configured():
-    return bool(os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip())
+    from backend.model_provider import model_configured
+
+    return model_configured()
 
 
 @contextmanager
-def planner_session():
+def planner_session(workspace=None):
     try:
-        from google import genai
-        from google.genai.errors import APIError
-
-        from backend.planning import gemini_transport_errors
+        from backend.model_provider import ModelConfigurationError, ModelError, model_session
     except ImportError:
         raise SolverUnavailable("Install the repository requirements to enable the planning backend.") from None
     try:
-        client = genai.Client()
-    except ValueError:
-        raise SolverUnavailable("Configure GEMINI_API_KEY or GOOGLE_API_KEY to run the planner.") from None
-    try:
-        with client:
+        with model_session(workspace=workspace) as client:
             yield client
-    except APIError as exc:
-        raise SolverFailed(f"The planning service returned HTTP {exc.code}. Check the Gemini key and model configuration.") from None
-    except TimeoutError:
-        raise
-    except gemini_transport_errors():
-        raise SolverFailed("Could not reach the planning service. Retry the dispatch.") from None
+    except ModelConfigurationError as exc:
+        raise SolverUnavailable(str(exc)) from None
+    except ModelError as exc:
+        raise SolverFailed(str(exc)) from None
 
 
-def project_result(artifact, output, prompt, identity):
+def project_result(artifact, output, prompt, identity, *, workspace=None, saved_image=False):
     """Translate a native solver result using the approved plan and the solver's own replay."""
     require(isinstance(output, dict) and output.get("status") == "ok", "The fleet solver did not succeed.")
     solution = output.get("solution")
@@ -67,12 +60,32 @@ def project_result(artifact, output, prompt, identity):
                          for van in vans for event in van["events"]),
     }
     reference = output.get("reference")
+    classical_simulation = None
     if isinstance(reference, dict):
         reference_value = reference.get("objective_value", reference.get("value"))
         if is_number(reference_value):
             evaluation.update(reference_value=reference_value, gap=objective["value"] - reference_value)
+            method = reference.get("method")
+            optimality_proven = reference.get("optimality_proven")
+            if is_text(method) and reference.get("feasible") is True and isinstance(optimality_proven, bool):
+                classical = {
+                    "method": method.strip(),
+                    "objective_value": reference_value,
+                    "feasible": True,
+                    "optimality_proven": optimality_proven,
+                }
+                selected_options = reference.get("selected_options")
+                if isinstance(selected_options, list) and all(map(is_text, selected_options)):
+                    classical["selected_options"] = selected_options
+                evaluation["classical"] = classical
+                classical_simulation = reference.get("simulation")
     quantum_details = {key: value for key, value in quantum.items() if key != "counts"}
     quantum_details.update(actual_qubits=quantum.get("qubits"), binary_variables=quantum.get("decision_qubits"))
+    circuits = output.get("circuits", [])
+    if workspace is not None:
+        captured = captured_circuit(workspace, output, saved=saved_image)
+        if captured is not None and isinstance(circuits, list):
+            circuits = [*circuits, captured]
     return {
         "schema_version": 1,
         **identity,
@@ -89,9 +102,10 @@ def project_result(artifact, output, prompt, identity):
             "provenance": "live",
             "effective_values": output.get("controls"),
             "simulation": {**simulation, "counts": quantum.get("counts")},
+            **({"classical_simulation": classical_simulation} if isinstance(classical_simulation, dict) else {}),
             "evaluation": evaluation,
             "quantum": quantum_details,
-            "circuits": output.get("circuits", []),
+            "circuits": circuits,
         },
     }
 
@@ -105,6 +119,7 @@ def pipeline_handoff(
         from pydantic import ValidationError
 
         from backend.build import BuildError
+        from backend.build_review import solver_fingerprint
         from backend.pipeline import HANDOFF_JSON, PipelineError, run_pipeline
         from backend.plan import load_plan
         from backend.planning import ClarificationRequired, PlanningError
@@ -156,7 +171,7 @@ def pipeline_handoff(
                 )
             if artifact["decision"] != "GO":
                 raise UnverifiedResult("The pipeline did not approve the fleet plan.")
-            return project_result(artifact, artifact["results"], prompt, identity)
+            return project_result(artifact, artifact["results"], prompt, identity, workspace=workspace, saved_image=True)
 
         workspace = open_workspace(previous["plan_id"])
         identity = {"run_id": previous["run_id"], "plan_id": workspace.id, "attempt_id": attempt_id}
@@ -168,15 +183,20 @@ def pipeline_handoff(
             attempt = Workspace(workspace.id, Path(directory))
             copytree(workspace.path, attempt.path, dirs_exist_ok=True,
                      ignore=ignore_patterns("__pycache__", "results.json", "test.json", HANDOFF_JSON))
+            approved_inputs = solver_fingerprint(attempt)
             outcome = run_solver(attempt, values)
+            if solver_fingerprint(attempt) != approved_inputs:
+                raise UnverifiedResult("The solver inputs changed during recalculation. Start a new dispatch to verify them.")
             if outcome.timed_out:
                 raise TimeoutError("The fleet solver timed out while recalculating the requested settings.")
             if not outcome.passed:
                 raise UnverifiedResult("The fleet solver could not verify the requested settings.")
-            handoff = project_result(artifact, outcome.results, prompt, identity)
+            handoff = project_result(artifact, outcome.results, prompt, identity, workspace=attempt)
             normalize_handoff(handoff, "live", prompt, previous, expected_values=values)
-            with planner_session() as client:
+            with planner_session(workspace=workspace) as client:
                 review = evaluate_semantics(attempt, [outcome], client=client)
+            if solver_fingerprint(attempt) != approved_inputs:
+                raise UnverifiedResult("The solver inputs changed during review. Recalculate the settings again.")
             if not review.matches:
                 raise UnverifiedResult("The recalculated schedule did not pass independent review.")
             return handoff

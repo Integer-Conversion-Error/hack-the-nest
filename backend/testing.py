@@ -7,8 +7,8 @@
      - If it matches, the workspace is ready for Final Go/No-Go.
      - If not, go back to Build with the semantic issues.
 
-"Back to Build" runs the whole Build phase again (fix the files, compare with
-the plan), then Test starts over.
+Build receives the failed run or semantic issues and patches the existing files.
+The pipeline can reuse runs for the exact same solver inputs.
 
 Reads   <workspace>/main.py and the other solver files, problem.json, plan.json
 Writes  <workspace>/results.json  (by main.py; from the run with default controls)
@@ -21,22 +21,26 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
+from typing import Literal
 from collections.abc import Callable
 from fractions import Fraction
-from typing import Literal
+from hashlib import sha256
 
 from pydantic import BaseModel, ValidationError
 
 from backend.build import BuildError
 from backend.build_phase import BuildNotApproved, run_build_phase
+from backend.build_review import solver_fingerprint
 from backend.plan import PLAN_JSON, PlanControl, load_plan
-from backend.problem_statement import ENV_FILE
+from backend.model_provider import ModelError, model_run
 from backend.progress import ProgressCallback, progress_step, report
+from backend.problem_statement import ENV_FILE
 from backend.prompt_loader import PromptError
-from backend.runner import RESULTS_JSON, RunOutcome, run_solver
-from backend.semantics import SemanticReview, evaluate_semantics
-from backend.workspace import Workspace, WorkspaceError, open_workspace
+from backend.runner import CIRCUIT_DIAGRAM, RESULTS_JSON, RunOutcome, run_solver
+from backend.semantics import SemanticReview, evaluate_semantics, semantics_fingerprint
+from backend.workspace import Workspace, WorkspaceError, fingerprint, open_workspace, write_atomic
 
 TEST_JSON = "test.json"
 DEFAULT_MAX_ROUNDS = 4  # the first test plus up to three trips back to Build
@@ -48,10 +52,13 @@ class TestRound(BaseModel):
 
     runs: list[RunOutcome]
     semantics: SemanticReview | None = None
+    runtime_fingerprint: str | None = None
+    semantics_fingerprint: str | None = None
+    circuit_digest: str | None = None
 
     @property
     def passed(self) -> bool:
-        return all(run.passed for run in self.runs) and self.semantics is not None and self.semantics.matches
+        return bool(self.runs) and all(run.passed for run in self.runs) and self.semantics is not None and self.semantics.matches
 
     def feedback(self) -> str:
         """What to send back to Build."""
@@ -130,6 +137,50 @@ def control_variants(workspace: Workspace) -> list[dict]:
     return variants
 
 
+def _circuit(workspace: Workspace) -> bytes | None:
+    try:
+        return workspace.resolve(CIRCUIT_DIAGRAM).read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _circuit_digest(image: bytes | None) -> str | None:
+    return sha256(image).hexdigest() if image is not None else None
+
+
+def _runtime_fingerprint(workspace: Workspace, variants: list[dict]) -> str:
+    return fingerprint(1, solver_fingerprint(workspace), variants, sys.executable, sys.version,
+                       os.getenv("QR_ACCOUNT"), os.getenv("QR_BACKEND"), os.getenv("QR_KEY"))
+
+
+def _saved_runs(workspace: Workspace, signature: str, variants: list[dict], validate_results) -> TestRound | None:
+    try:
+        saved = TestRound.model_validate_json(workspace.resolve(TEST_JSON).read_bytes())
+        result = json.loads(workspace.resolve(RESULTS_JSON).read_bytes())
+    except (FileNotFoundError, ValueError):
+        return None
+    expected_controls = [{}, *variants]
+    if (
+        saved.runtime_fingerprint != signature or len(saved.runs) != len(expected_controls)
+        or any(
+            not run.passed or run.timed_out or run.exit_code != 0 or not isinstance(run.results, dict)
+            or fingerprint(run.controls) != fingerprint(expected)
+            for run, expected in zip(saved.runs, expected_controls)
+        )
+    ):
+        return None
+    if fingerprint(result) != fingerprint(saved.runs[0].results) or saved.circuit_digest != _circuit_digest(_circuit(workspace)):
+        return None
+    if validate_results is not None:
+        for run in saved.runs:
+            try:
+                validate_results(run.results, run.controls)
+            except ValueError:
+                return None
+    return saved
+
+
+@model_run
 def test_once(
     workspace: Workspace,
     *,
@@ -138,6 +189,7 @@ def test_once(
     on_event: Callable[[str], None] | None = None,
     on_progress: ProgressCallback | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
+    reuse: bool = False,
 ) -> TestRound:
     """Steps 1 to 3 without going back to Build. Saves test.json and returns the round."""
     say = on_event or (lambda message: None)
@@ -148,38 +200,69 @@ def test_once(
         say(f"    {outcome.command} ({outcome.seconds} s): {verdict}")
         return outcome
 
-    say("--- Test: running main.py")
-    runs = [run()]
-    if runs[0].passed:
-        with progress_step(on_progress, "Select alternate settings to test") as step:
-            variants = control_variants(workspace)
-            step.completed(f"Selected {len(variants)} alternate settings to test.")
-        runs += [run(variant) for variant in variants]
-        if len(runs) > 1 and all(r.passed for r in runs):
-            # Keep the same default result that Test checked, without running the circuit again.
-            with progress_step(on_progress, "Restore the default result"):
-                workspace.resolve(RESULTS_JSON).write_text(
-                    json.dumps(runs[0].results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
-                )
-    round_ = TestRound(runs=runs)
+    with progress_step(on_progress, "Select alternate settings to test") as step:
+        variants = control_variants(workspace)
+        step.completed(f"Selected {len(variants)} alternate settings to test.")
+    signature = _runtime_fingerprint(workspace, variants)
+    round_ = _saved_runs(workspace, signature, variants, validate_results) if reuse else None
+    if round_ is not None:
+        say("--- Test: reusing verified runs for unchanged solver inputs")
+        report(on_progress, "Reuse verified solver runs", status="completed", detail="The solver inputs and run policy are unchanged.")
+        after_runs = signature
+    else:
+        say("--- Test: running main.py")
+        runs = [run()]
+        default_diagram = _circuit(workspace)
+        if runs[0].passed and variants:
+            try:
+                runs.extend(run(variant) for variant in variants)
+            finally:
+                # The handoff uses the default results and their own circuit.
+                output = json.dumps(runs[0].results, indent=2, ensure_ascii=False) + "\n"
+                write_atomic(workspace.resolve(RESULTS_JSON), output.encode("utf-8"))
+                circuit = workspace.resolve(CIRCUIT_DIAGRAM)
+                if default_diagram is not None:
+                    write_atomic(circuit, default_diagram)
+                else:
+                    circuit.unlink(missing_ok=True)
+        round_ = TestRound(runs=runs, circuit_digest=_circuit_digest(default_diagram))
+        after_runs = _runtime_fingerprint(workspace, variants)
+        if signature != after_runs:
+            raise BuildError("Solver inputs changed during execution. Resume to verify the current implementation.")
+        if all(item.passed for item in runs):
+            round_.runtime_fingerprint = signature
 
-    if all(r.passed for r in runs):
-        say("--- Test: evaluating semantics against the problem statement")
-        with progress_step(on_progress, "Check the solution against the problem") as step:
-            round_.semantics = evaluate_semantics(workspace, runs, model=model, client=client, on_progress=on_progress)
-            if round_.semantics.matches:
-                step.completed(round_.semantics.summary)
-            else:
-                step.failed(round_.semantics.summary)
-        for check in round_.semantics.checks_done:
-            report(on_progress, "Semantic check", detail=check)
-        say(f"    {round_.semantics.verdict}: {round_.semantics.summary}")
+    if all(item.passed for item in round_.runs):
+        policy = fingerprint(semantics_fingerprint(model=model), [item.model_dump(mode="json") for item in round_.runs])
+        if round_.semantics is None or not round_.semantics.matches or round_.semantics_fingerprint != policy:
+            # A review request can fail independently of the completed solver runs.
+            round_.semantics = None
+            round_.semantics_fingerprint = None
+            if round_.runtime_fingerprint:
+                write_atomic(workspace.resolve(TEST_JSON), round_.model_dump_json().encode("utf-8"))
+            say("--- Test: evaluating semantics against the problem statement")
+            with progress_step(on_progress, "Check the solution against the problem") as step:
+                round_.semantics = evaluate_semantics(workspace, round_.runs, model=model, client=client, on_progress=on_progress)
+                if round_.semantics.matches:
+                    step.completed(round_.semantics.summary)
+                else:
+                    step.failed(round_.semantics.summary)
+            for check in round_.semantics.checks_done:
+                report(on_progress, "Semantic check", detail=check)
+            round_.semantics_fingerprint = policy
+            say(f"    {round_.semantics.verdict}: {round_.semantics.summary}")
+        else:
+            say("--- Test: reusing the matching semantic review")
+            report(on_progress, "Reuse the semantic review", status="completed", detail=round_.semantics.summary)
+        if _runtime_fingerprint(workspace, variants) != after_runs:
+            raise BuildError("Solver inputs changed during Test. Resume to verify the current implementation.")
 
     with progress_step(on_progress, "Save the test report"):
-        workspace.resolve(TEST_JSON).write_text(round_.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        write_atomic(workspace.resolve(TEST_JSON), (round_.model_dump_json(indent=2) + "\n").encode("utf-8"))
     return round_
 
 
+@model_run
 def run_test_phase(
     workspace: Workspace,
     *,
@@ -190,6 +273,7 @@ def run_test_phase(
     on_stage: Callable[[Literal["build", "test"]], None] | None = None,
     on_progress: ProgressCallback | None = None,
     validate_results: Callable[[dict, dict], None] | None = None,
+    reuse: bool = False,
 ) -> TestPhaseResult:
     """Test the built solver, sending it back to Build with the issues until it passes.
 
@@ -207,7 +291,7 @@ def run_test_phase(
         say(f"=== Test round {round_number} of {max_rounds}")
         round_ = test_once(
             workspace, model=model, client=client, on_event=on_event,
-            on_progress=on_progress, validate_results=validate_results,
+            on_progress=on_progress, validate_results=validate_results, reuse=reuse,
         )
         if round_.passed:
             say("=== Test passed. Ready for Final Go/No-Go.")
@@ -260,7 +344,7 @@ def main() -> None:
         sys.exit(f"Test phase stopped: {error}\nRemaining issues:\n{error.last_round.feedback()}")
     except BuildNotApproved as error:
         sys.exit(f"Test phase stopped in Build: {error}\nRemaining issues:\n{error.review.feedback()}")
-    except (OSError, BuildError, PromptError, ValidationError, WorkspaceError) as error:
+    except (OSError, BuildError, ModelError, PromptError, ValidationError, WorkspaceError) as error:
         sys.exit(f"Test phase failed: {error}")
 
     print(f"\nReady for Final Go/No-Go after {rounds} test round(s).")

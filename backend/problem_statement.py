@@ -1,5 +1,5 @@
 """Init step 2 of the agent loop: rewrite the user's natural-language prompt
-into a precise, structured problem statement with Gemini.
+into a precise, structured problem statement with the configured model.
 
 Prompt text comes from backend/prompts.md (problem_statement.* sections),
 re-read on every call.
@@ -10,23 +10,25 @@ Writes  <workspace>/problem.json  - machine-readable, used by Plan / Test / Go-N
 
 Usage from code:
     problem = parse_problem_statement(workspace)
-    problem = parse_problem_statement(workspace, feedback="...")  # retry from Final Go/No-Go
+    problem = parse_problem_statement(workspace, feedback="...")  # repair specific findings
 
 Usage from a terminal (re-parse an existing workspace):
     python -m backend.problem_statement <workspace-id> [--feedback "..."]
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
+from backend.model_provider import generate, model_name, model_run
+from backend.model_types import ModelError
 from backend.progress import ProgressCallback, progress_step
 from backend.prompt_loader import PromptError, load_prompt
-from backend.workspace import Workspace, WorkspaceError, open_workspace
+from backend.structured_edit import StructuredEdit, apply_edits
+from backend.workspace import Workspace, WorkspaceError, open_workspace, write_atomic
 
 PROBLEM_JSON = "problem.json"
 PROBLEM_MD = "PROBLEM.md"
@@ -37,11 +39,11 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class ProblemStatementError(Exception):
-    """Raised when Gemini returns nothing usable."""
+    """Raised when the model returns nothing usable."""
 
 
-# --- Schema Gemini must fill in ------------------------------------------------
-# Field descriptions are sent to Gemini as part of the schema, so they double
+# --- Schema the model must fill in ---------------------------------------------
+# Field descriptions are sent to the model as part of the schema, so they double
 # as instructions.
 
 class Parameter(BaseModel):
@@ -110,64 +112,99 @@ class ProblemStatement(BaseModel):
     )
 
 
+class _ProblemEdits(BaseModel):
+    edits: list[StructuredEdit]
+
+
+def _revise_problem(
+    workspace: Workspace, previous: ProblemStatement, feedback: str, model: str, client,
+    *, on_progress: ProgressCallback | None = None,
+) -> ProblemStatement:
+    response = generate(
+        client, model, load_prompt("problem_statement.repair_system"),
+        load_prompt("problem_statement.retry", prompt=workspace.prompt, previous=previous.model_dump_json(), feedback=feedback),
+        stage="interpret", schema=_ProblemEdits.model_json_schema(), on_progress=on_progress,
+    )
+    try:
+        change = _ProblemEdits.model_validate_json(response.text or "")
+        revised = apply_edits(previous, change.edits)
+    except ValidationError as error:
+        details = error.errors(include_input=False, include_context=False, include_url=False)
+        errors = [f"{'.'.join(map(str, item['loc'])) or 'response'}: {item['msg']}" for item in details[:4]]
+        raise ProblemStatementError("Invalid problem repair. " + "; ".join(errors)) from error
+    except ValueError as error:
+        raise ProblemStatementError(f"Invalid problem repair. {error}") from error
+    if revised == previous:
+        raise ProblemStatementError("The proposed repair did not change the problem statement.")
+    return revised
+
+
+@model_run
 def parse_problem_statement(
     workspace: Workspace,
     feedback: str | None = None,
     model: str | None = None,
     client=None,
-    *,
-    on_progress: ProgressCallback | None = None,
+    *, on_progress: ProgressCallback | None = None,
 ) -> ProblemStatement:
     """Turn the workspace's prompt.md into problem.json and PROBLEM.md, and return the result.
 
-    feedback: issues found by Final Go/No-Go when this step is being redone.
-    client:   an existing google.genai.Client; one is created from GEMINI_API_KEY if omitted.
+    feedback: specific issues to repair in the saved problem statement.
+    client:   an existing model client; one is opened for the configured provider if omitted.
     """
-    from google import genai
-    from google.genai import types
+    model = model_name(DEFAULT_MODEL, model, stage="interpret")
+    problem_path = workspace.resolve(PROBLEM_JSON)
+    if feedback and problem_path.is_file():
+        previous = load_problem_statement(workspace)
+        prompt = workspace.prompt
+        with progress_step(on_progress, "Revise the problem statement"):
+            problem = _revise_problem(workspace, previous, feedback, model, client, on_progress=on_progress)
+        if workspace.prompt != prompt or load_problem_statement(workspace) != previous:
+            raise ProblemStatementError("The prompt or problem statement changed during repair.")
+    else:
+        with progress_step(on_progress, "Interpret the original prompt"):
+            problem = _parse_problem(workspace, model, client, feedback, on_progress=on_progress)
 
-    client = client or genai.Client()
-    model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    with progress_step(on_progress, "Save the problem statement"):
+        write_atomic(problem_path, (problem.model_dump_json(indent=2) + "\n").encode("utf-8"))
+        write_atomic(workspace.resolve(PROBLEM_MD), render_markdown(problem).encode("utf-8"))
+    return problem
 
-    # Prompts are read from prompts.md now, before Gemini is called.
+
+def _parse_problem(
+    workspace: Workspace, model: str, client, feedback: str | None,
+    *, on_progress: ProgressCallback | None = None,
+) -> ProblemStatement:
     limits = workspace.meta["limits"]
     system_instruction = load_prompt(
         "problem_statement.system",
         max_qubits=limits["max_qubits"],
         run_timeout_seconds=limits["run_timeout_seconds"],
     )
-    contents = load_prompt("problem_statement.user", prompt=workspace.prompt)
+    prompt = workspace.prompt
+    contents = load_prompt("problem_statement.user", prompt=prompt)
     if feedback:
-        previous_path = workspace.resolve(PROBLEM_JSON)
-        previous = previous_path.read_text(encoding="utf-8") if previous_path.is_file() else "(none saved)"
-        contents += "\n\n" + load_prompt("problem_statement.retry", previous=previous, feedback=feedback)
-
-    label = "Revise the problem statement" if feedback else "Interpret the original prompt"
-    with progress_step(on_progress, label):
-        response = client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-                response_schema=ProblemStatement,
-            ),
-        )
+        contents += "\n\n" + load_prompt("problem_statement.notes", feedback=feedback)
+    response = generate(
+        client, model, system_instruction, contents,
+        stage="interpret", schema=ProblemStatement.model_json_schema(), on_progress=on_progress,
+    )
 
     with progress_step(on_progress, "Check the problem statement") as step:
-        problem = response.parsed
-        if not isinstance(problem, ProblemStatement):
+        try:
+            problem = ProblemStatement.model_validate_json(response.text)
+        except ValidationError as error:
             step.failed("The model did not return a usable problem statement.")
-            reason = response.candidates[0].finish_reason if response.candidates else "no candidates"
-            raise ProblemStatementError(f"Gemini returned no valid problem statement (finish reason: {reason}).")
+            raise ProblemStatementError(
+                f"The model returned no valid problem statement (finish reason: {response.finish_reason})."
+            ) from error
         if problem.is_optimization_problem:
             step.completed(f"{problem.title} · Proposed method: {problem.quantum.method}")
         else:
             step.failed(problem.rejection_reason or "The prompt could not be used for this pipeline.")
 
-    with progress_step(on_progress, "Save the problem statement"):
-        workspace.resolve(PROBLEM_JSON).write_text(problem.model_dump_json(indent=2) + "\n", encoding="utf-8")
-        workspace.resolve(PROBLEM_MD).write_text(render_markdown(problem), encoding="utf-8")
+    if workspace.prompt != prompt or workspace.meta["limits"] != limits:
+        raise ProblemStatementError("The prompt or run limits changed during parsing.")
     return problem
 
 
@@ -227,7 +264,7 @@ def main() -> None:
     try:
         workspace = open_workspace(args.workspace_id)
         problem = parse_problem_statement(workspace, feedback=args.feedback)
-    except (WorkspaceError, PromptError, ProblemStatementError) as error:
+    except (WorkspaceError, PromptError, ProblemStatementError, ModelError) as error:
         sys.exit(f"Could not parse problem statement: {error}")
 
     print(f"Wrote {workspace.resolve(PROBLEM_MD)}")

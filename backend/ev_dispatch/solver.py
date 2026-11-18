@@ -5,10 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from .classical import solve_classical
 from .dispatch_model import GridConfig, generate_feasible_options, simulate_schedule_timeline
 from .qaoa import Backend, solve_qaoa
 from .qubo_ising import build_qubo, qubo_to_ising, verify_ising_equivalence
-from .verifier import solve_classical_reference, verify_solution
+from .verifier import verify_solution
 
 
 def solve(van2_charge_pct: int, backend: Backend) -> dict[str, Any]:
@@ -27,7 +28,8 @@ def solve(van2_charge_pct: int, backend: Backend) -> dict[str, Any]:
     if not timeline.feasible:
         raise RuntimeError("The sampled schedule failed timeline feasibility checks.")
 
-    reference = solve_classical_reference(van2_charge_pct)
+    classical = solve_classical(van2_charge_pct)
+    reference = classical["reference"]
     verification = verify_solution(
         selected_decisions=[(option.van_id, option.mode, option.total_cost) for option in selected],
         van2_charge_pct=van2_charge_pct,
@@ -62,6 +64,13 @@ def solve(van2_charge_pct: int, backend: Backend) -> dict[str, Any]:
             "verification": verification,
         },
         "reference": reference,
+        "classical": {
+            "method": reference["method"],
+            "objective": classical["objective"],
+            "solution": classical["solution"],
+            "optimality_proven": classical["optimality_proven"],
+            "runtime_seconds": classical["runtime_seconds"],
+        },
         "quantum": {
             "engine": backend.engine,
             "method": measured.method,

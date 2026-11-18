@@ -48,17 +48,34 @@
     </div>
   </section>
 
-  <section class="run-entry" id="progress-screen" aria-labelledby="progress-heading" hidden>
+  <section class="run-entry progress-entry" id="progress-screen" aria-labelledby="progress-heading" hidden>
     <div class="progress-heading">
       <h1 id="progress-heading" tabindex="-1">Pipeline progress</h1>
       <button class="secondary" id="progress-return" type="button" hidden>Back to results</button>
     </div>
+    <p class="progress-intro" id="pipeline-intro">From your problem to a checked solution. Follow each stage and any repairs along the way.</p>
     <div class="panel progress-panel">
       <div class="progress-actions">
         <p id="pipeline-status" class="pipeline-status" role="status" aria-atomic="true">Submitting your problem…</p>
-        <button class="text-button" id="pipeline-detail-toggle" type="button" aria-controls="pipeline-visits" hidden>Hide all steps</button>
+        <span class="pipeline-count" id="pipeline-count" hidden></span>
       </div>
       <ol id="pipeline-stages" class="pipeline-stages" role="list" aria-label="Pipeline stages"></ol>
+      <div class="pipeline-repair" id="pipeline-repair" hidden>
+        <span class="repair-symbol" aria-hidden="true">↶</span>
+        <div><strong id="pipeline-repair-label"></strong><p id="pipeline-repair-detail"></p></div>
+      </div>
+      <section class="pipeline-current" id="pipeline-current" aria-labelledby="pipeline-current-label" hidden>
+        <div class="pipeline-current-heading">
+          <span class="pipeline-current-state" id="pipeline-current-state">Current step</span>
+          <span class="pipeline-repeat-count" id="pipeline-repeat-count" hidden></span>
+        </div>
+        <h2 id="pipeline-current-label">Waiting for the pipeline to start…</h2>
+        <p id="pipeline-current-detail" hidden></p>
+      </section>
+      <div class="pipeline-activity-heading" id="pipeline-activity-heading" hidden>
+        <div><h2>Activity history</h2><p>Each check and repair stays in the record.</p></div>
+        <button class="text-button" id="pipeline-detail-toggle" type="button" aria-controls="pipeline-visits" hidden>Hide all steps</button>
+      </div>
       <ol id="pipeline-visits" class="pipeline-visits" role="list" aria-label="Pipeline stage history" hidden></ol>
     </div>
   </section>
@@ -115,6 +132,11 @@
           <p class="original-prompt-text" id="prompt"></p>
         </details>
       </section>
+      <section class="panel circuit-panel" id="circuit-panel" aria-labelledby="circuit-heading" hidden>
+        <div class="panel-heading"><h2 id="circuit-heading">Quantum circuits</h2></div>
+        <p class="circuit-help" id="circuit-help">Select an image to inspect the gates at full size.</p>
+        <div id="circuits" class="circuits"></div>
+      </section>
     </aside>
 
     <div class="main-column">
@@ -124,18 +146,47 @@
           <span class="tag" id="run-badge"></span>
         </div>
         <div class="summary-strip">
-          <div><span>Total cost</span><strong id="score">—</strong></div>
-          <div><span>Delivered now</span><strong id="delivered">—</strong></div>
+          <div class="solver-metric quantum-metric">
+            <span id="score-label">Total cost</span><strong id="score">—</strong>
+            <span class="metric-check" id="score-check" hidden>Feasible schedule</span>
+          </div>
+          <div class="solver-metric classical-metric" id="reference-value" hidden>
+            <span id="reference-label">Classical cost</span><strong id="reference-score">—</strong>
+            <span class="metric-check" id="reference-check" hidden></span>
+          </div>
+          <div class="solver-metric gap-metric" id="reference-gap" hidden>
+            <span id="gap-label">Gap to classical</span><strong id="gap-score">—</strong>
+            <span class="metric-check" id="gap-note"></span>
+          </div>
+          <div id="delivered-summary"><span>Delivered now</span><strong id="delivered">—</strong></div>
           <section class="cost-comparison" aria-label="Change from previous run">
             <p id="change-summary" aria-live="polite"></p>
             <ul id="cost-delta"></ul>
           </section>
         </div>
-        <div class="visual-stage">
-          <canvas id="fleet-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive fleet map" aria-describedby="map-help" hidden>Fleet map unavailable.</canvas>
-          <p class="sr-only" id="map-help">Press Space to play or pause, the arrow keys to seek, V to inspect vans, C to inspect chargers, D to inspect deliveries, or Escape to clear.</p>
-          <p id="frame-status" role="status">Loading map…</p>
+        <p class="comparison-note" id="comparison-note" hidden><span aria-hidden="true">↔</span> Same scenario. Two solver schedules. One playback clock.</p>
+        <div class="map-grid" id="map-grid">
+          <section class="map-view quantum-map-view" aria-label="Quantum schedule replay">
+            <div class="map-heading" id="quantum-map-heading" hidden>
+              <h3><span class="solver-dot" aria-hidden="true"></span>Quantum</h3>
+              <span id="quantum-delivered"></span>
+            </div>
+            <div class="visual-stage">
+              <canvas id="fleet-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive fleet map" aria-describedby="map-help" hidden>Fleet map unavailable.</canvas>
+              <p id="frame-status" role="status">Loading map…</p>
+            </div>
+          </section>
+          <section class="map-view classical-map-view" id="classical-map-view" aria-label="Classical schedule replay" hidden>
+            <div class="map-heading">
+              <h3><span class="solver-dot" aria-hidden="true"></span>Classical</h3>
+              <span id="classical-delivered"></span>
+            </div>
+            <div class="visual-stage">
+              <canvas id="classical-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive classical fleet map" aria-describedby="map-help">Classical fleet map unavailable.</canvas>
+            </div>
+          </section>
         </div>
+        <p class="sr-only" id="map-help">Both maps share the playback clock. Press Space to play or pause, the arrow keys to seek, V to inspect vans, C to inspect chargers, D to inspect deliveries, or Escape to clear.</p>
 
         <div class="playback" role="group" aria-label="Playback controls">
           <div class="playback-actions">
@@ -174,11 +225,6 @@
         </div>
       </section>
 
-      <section class="panel circuit-panel" id="circuit-panel" hidden>
-        <div class="panel-heading"><h2>Circuit drawings</h2></div>
-        <div id="circuits" class="circuits"></div>
-      </section>
-
       <details class="panel run-details">
         <summary>Results &amp; technical details</summary>
         <div class="detail-body">
@@ -188,14 +234,17 @@
           </div>
           <dl class="technical-summary">
             <div><dt>Plan check</dt><dd id="feasible">—</dd></div>
-            <div id="reference-value" hidden><dt>Exact reference</dt><dd id="reference-score"></dd></div>
-            <div id="reference-gap" hidden><dt>Gap to reference</dt><dd id="gap-score"></dd></div>
           </dl>
           <h3>Costs</h3><div id="costs" class="costs"></div>
           <h3>Assumptions</h3><ul id="assumptions"></ul>
           <div id="quantum-details" hidden>
             <h3>Quantum details</h3><p id="quantum-summary"></p><div id="histogram" class="histogram"></div>
           </div>
+          <section id="classical-details" hidden>
+            <h3>Classical solver</h3>
+            <p id="classical-method"></p>
+            <p id="classical-options" hidden></p>
+          </section>
         </div>
       </details>
       <footer>
@@ -206,6 +255,19 @@
   </div>
   </section>
 </main>
+<dialog class="circuit-dialog" id="circuit-dialog" aria-labelledby="circuit-dialog-title" aria-describedby="circuit-dialog-description">
+  <div class="circuit-dialog-toolbar">
+    <h2 id="circuit-dialog-title">Quantum circuit</h2>
+    <div class="circuit-dialog-actions">
+      <a class="text-button" id="circuit-download" download="quantum-circuit.png">Download PNG</a>
+      <button class="secondary" id="circuit-dialog-close" type="button" autofocus>Close</button>
+    </div>
+  </div>
+  <p id="circuit-dialog-description" class="circuit-dialog-description"></p>
+  <div class="circuit-image-viewport" tabindex="0" aria-label="Scrollable full-size quantum circuit">
+    <img id="circuit-dialog-image" alt="Quantum circuit diagram">
+  </div>
+</dialog>
 <script src="fleet.js"></script>
 <script src="live-updates.js"></script>
 <script src="pipeline-progress.js"></script>

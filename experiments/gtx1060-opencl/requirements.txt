@@ -1,0 +1,4 @@
+pyqrack==2.30.6
+numpy==2.5.5
+scipy==1.18.1
+python-dotenv==1.2.4

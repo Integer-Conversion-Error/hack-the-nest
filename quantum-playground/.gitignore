@@ -2,3 +2,7 @@
 __pycache__/
 .env
 *.png
+!docs/evidence/agent-loop/*.png
+!docs/evidence/fleet-comparison/*.png
+!docs/evidence/circuit-sidebar/*.png
+!docs/evidence/pr-fixes/*.png

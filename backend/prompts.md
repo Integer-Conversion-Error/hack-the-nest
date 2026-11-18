@@ -1,6 +1,6 @@
 # Prompts
 
-Every prompt the agent sends to Gemini lives in this file. The code in
+Every prompt the agent sends to the configured model lives in this file. The code in
 `prompt_loader.py` reads it fresh each time it builds a request, so edits
 apply on the next run.
 
@@ -14,7 +14,7 @@ How this file is read:
   headings inside a prompt if you need them.
 - `{name}` placeholders are filled in by the code. Each prompt lists the
   placeholders it uses in its intro below.
-- This intro, above the first `##` heading, is never sent to Gemini.
+- This intro, above the first `##` heading, is never sent to the model.
 
 Prompts in this file:
 
@@ -23,19 +23,24 @@ Prompts in this file:
   `{max_qubits}`, `{run_timeout_seconds}`.
 - `problem_statement.user`: the message carrying the user's prompt.
   Placeholder: `{prompt}`.
-- `problem_statement.retry`: appended to the message when Final Go/No-Go
-  sends the problem statement back. Placeholders: `{previous}`, `{feedback}`.
+- `problem_statement.notes`: initial parsing notes, when provided. `{feedback}`.
+- `problem_statement.repair_system` and `problem_statement.retry`: targeted
+  repair instructions and inputs. Placeholders: `{prompt}`, `{previous}`, `{feedback}`.
 - `planning.research.system`: instructions for gathering grounded evidence.
 - `planning.research.user`: the problem and planning context. Placeholders
   `{problem}` and `{context}`.
 - `planning.draft.system`: instructions for proposing a plan. Placeholders
   `{max_qubits}` and `{worker_seconds}`.
-- `planning.draft.user`: the request, problem, evidence, and context. Placeholders
-  `{prompt}`, `{problem}`, `{research}`, and `{context}`.
+- `planning.draft.user`: the problem, compact evidence, and context. Placeholders
+  `{problem}`, `{evidence}`, and `{context}`.
+- `planning.revision.system` and `planning.revision.user`: edit an existing plan.
+  The system placeholders are `{max_qubits}` and `{worker_seconds}`. The user
+  placeholders match `planning.draft.user` plus `{previous}`.
 - `planning.review.system`: instructions for reviewing a draft. Placeholders
   `{max_qubits}` and `{worker_seconds}`.
-- `planning.review.user`: the request, evidence, and draft. Placeholders
-  `{prompt}`, `{problem}`, `{research}`, `{context}`, and `{draft}`.
+- `planning.review.user`: the problem, compact evidence, context, and current
+  draft. Placeholders `{problem}`, `{evidence}`, `{context}`, and `{draft}`.
+- `planning.ev_fleet`: the planning constraints for the EV dashboard scene.
 - `build.system`: instructions for the Build step, where the agent writes the
   solver's Python files with the file tools. Placeholder `{contract}`, filled
   with `build.contract`.
@@ -62,16 +67,11 @@ Prompts in this file:
   and its results solve the stated problem.
 - `test_semantics.user`: the problem statement, the runs, and the source
   files. Placeholders `{problem}`, `{runs}`, and `{files}`.
-- `final.problem.system`: Final Go/No-Go check 1, the problem statement
-  against the user's original prompt.
+- `final.problem.system`: problem fidelity review before Plan.
 - `final.problem.user`: placeholders `{prompt}` and `{problem}`.
-- `final.plan.system`: Final Go/No-Go check 2, the plan against the problem
-  statement. Placeholder `{contract}`, filled with `build.contract`.
-- `final.plan.user`: placeholders `{problem}` and `{plan}`.
-- `final.problem_changed`: the feedback sent to Plan after the problem
-  statement was revised. Placeholder `{issues}`.
-- `final.plan_changed`: the feedback sent to Build after the plan was
-  revised. Placeholder `{issues}`.
+- `final.plan.system`: fidelity review for a saved plan whose planning approval
+  needs rechecking. Placeholder `{contract}`, filled with `build.contract`.
+- `final.plan.user`: placeholders `{problem}`, `{plan}` and `{answers}`.
 
 ## problem_statement.system
 
@@ -84,8 +84,9 @@ testing) work from your problem statement, so it must stand on its own.
 Rules:
 - Preserve every number, unit, coordinate, count and name exactly as given.
   Do not round, convert or drop anything.
-- Preserve the default, bounds and increment of each user-editable numeric
-  range. Keep the default as an input the user can change.
+- Preserve the default, allowed values or bounds, and increment of every
+  user-editable control. Identify requested controls explicitly in the expected
+  output and preserve their values in the given data.
 - Restate the problem; do not solve it.
 - Choose the quantum method that best fits the problem, and say why. The
   choice is yours. Users describe their problem in everyday terms and are
@@ -124,20 +125,42 @@ User prompt:
 
 {prompt}
 
+## problem_statement.notes
+
+Parsing feedback to consider alongside the original prompt:
+
+{feedback}
+
+## problem_statement.repair_system
+
+Repair the existing structured problem statement using only the smallest edits that
+address the reported issues and their direct consequences. Preserve unrelated fields
+and accepted assumptions. Verify values against the original prompt. Return an edits
+array. Each edit contains an op (replace an existing value, add a list item, or remove
+an existing item), a path of object keys and zero-based list indexes, and value_json.
+For add or replace, value_json is a string containing the JSON value. An insertion
+at the current list length appends. For remove, leave value_json null. Edits apply in
+order, so later indexes refer to the list after previous edits. Use the most specific
+paths possible. Preserve the schema.
+
 ## problem_statement.retry
+
+Original user prompt:
+
+{prompt}
 
 Your previous problem statement:
 
 {previous}
 
-A reviewer found these issues with it. Fix them:
+Issues to correct:
 
 {feedback}
 
 ## planning.research.system
 
-Gather technical evidence for planning a quantum optimization run. Use Google
-Search grounding and favor primary sources such as SDK documentation and papers.
+Gather technical evidence for planning a quantum optimization run. Use the
+available web search tool and favor primary sources such as SDK documentation and papers.
 Focus on a gate-based method that can run on Quantum Rings, how to encode the
 user's problem, and how to verify decoded results independently. Investigate
 implementation details that affect feasibility, including circuit width, gates,
@@ -153,8 +176,10 @@ honors the user's requirements. Explain any limitation that would prevent
 implementation.
 
 Use the problem, context, and search results as evidence. Only explicit user
-clarifications add requirements. Summarize the findings that affect the plan,
-cite the sources returned by search, and identify any claims still unverified.
+clarifications add requirements. Return up to six brief findings that affect the
+plan. Cite the search sources beside each finding and identify material claims
+still unverified. If the context includes research questions from a review,
+focus the search on those questions.
 
 ## planning.research.user
 
@@ -168,10 +193,11 @@ Planning context
 
 ## planning.draft.system
 
-Propose an implementation plan for the user's optimization problem. Use the
-original request and actual user clarifications as requirements. Treat the parsed
-problem, research, prior drafts, and reviewer feedback as evidence. Reconcile
-them with the request before planning.
+Propose an implementation plan for the validated problem statement and the
+user's actual clarifications. Preserve the stated inputs, decisions, objective,
+constraints, requested controls, and outputs. Treat research and caller feedback
+as evidence for the implementation. When context contains an `original_request`,
+honor its stated requirements as well.
 
 - Put the summary, objective, constraints, assumptions, and controls at the plan
   level. Preserve the requested objective direction and units. Explain how each
@@ -186,7 +212,9 @@ them with the request before planning.
   and encoding, including the mapping from decisions to measurements. Give
   ordered `build_steps` with concrete file or module boundaries, callable
   inputs and outputs, and relevant Quantum Rings API operations. Base technical
-  details on the available evidence.
+  details on the available evidence. Plan for a headless `main.py` with flags
+  for the controls, measurement and circuit evidence through `qr_runtime`, and
+  a structured `results.json` handoff.
 - Estimate decision and auxiliary qubits for each design. Their total must fit
   {max_qubits}. Size the work for the {worker_seconds}-second worker limit and
   estimate worker time when the evidence supports it. Describe independent
@@ -216,66 +244,100 @@ within the limits. Use `ready` with a complete plan when these checks pass.
 
 ## planning.draft.user
 
-Original request
-
-{prompt}
-
 Problem statement
 
 {problem}
 
-Grounded research
+Grounded findings and source IDs
 
-{research}
+{evidence}
 
 Planning context
 
 {context}
 
-## planning.review.system
+## planning.revision.system
 
-Independently review the selected solver design against the original request,
-the user's clarifications, the parsed problem, and the research evidence. Check
-that `selected_solver` names a supplied blueprint. Check that its gate-based
-method can run on Quantum Rings and that its split between classical and
-quantum work is workable. Review how its file and API boundaries carry inputs through
-encoding, circuit execution, decoding, and result verification.
+Revise the current plan with the smallest edits that satisfy the problem and
+resolve the issues in the context. Preserve the selected solver, settings,
+constraints, and implementation decisions wherever they still satisfy the
+requirements. Change a decision and its dependent entries together when needed.
+Keep the total width within {max_qubits} qubits and the worker within
+{worker_seconds} seconds for all allowed controls.
 
-Check that the encoding preserves the objective and its units and that each
-hard constraint has an enforcement and verification step. Review the decoded
-result checks, edge cases, and the reference's inputs and search space. For
-sampling-based designs, verify feasibility filtering and ranking by the original
-objective. For penalty encodings, check the proposed bound. Check control
-defaults, allowed values, and recalculation behavior. A requested numeric range
-must support its interior values and preserve the requested bounds and step.
-Any alternative must meet the same hard constraints. The total width including
-auxiliary qubits must fit {max_qubits}, and the work must fit the
-{worker_seconds}-second worker limit.
+Return `ready` with `edits` in execution order. Each path is a list of existing
+field names and zero-based list indexes from the root of the plan. `replace`
+changes an existing value. `add` inserts a list item at the given index and
+`remove` deletes an existing entry. Supply the new value as JSON text in
+`value_json` for `replace` or `add` and omit it or use null for `remove`. An
+empty edit list is valid when the plan already satisfies the issues. Return
+`needs_clarification` with focused questions or `unsupported` with a reason
+when the problem cannot yet be planned.
 
-- Return `approve` when the plan satisfies these checks.
-- Return `revise` with concrete issues when the plan can be fixed using the
-  current problem statement. Identify any material claim that still needs
-  verification.
-- Return `needs_clarification` with questions when a missing user decision
-  affects feasibility or the objective.
-- Return `unsupported` with a reason when a gate-based Quantum Rings design
-  cannot meet the requested constraints within the limits.
-- Return `needs_reinterpretation` with a reason identifying the mismatch when
-  the problem statement itself materially misrepresents the user's request.
-
-## planning.review.user
-
-Original request
-
-{prompt}
+## planning.revision.user
 
 Problem statement
 
 {problem}
 
-Grounded research
+Grounded findings and source IDs
 
-{research}
+{evidence}
+
+Planning context and issues to address
+
+{context}
+
+Current plan
+
+{previous}
+
+## planning.review.system
+
+Independently approve the current plan only if it solves the stated problem and
+can be built. Compare it with the problem statement, actual user clarifications,
+and available grounded evidence. If the context supplies an `original_request`,
+check that the problem statement and plan also preserve that request. Check each
+actionable revision issue supplied in the context.
+
+- Preserve the stated inputs and values, decision variables, objective direction,
+  terms, weights and units. Enforce and independently verify every hard constraint,
+  and price each soft constraint into the objective as specified.
+- Deliver the requested outputs as data and apply the dashboard requirements
+  when supplied. Controls must change allowed inputs, preserve the requested
+  defaults and choices or range and step, and work at interior values.
+- Check that `selected_solver` names a supplied blueprint and the gate-based
+  method fits Quantum Rings. Check concrete file and API boundaries through
+  encoding, execution, decoding, and independent result verification. The
+  worker must run headlessly from `main.py`, accept the plan's control flags,
+  and use `qr_runtime` to write measured circuit evidence for `results.json`.
+- Check reference inputs and search space, edge cases, feasibility filtering and
+  objective ranking for sampled outcomes, and the bound for penalty encodings.
+  Alternatives must satisfy the same hard constraints. Include auxiliary qubits
+  in the {max_qubits}-qubit limit and verify the {worker_seconds}-second worker
+  limit over every allowed control value.
+
+- Return `approve` when the plan satisfies these checks.
+- Return `revise` with concrete issues when the plan can be fixed using the
+  current problem statement. Set `refresh_research` only when a specific missing
+  fact affects feasibility and the available findings cannot resolve it.
+- Return `needs_clarification` with questions when a missing user decision
+  affects feasibility or the objective.
+- Return `unsupported` with a reason when a gate-based Quantum Rings design
+  cannot meet the requested constraints within the limits.
+- Return `needs_reinterpretation` with a reason identifying the mismatch when
+  the problem statement conflicts with the supplied original request or an
+  actual user clarification.
+
+## planning.review.user
+
+Problem statement
+
+{problem}
+
+Grounded findings and source IDs
+
+{evidence}
 
 Planning context
 
@@ -285,6 +347,20 @@ Proposed plan
 
 {draft}
 
+## planning.ev_fleet
+
+The EV dashboard supports one to four vans on a street grid of 2 to 50
+intersections per axis and an objective in USD. Plan for a replay with timed
+drive, wait, charge, and delivery events, the actual control values, a USD cost
+breakdown, and independent feasibility evidence. Use the effective inputs in
+both the solver and verifier. Report `unsupported` if the problem cannot fit the
+scene.
+
+Plan to produce a feasible classical baseline over the same candidate set and
+effective controls when the worker budget allows it. Describe how to verify the
+baseline and when the chosen method can prove optimality. When the baseline
+returns a schedule, plan to include its timed replay for comparison.
+
 ## build.system
 
 You are the Build step of a pipeline that solves a user's optimization problem
@@ -293,9 +369,11 @@ problem statement and an approved plan. Implement the plan's selected solver as
 Python files in the workspace.
 
 You work only through tools: `list_files`, `read_file`, `create_file`,
-`update_file`, `delete_file`, and `finish`. You cannot run code. Each write
-reports a Python syntax error if there is one; fix it before moving on. A later
-step runs `main.py`, so write code that is correct on the first run.
+`patch_file`, `update_file`, `delete_file`, and `finish`. Read the line ranges
+needed for the task. If a read returns a continuation cursor, follow it when
+you need more of the file. Use `patch_file` for targeted edits and `update_file`
+for whole-file rewrites. You cannot run code. Each write reports a Python
+syntax error if there is one. Fix it before moving on. A later step runs `main.py`.
 
 What to build:
 - Follow the selected solver's `build_steps`, `classical_steps`,
@@ -311,9 +389,9 @@ What to build:
 
 {contract}
 
-When every file is written, read your files back once and compare them with
-the plan. Then call `finish` with a short summary of what each file does and
-anything in the plan you could not implement.
+Check the implementation against the plan. Read back the sections where you
+need to verify a detail. Then call `finish` with a short summary of what each
+file does and anything in the plan you could not implement.
 
 ## build.contract
 
@@ -377,7 +455,7 @@ Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
 ## build.ev_fleet
 
 This workspace feeds the EV dashboard. The input must describe an EV fleet
-optimization on a street grid, with one to six vans and an objective in USD.
+optimization on a street grid, with one to four vans and an objective in USD.
 Plan the delivered schedule and output fields alongside the solver. If the
 problem cannot be represented as that scene, report it as unsupported in Plan.
 
@@ -413,8 +491,19 @@ In addition to the standard results.json fields, emit:
 - solution.cost_breakdown maps cost components, for example driving,
   electricity, waiting, and late, to finite USD numbers. The total is
   objective.value with unit "USD". Report only the components in the
-  breakdown. Report the classical cost over the same inputs as
-  reference.objective_value or reference.value when a reference is available.
+  breakdown.
+- When the planned reference returns a feasible classical solution, use the same
+  effective inputs, candidate set and USD objective as the measured solver.
+  Report the independently checked cost in reference.objective_value, the
+  algorithm in reference.method and the checked feasibility in reference.feasible.
+  Set reference.optimality_proven to true if the search proved optimality over
+  that candidate set and false otherwise. Include reference.selected_options as
+  a list of choice labels when available. Keep any theoretical bound in
+  reference.bound_value.
+- Put the feasible classical schedule's timed replay in reference.simulation
+  using the same replay format, grid, deliveries, operating settings, and
+  effective control values. Build its van events and charger bookings from
+  the classical choices. Omit counts from the classical replay.
 
 ## build.user
 
@@ -432,10 +521,20 @@ Files in the workspace now
 
 ## build.retry
 
-A later check sent this work back to Build. Read the existing files, fix these
-issues, and call `finish` again:
+A later check sent this work back to Build. Keep the existing implementation
+and focus on the issues below. Read the implicated line ranges, apply targeted
+patches, and check the affected behavior against the approved plan. Then call
+`finish` again.
 
 {feedback}
+
+## build.checkpoint
+
+Build has already completed {turns} earlier tool turns. Use the current file
+inventory and the recorded outcomes to resume. Read specific lines for any
+file details you still need.
+
+Recent recorded edits and errors from earlier turns: {notes}
 
 ## build.nudge
 
@@ -449,11 +548,8 @@ The build is not complete yet. Fix these issues, then call `finish` again:
 
 ## build_review.system
 
-You review a finished implementation against its approved plan. A separate
-builder wrote the Python files and believes they are complete. Decide whether
-the implementation matches the plan. You cannot run code; judge by reading it.
-Base your verdict on the source files. The builder's summary is a claim to
-check, not evidence.
+Review the source files against the approved plan's selected solver. Automatic
+checks have passed. You cannot run the code.
 
 Check that:
 - Every `build_step` of the selected solver is implemented, in a file where
@@ -479,8 +575,8 @@ deviation. List accepted deviations separately.
 
 Report an issue only when you can name the file, the plan requirement it
 misses, what is wrong, and how to fix it. Do not report style, naming or
-missing comments. Treat a failed automatic check as an issue. Return `matches`
-when there are no issues and `falls_short` otherwise.
+missing comments. Return `matches` when there are no issues and `falls_short`
+otherwise.
 
 ## build_review.user
 
@@ -491,14 +587,6 @@ Problem statement
 Approved plan
 
 {plan}
-
-Builder's summary
-
-{summary}
-
-Automatic checks
-
-{checks}
 
 Source files
 
@@ -530,7 +618,19 @@ You check whether a finished solver actually solves the user's problem. It has
 already been compared with its plan, and it ran without errors. Assume the plan
 matches the problem statement. Compare the implementation and its run results
 with the problem statement. You cannot run code; read the source files and the
-results.
+results. Apply any shared result fields to every run and combine them with each
+run's own fields. Use the source to check how summarized evidence was produced.
+
+Code shown as `partial` has a line count, Python definition ranges, and an
+initial excerpt. Request any missing code you need before deciding. Return
+`needs_source` with up to four `source_requests`. Use exact inventory paths,
+one-based inclusive line ranges, and `start_column` 1 unless a returned cursor
+gives a different column. A returned excerpt may stop early with `next_line`
+and `next_column`. Prefer specific ranges that settle a concrete question.
+For a final verdict, report `source_coverage` for every file marked `partial`.
+Name the code you checked and explain why any sections you did not read cannot
+change the verdict. Do not infer what unseen code does from the filename or
+function name. Use empty request and coverage lists when all source is complete.
 
 Check that:
 - Every given value in the problem statement is used with the same number and
@@ -545,6 +645,10 @@ Check that:
   measured result.
 - The measured result and the reference are consistent with each other. If
   they differ, the results must say so and not hide it.
+- When the reference claims feasibility or optimality, check that the classical
+  method supports that claim and uses the same effective inputs, constraints,
+  candidate set, and objective as the measured result. If a classical replay
+  is included, check that its timed events agree with the classical solution.
 - Each run with a different control value used that value, and the results
   reflect its effect on the inputs and calculations. When the same selected
   decisions remain valid at a different value, verify them using the new value.
@@ -552,7 +656,8 @@ Check that:
 
 Report an issue only when you can name the file, the requirement from the
 problem statement that is not met, what the code or the results show instead,
-and how to fix it. Do not report style, naming, performance, or how the plan
+and how to fix it. Cite the requirement's ID and short description when one is
+available. Do not report style, naming, performance, or how the plan
 could be better. A solution that is valid but not optimal is not an issue when
 the results report the gap to the reference honestly. Return `matches` when
 there are no issues and `falls_short` otherwise.
@@ -567,15 +672,24 @@ Runs
 
 {runs}
 
-Source files
+Source inventory and initial code
 
 {files}
 
+Requested source excerpts
+
+{excerpts}
+
+## test_semantics.coverage_required
+
+The review did not explain its coverage of these partial source files: {paths}
+Request the missing code needed to decide, or explain the coverage of each
+file before returning the verdict.
+
 ## final.problem.system
 
-You make the first of three final checks before a solved optimization problem
-is shown to the user. Compare the problem statement with the user's original
-prompt and decide whether the problem statement is a faithful restatement.
+Compare the problem statement with the user's original prompt before solver
+planning. Decide whether the problem statement is a faithful restatement.
 
 Check that:
 - Every number, unit, coordinate, count, name and time in the prompt appears
@@ -587,6 +701,7 @@ Check that:
 - Every rule the user gave is a constraint, and rules the user called
   required are hard constraints.
 - What the user wants to see at the end is listed as expected output.
+- Each requested control keeps its default, allowed values or full range, and increment.
 - Assumptions do not contradict the prompt.
 
 The quantum requirements (method, the split between classical and quantum
@@ -617,9 +732,8 @@ Problem statement
 
 ## final.plan.system
 
-You make the second of three final checks before a solved optimization problem
-is shown to the user. Compare the approved plan with the problem statement and
-decide whether a solver built to this plan solves the stated problem.
+Compare the saved plan with the current problem statement and user clarifications.
+Decide whether a solver built to this plan solves the stated problem.
 
 Check that:
 - The plan's objective has the same direction, terms, weights and units as
@@ -660,18 +774,6 @@ Approved plan
 
 {plan}
 
-## final.problem_changed
+User clarifications
 
-The problem statement was revised after a final check found that it did not
-match the user's prompt. Plan again for the current problem statement. These
-were the issues with the earlier problem statement:
-
-{issues}
-
-## final.plan_changed
-
-The plan was revised after a final check. Read the current plan and update the
-existing implementation to match it. These were the issues with the earlier
-plan:
-
-{issues}
+{answers}

@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from backend.prompt_loader import PromptError
+from backend.model_provider import ModelError
 from backend.problem_statement import (
     ENV_FILE,
     PROBLEM_MD,
@@ -39,7 +40,7 @@ def main() -> None:
     try:
         prompt = args.prompt_file.read_text(encoding="utf-8")
         workspace, problem = run_init(prompt, name=args.prompt_file.stem)
-    except (OSError, WorkspaceError, PromptError, ProblemStatementError) as error:
+    except (OSError, WorkspaceError, PromptError, ProblemStatementError, ModelError) as error:
         sys.exit(f"Init failed: {error}")
 
     print(f"Workspace id: {workspace.id}")
