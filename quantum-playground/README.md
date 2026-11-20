@@ -38,7 +38,49 @@ editor remains usable without credentials; the built-in fixed-example solver
 and existing external backends retain their current workflows. Longer routes
 use bounded candidates, so an exact classical comparison proves optimality over
 those candidates rather than all possible routes. Geographic maps and road
-routing are tracked in [issue #6](https://github.com/Integer-Conversion-Error/hack-the-nest/issues/6).
+routing are available through the **Real map** option described below.
+
+## Use real maps and road routes
+
+Choose **Real map** under **Map type**. Search for an address or place, pan the
+map, drag a marker, or enter latitude/longitude in the inspector. Search results
+can center the map or place the selected depot, charger, or delivery. The grid
+and geographic editors retain separate drafts, so switching modes preserves
+your work. The geographic example starts in downtown Toronto; search can move
+you to another area.
+
+Geographic runs use driving distances and estimated travel times from OSRM,
+including one-way roads and unreachable pairs, rather than grid distance or a
+shared driving-speed assumption. Locations must be within 100 metres of a
+driveable road and are snapped to that road for the schedule. The original
+selected coordinates remain available in **Edit scenario**. Battery use and
+costs use the saved road distances; both solver schedules use the same saved
+travel-time matrix. Road times do not include live traffic.
+
+The host saves the routing snapshot and selected route geometry with the run.
+Reopening saved results needs no routing request. Numeric settings can reuse
+the approved snapshot; moving locations starts a fresh planning run. If a
+provider is unavailable, the draft stays editable. Tile/search failures leave
+coordinate editing available, and routing failures never substitute straight
+lines or invented travel times.
+
+Defaults are Leaflet 1.9.4 (vendored locally), OpenStreetMap raster tiles, Photon
+address search, and the OSRM driving demo. No map API key is needed. Tile views,
+search queries, and route coordinates are sent to the configured providers.
+The public services have no availability guarantee: the OSRM demo is for
+reasonable non-commercial usage at at most one request per second, and Photon
+permits reasonable usage. Server-side requests are throttled and cached; tiles
+use normal browser caching and visible attribution. See the
+[OSM tile policy](https://operations.osmfoundation.org/policies/tiles/),
+[OSRM demo policy](https://github.com/Project-OSRM/osrm-backend/wiki/Demo-server),
+and [Photon terms](https://github.com/komoot/photon#demo-server).
+
+For larger deployments, configure OSRM-compatible routing and Photon-compatible
+search providers or self-host those services.
+Set `QUANTUM_OSRM_URL`, `QUANTUM_GEOCODER_URL`, `QUANTUM_TILE_URL` (with
+`{z}/{x}/{y}` placeholders), and `QUANTUM_TILE_ATTRIBUTION` on the server. These
+must be direct HTTP(S) endpoints; browser requests cannot select backend URLs.
+`QUANTUM_MAP_CACHE_DIR` selects the bounded persistent road/search cache.
 
 The example worker uses the local QAOA simulator by default. To run it through Quantum Rings, install `QuantumRingsLib` in the same environment and set `QR_ACCOUNT` and `QR_KEY` in the repository root's ignored `.env`.
 

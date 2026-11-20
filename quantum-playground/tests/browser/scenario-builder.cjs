@@ -47,7 +47,10 @@ async function check(browser, url, platform, width, height, state) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  const snapshot = () => page.evaluate(() => JSON.parse(localStorage.getItem('quantumloop-scenario-draft-v1')).draft);
+  const snapshot = () => page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('quantumloop-scenario-draft-v1'));
+    return saved.drafts ? saved.drafts[saved.active] : saved.draft;
+  });
   const capture = async name => {
     if (evidence && platform !== 'small-mobile') {
       await page.screenshot({ path: path.join(evidence, name + '-' + platform + '.png'), fullPage: true });

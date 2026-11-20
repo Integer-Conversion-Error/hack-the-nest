@@ -274,6 +274,11 @@ empty edit list is valid when the plan already satisfies the issues. Return
 `needs_clarification` with focused questions or `unsupported` with a reason
 when the problem cannot yet be planned.
 
+Paths start at the displayed plan root. Solver blueprint fields belong inside
+solver_examples: for example, replace an estimate at
+["solver_examples", 0, "estimated_worker_seconds"], or a build step at
+["solver_examples", 0, "build_steps", 0]. Do not target these fields at the root.
+
 ## planning.revision.user
 
 Problem statement
@@ -310,7 +315,9 @@ actionable revision issue supplied in the context.
   method fits Quantum Rings. Check concrete file and API boundaries through
   encoding, execution, decoding, and independent result verification. The
   worker must run headlessly from `main.py`, accept the plan's control flags,
-  and use `qr_runtime` to write measured circuit evidence for `results.json`.
+  and use `qr_runtime.run_counts` and `qr_runtime.save_circuit_diagram` to obtain
+  measured circuit evidence. The generated solver writes `results.json` itself;
+  `qr_runtime` does not provide a results-file writer.
 - Check reference inputs and search space, edge cases, feasibility filtering and
   objective ranking for sampled outcomes, and the bound for penalty encodings.
   Alternatives must satisfy the same hard constraints. Include auxiliary qubits
@@ -349,8 +356,17 @@ Proposed plan
 
 ## planning.ev_fleet
 
-The EV dashboard supports one to six vans on a street grid of 2 to 50
-intersections per axis and an objective in USD. Plan for a replay with timed
+An interactive geographic scenario (source schema_version 2) is also supported.
+Its read-only routing.json supplies a frozen directed road distance/duration
+matrix, road-snapped node coordinates and routing digest. Read that artifact;
+do not generate Manhattan or straight-line estimates or refetch road data.
+Treat null matrix entries as unreachable. Use bounded route candidates and the
+same road metrics in quantum selection, classical comparison and verification.
+Road driving times replace the grid speed setting. Keep all input IDs and
+assignments. Only the host numeric registry may supply adjustable controls.
+
+The EV dashboard supports one to six vans on either a street grid of 2 to 50
+intersections per axis or a geographic road-network snapshot, with an objective in USD. Plan for a replay with timed
 drive, wait, charge, and delivery events, the actual control values, a USD cost
 breakdown, and independent feasibility evidence. Use the effective inputs in
 both the solver and verifier. Report `unsupported` if the problem cannot fit the
@@ -462,8 +478,24 @@ Quantum Rings, checked against the installed SDK (QuantumRingsLib 0.12.2):
 
 ## build.ev_fleet
 
+For source schema_version 2 with map.kind "geographic", the following overrides
+the grid-specific requirements below. Load immutable scenario.json and
+routing.json. The simulation has map {kind:"geographic", profile:"driving",
+routing_digest:<routing.json digest>} and no grid. Positions are GeoJSON
+[longitude,latitude], using routing.nodes[].snapped_position for depots,
+chargers, deliveries and events; retain all source IDs and depot assignments.
+Each drive has from_id, to_id and distance_km from the corresponding directed
+matrix cell. Its elapsed time is durations_s/60, driving energy is distance_km
+times the effective energy rate, and cost uses that same distance. A drive's
+path is optional in raw solver output: the host supplies verified road geometry.
+Do not invent roads, use straight-line metrics, or call network services.
+Null cells are unreachable. Report unsupported/infeasible rather than filling
+them. All service, battery, charging, waiting, lateness and return checks below
+still apply to both quantum and classical schedules. Rebuild bounded candidates
+when approved numeric values change; geographic speed is not an input control.
+
 This workspace feeds the EV dashboard. The input must describe an EV fleet
-optimization on a street grid, with one to six vans and an objective in USD.
+optimization on a street grid or geographic road network, with one to six vans and an objective in USD.
 Plan the delivered schedule and output fields alongside the solver. If the
 problem cannot be represented as that scene, report it as unsupported in Plan.
 

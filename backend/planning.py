@@ -6,12 +6,14 @@ Usage:
 """
 
 import argparse
+import ast
 import json
 import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import Path
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -151,9 +153,25 @@ def _review_policy(workspace: Workspace, limits: tuple[int, int]) -> tuple[str, 
     context = {}
     if workspace.meta.get("scene_type") == "ev_fleet":
         context["dashboard_requirements"] = load_prompt("planning.ev_fleet")
+        # The planner must know the installed helper API rather than ask the
+        # user to supply internal runtime details or invent an evidence writer.
+        runtime = ast.parse((Path(__file__).parent / "templates" / "qr_runtime.py").read_text(encoding="utf-8"))
+        context["quantum_runtime"] = {
+            "module": "qr_runtime (pipeline-owned, read-only)",
+            "import_order": "Import qr_runtime before QuantumRingsLib or constructing a circuit.",
+            "functions": [{"signature": f"{item.name}({ast.unparse(item.args)})",
+                           "documentation": ast.get_docstring(item)} for item in runtime.body
+                          if isinstance(item, ast.FunctionDef)
+                          and item.name in {"run_counts", "bit", "save_circuit_diagram"}],
+            "results": "There is no results.json writer API. main.py writes JSON with the standard library; put measured counts, actual qubits, decision_qubits, and returned circuit_diagram metadata in quantum.",
+            "worker_deadline": f"backend.runner executes main.py in a subprocess with a hard {worker_seconds}-second timeout and terminates timed-out workers. A timeout is a failed attempt, never a verified classical substitute. Choose a bounded quantum workload within this budget.",
+        }
     if workspace.meta.get("scenario_digest"):
         context["scenario_digest"] = workspace.meta["scenario_digest"]
         context["scenario"] = json.loads(workspace.resolve("scenario.json").read_text(encoding="utf-8"))
+        if workspace.meta.get("routing_digest"):
+            context["road_routing"] = {"file": "routing.json", "digest": workspace.meta["routing_digest"],
+                                       "description": "Frozen directed road distances and travel times, with snapped node locations."}
     return system, context
 
 

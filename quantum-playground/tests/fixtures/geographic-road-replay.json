@@ -1,0 +1,3039 @@
+{
+  "source": {
+    "schema_version": 2,
+    "title": "Toronto delivery routes",
+    "depots": [
+      {
+        "id": "P1",
+        "position": [
+          -79.3832,
+          43.6532
+        ]
+      },
+      {
+        "id": "P2",
+        "position": [
+          -79.395,
+          43.653
+        ]
+      }
+    ],
+    "chargers": [
+      {
+        "id": "C1",
+        "position": [
+          -79.386,
+          43.65
+        ],
+        "power_kw": 10,
+        "slots": [
+          {
+            "id": "S1",
+            "start_min": 30,
+            "end_min": 60
+          },
+          {
+            "id": "S2",
+            "start_min": 60,
+            "end_min": 90
+          }
+        ]
+      },
+      {
+        "id": "C2",
+        "position": [
+          -79.389,
+          43.655
+        ],
+        "power_kw": 10,
+        "slots": [
+          {
+            "id": "S1",
+            "start_min": 30,
+            "end_min": 60
+          },
+          {
+            "id": "S2",
+            "start_min": 60,
+            "end_min": 90
+          }
+        ]
+      }
+    ],
+    "deliveries": [
+      {
+        "id": "D1",
+        "position": [
+          -79.379,
+          43.65
+        ],
+        "vehicle_id": "V1",
+        "deadline_min": 60,
+        "service_min": 5
+      },
+      {
+        "id": "D2",
+        "position": [
+          -79.392,
+          43.65
+        ],
+        "vehicle_id": "V1",
+        "deadline_min": 90,
+        "service_min": 5
+      },
+      {
+        "id": "D3",
+        "position": [
+          -79.398,
+          43.655
+        ],
+        "vehicle_id": "V2",
+        "deadline_min": 90,
+        "service_min": 5
+      }
+    ],
+    "vehicles": [
+      {
+        "id": "V1",
+        "depot_id": "P1",
+        "initial_charge_pct": 40
+      },
+      {
+        "id": "V2",
+        "depot_id": "P2",
+        "initial_charge_pct": 35
+      }
+    ],
+    "fleet": {
+      "battery_capacity_kwh": 20,
+      "reserve_pct": 15,
+      "energy_use_kwh_per_km": 0.3
+    },
+    "timing": {
+      "start_hour": 8,
+      "duration_min": 120
+    },
+    "costs": {
+      "driving_per_km": 0.3,
+      "electricity_per_kwh": 0.2,
+      "waiting_per_hour": 25,
+      "late_per_hour": 60
+    },
+    "map": {
+      "kind": "geographic",
+      "profile": "driving"
+    }
+  },
+  "routing": {
+    "base_url": "https://router.project-osrm.org",
+    "created_at": "2026-11-20T07:09:23+00:00",
+    "data_version": null,
+    "digest": "1b76df0d9d1841cb07201ede81d720a348f1cfa7ed37d87b41d089b879cead0a",
+    "distances_m": [
+      [
+        0,
+        1363.7,
+        911.9,
+        768.8,
+        597,
+        1027.5,
+        1645.5
+      ],
+      [
+        1363.7,
+        0,
+        1519.6,
+        652.8,
+        1963.4,
+        684.5,
+        570.9
+      ],
+      [
+        687.4,
+        1119.6,
+        0,
+        827.4,
+        767.9,
+        617.6,
+        1583.9
+      ],
+      [
+        1060.1,
+        1055.2,
+        1205.7,
+        0,
+        1649.5,
+        1321.4,
+        1337
+      ],
+      [
+        1002.7,
+        2225.5,
+        1095,
+        1771.5,
+        0,
+        1723.5,
+        2648.2
+      ],
+      [
+        1096.7,
+        502,
+        884.7,
+        864.1,
+        1317.8,
+        0,
+        966.2
+      ],
+      [
+        1631,
+        452.6,
+        1787,
+        920.1,
+        2230.7,
+        951.8,
+        0
+      ]
+    ],
+    "durations_s": [
+      [
+        0,
+        197.1,
+        138,
+        104.7,
+        86.1,
+        123,
+        246.5
+      ],
+      [
+        187.3,
+        0,
+        231,
+        101.8,
+        270.1,
+        113.9,
+        112.9
+      ],
+      [
+        89,
+        191.8,
+        0,
+        121.5,
+        117.9,
+        93.1,
+        259
+      ],
+      [
+        153.5,
+        164.1,
+        184.1,
+        0,
+        223.2,
+        176.6,
+        213.5
+      ],
+      [
+        133.4,
+        317.4,
+        137.6,
+        238.1,
+        0,
+        218.7,
+        379.9
+      ],
+      [
+        143.3,
+        98.7,
+        126.3,
+        128.9,
+        174,
+        0,
+        165.9
+      ],
+      [
+        237.1,
+        106,
+        280.8,
+        151.6,
+        319.9,
+        163.7,
+        0
+      ]
+    ],
+    "nodes": [
+      {
+        "id": "P1",
+        "position": [
+          -79.3832,
+          43.6532
+        ],
+        "snap_distance_m": 36.92577153,
+        "snapped_position": [
+          -79.38276,
+          43.653292
+        ]
+      },
+      {
+        "id": "P2",
+        "position": [
+          -79.395,
+          43.653
+        ],
+        "snap_distance_m": 2.207392068,
+        "snapped_position": [
+          -79.394992,
+          43.652981
+        ]
+      },
+      {
+        "id": "C1",
+        "position": [
+          -79.386,
+          43.65
+        ],
+        "snap_distance_m": 3.944781323,
+        "snapped_position": [
+          -79.386046,
+          43.649988
+        ]
+      },
+      {
+        "id": "C2",
+        "position": [
+          -79.389,
+          43.655
+        ],
+        "snap_distance_m": 25.96160757,
+        "snapped_position": [
+          -79.389308,
+          43.654932
+        ]
+      },
+      {
+        "id": "D1",
+        "position": [
+          -79.379,
+          43.65
+        ],
+        "snap_distance_m": 2.77252904,
+        "snapped_position": [
+          -79.378967,
+          43.650007
+        ]
+      },
+      {
+        "id": "D2",
+        "position": [
+          -79.392,
+          43.65
+        ],
+        "snap_distance_m": 19.01185816,
+        "snapped_position": [
+          -79.392228,
+          43.649957
+        ]
+      },
+      {
+        "id": "D3",
+        "position": [
+          -79.398,
+          43.655
+        ],
+        "snap_distance_m": 0.4182411872,
+        "snapped_position": [
+          -79.397995,
+          43.655001
+        ]
+      }
+    ],
+    "profile": "driving",
+    "provider": "osrm",
+    "schema_version": 1,
+    "source_digest": "63ce2c9a81a49a8fa772992ac77c4096e26b4ab72676b320c7a3ff4279278b8a"
+  },
+  "output": {
+    "status": "ok",
+    "controls": {},
+    "objective": {
+      "value": 1.3322100000000001,
+      "unit": "USD",
+      "direction": "minimize"
+    },
+    "solution": {
+      "cost_breakdown": {
+        "driving_cost": 1.3322100000000001,
+        "electricity_cost": 0.0,
+        "waiting_cost": 0.0,
+        "late_penalty": 0.0
+      },
+      "verification": {
+        "feasible": true,
+        "violations": []
+      }
+    },
+    "simulation": {
+      "kind": "ev_fleet",
+      "map": {
+        "kind": "geographic",
+        "profile": "driving",
+        "routing_digest": "1b76df0d9d1841cb07201ede81d720a348f1cfa7ed37d87b41d089b879cead0a"
+      },
+      "depots": [
+        {
+          "id": "P1",
+          "position": [
+            -79.38276,
+            43.653292
+          ]
+        },
+        {
+          "id": "P2",
+          "position": [
+            -79.394992,
+            43.652981
+          ]
+        }
+      ],
+      "chargers": [
+        {
+          "id": "C1",
+          "position": [
+            -79.386046,
+            43.649988
+          ]
+        },
+        {
+          "id": "C2",
+          "position": [
+            -79.389308,
+            43.654932
+          ]
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "D1",
+          "position": [
+            -79.378967,
+            43.650007
+          ],
+          "deadline_min": 60
+        },
+        {
+          "id": "D2",
+          "position": [
+            -79.392228,
+            43.649957
+          ],
+          "deadline_min": 90
+        },
+        {
+          "id": "D3",
+          "position": [
+            -79.397995,
+            43.655001
+          ],
+          "deadline_min": 90
+        }
+      ],
+      "start_hour": 8,
+      "duration_min": 120,
+      "battery_capacity_kwh": 20,
+      "reserve_pct": 15,
+      "vans": [
+        {
+          "id": "V1",
+          "depot_id": "P1",
+          "initial_battery_kwh": 8.0,
+          "delivery_ids": [
+            "D1",
+            "D2"
+          ],
+          "events": [
+            {
+              "type": "drive",
+              "from_id": "P1",
+              "to_id": "D1",
+              "distance_km": 0.597,
+              "start_min": 0.0,
+              "end_min": 1.4349999999999998,
+              "position": [
+                -79.38276,
+                43.653292
+              ],
+              "battery_start_kwh": 8.0,
+              "battery_end_kwh": 7.8209
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D1",
+              "start_min": 1.4349999999999998,
+              "end_min": 6.435,
+              "position": [
+                -79.378967,
+                43.650007
+              ],
+              "battery_start_kwh": 7.8209,
+              "battery_end_kwh": 7.8209
+            },
+            {
+              "type": "drive",
+              "from_id": "D1",
+              "to_id": "D2",
+              "distance_km": 1.7235,
+              "start_min": 6.435,
+              "end_min": 10.08,
+              "position": [
+                -79.378967,
+                43.650007
+              ],
+              "battery_start_kwh": 7.8209,
+              "battery_end_kwh": 7.30385
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D2",
+              "start_min": 10.08,
+              "end_min": 15.08,
+              "position": [
+                -79.392228,
+                43.649957
+              ],
+              "battery_start_kwh": 7.30385,
+              "battery_end_kwh": 7.30385
+            },
+            {
+              "type": "drive",
+              "from_id": "D2",
+              "to_id": "P1",
+              "distance_km": 1.0967,
+              "start_min": 15.08,
+              "end_min": 17.468333333333334,
+              "position": [
+                -79.392228,
+                43.649957
+              ],
+              "battery_start_kwh": 7.30385,
+              "battery_end_kwh": 6.9748399999999995
+            }
+          ]
+        },
+        {
+          "id": "V2",
+          "depot_id": "P2",
+          "initial_battery_kwh": 7.0,
+          "delivery_ids": [
+            "D3"
+          ],
+          "events": [
+            {
+              "type": "drive",
+              "from_id": "P2",
+              "to_id": "D3",
+              "distance_km": 0.5709,
+              "start_min": 0.0,
+              "end_min": 1.8816666666666668,
+              "position": [
+                -79.394992,
+                43.652981
+              ],
+              "battery_start_kwh": 7.0,
+              "battery_end_kwh": 6.82873
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D3",
+              "start_min": 1.8816666666666668,
+              "end_min": 6.881666666666667,
+              "position": [
+                -79.397995,
+                43.655001
+              ],
+              "battery_start_kwh": 6.82873,
+              "battery_end_kwh": 6.82873
+            },
+            {
+              "type": "drive",
+              "from_id": "D3",
+              "to_id": "P2",
+              "distance_km": 0.4526,
+              "start_min": 6.881666666666667,
+              "end_min": 8.648333333333333,
+              "position": [
+                -79.397995,
+                43.655001
+              ],
+              "battery_start_kwh": 6.82873,
+              "battery_end_kwh": 6.692950000000001
+            }
+          ]
+        }
+      ]
+    },
+    "reference": {
+      "method": "Road-matrix test fixture",
+      "objective_value": 1.3322100000000001,
+      "feasible": true,
+      "optimality_proven": false,
+      "simulation": {
+        "kind": "ev_fleet",
+        "map": {
+          "kind": "geographic",
+          "profile": "driving",
+          "routing_digest": "1b76df0d9d1841cb07201ede81d720a348f1cfa7ed37d87b41d089b879cead0a"
+        },
+        "depots": [
+          {
+            "id": "P1",
+            "position": [
+              -79.38276,
+              43.653292
+            ]
+          },
+          {
+            "id": "P2",
+            "position": [
+              -79.394992,
+              43.652981
+            ]
+          }
+        ],
+        "chargers": [
+          {
+            "id": "C1",
+            "position": [
+              -79.386046,
+              43.649988
+            ]
+          },
+          {
+            "id": "C2",
+            "position": [
+              -79.389308,
+              43.654932
+            ]
+          }
+        ],
+        "deliveries": [
+          {
+            "id": "D1",
+            "position": [
+              -79.378967,
+              43.650007
+            ],
+            "deadline_min": 60
+          },
+          {
+            "id": "D2",
+            "position": [
+              -79.392228,
+              43.649957
+            ],
+            "deadline_min": 90
+          },
+          {
+            "id": "D3",
+            "position": [
+              -79.397995,
+              43.655001
+            ],
+            "deadline_min": 90
+          }
+        ],
+        "start_hour": 8,
+        "duration_min": 120,
+        "battery_capacity_kwh": 20,
+        "reserve_pct": 15,
+        "vans": [
+          {
+            "id": "V1",
+            "depot_id": "P1",
+            "initial_battery_kwh": 8.0,
+            "delivery_ids": [
+              "D1",
+              "D2"
+            ],
+            "events": [
+              {
+                "type": "drive",
+                "from_id": "P1",
+                "to_id": "D1",
+                "distance_km": 0.597,
+                "start_min": 0.0,
+                "end_min": 1.4349999999999998,
+                "position": [
+                  -79.38276,
+                  43.653292
+                ],
+                "battery_start_kwh": 8.0,
+                "battery_end_kwh": 7.8209
+              },
+              {
+                "type": "deliver",
+                "delivery_id": "D1",
+                "start_min": 1.4349999999999998,
+                "end_min": 6.435,
+                "position": [
+                  -79.378967,
+                  43.650007
+                ],
+                "battery_start_kwh": 7.8209,
+                "battery_end_kwh": 7.8209
+              },
+              {
+                "type": "drive",
+                "from_id": "D1",
+                "to_id": "D2",
+                "distance_km": 1.7235,
+                "start_min": 6.435,
+                "end_min": 10.08,
+                "position": [
+                  -79.378967,
+                  43.650007
+                ],
+                "battery_start_kwh": 7.8209,
+                "battery_end_kwh": 7.30385
+              },
+              {
+                "type": "deliver",
+                "delivery_id": "D2",
+                "start_min": 10.08,
+                "end_min": 15.08,
+                "position": [
+                  -79.392228,
+                  43.649957
+                ],
+                "battery_start_kwh": 7.30385,
+                "battery_end_kwh": 7.30385
+              },
+              {
+                "type": "drive",
+                "from_id": "D2",
+                "to_id": "P1",
+                "distance_km": 1.0967,
+                "start_min": 15.08,
+                "end_min": 17.468333333333334,
+                "position": [
+                  -79.392228,
+                  43.649957
+                ],
+                "battery_start_kwh": 7.30385,
+                "battery_end_kwh": 6.9748399999999995
+              }
+            ]
+          },
+          {
+            "id": "V2",
+            "depot_id": "P2",
+            "initial_battery_kwh": 7.0,
+            "delivery_ids": [
+              "D3"
+            ],
+            "events": [
+              {
+                "type": "drive",
+                "from_id": "P2",
+                "to_id": "D3",
+                "distance_km": 0.5709,
+                "start_min": 0.0,
+                "end_min": 1.8816666666666668,
+                "position": [
+                  -79.394992,
+                  43.652981
+                ],
+                "battery_start_kwh": 7.0,
+                "battery_end_kwh": 6.82873
+              },
+              {
+                "type": "deliver",
+                "delivery_id": "D3",
+                "start_min": 1.8816666666666668,
+                "end_min": 6.881666666666667,
+                "position": [
+                  -79.397995,
+                  43.655001
+                ],
+                "battery_start_kwh": 6.82873,
+                "battery_end_kwh": 6.82873
+              },
+              {
+                "type": "drive",
+                "from_id": "D3",
+                "to_id": "P2",
+                "distance_km": 0.4526,
+                "start_min": 6.881666666666667,
+                "end_min": 8.648333333333333,
+                "position": [
+                  -79.397995,
+                  43.655001
+                ],
+                "battery_start_kwh": 6.82873,
+                "battery_end_kwh": 6.692950000000001
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "quantum": {
+      "method": "Test fixture: no quantum execution",
+      "qubits": null,
+      "decision_qubits": null,
+      "counts": {}
+    },
+    "runtime_seconds": 0
+  },
+  "view": {
+    "run_id": "geographic-road-fixture",
+    "plan_id": "geographic-road-fixture",
+    "attempt_id": "road-fixture-1",
+    "mode": "live",
+    "status": "completed",
+    "provenance": "live",
+    "problem": {
+      "title": "Road replay preview \u00b7 no quantum run",
+      "statement": "Geographic replay fixture: real OSRM road data, no quantum execution.",
+      "original_prompt": "Solve this geographic EV fleet dispatch with measured QAOA and visualize the verified road routes.\nThe source JSON below and read-only scenario.json are authoritative. Read the\npipeline-owned, read-only routing.json before implementing any route calculation.\nIt contains the immutable OSRM road snapshot: source identity, ordered nodes with\nrequested positions and snapped_position, directed distances_m and durations_s.\nUse its node IDs and matrix order exactly. Matrices can be asymmetric, and null\ncells mean unreachable road legs. Do not assume symmetry, fetch routing yourself,\nuse straight-line/crow-flies distances, invent geometry, or derive time from speed.\nEvery road leg's time is durations_s[from][to] / 60 minutes; its driven distance is\ndistances_m[from][to] / 1000 km. There is no adjustable driving-speed control.\nMaintain the source entity IDs, requested coordinates, stop assignments and home\ndepots. Replays use the routing snapshot's SNAPPED [longitude,latitude] positions.\nEach vehicle starts at its assigned depot at minute zero and returns there before\nthe shift ends. Visit every assigned delivery exactly once; choose its stop order.\nIdle vehicles may stay home. Model events contiguously, including explicit waits.\nKeep battery at or above the shared reserve throughout; consume the selected\nenergy_use_kwh_per_km times the ROAD distance, and never exceed battery capacity.\nDeliveries take their own service_min. Delivery deadlines are soft: charge late\ncost from deadline_min until service completion; shift duration is a hard limit.\nEach single-plug charger visit occupies one entire configured half-open slot.\nArrive by its start, wait explicitly if early, and add min(power_kw * slot minutes\n/ 60, remaining capacity) kWh. Charging between stops and repeated visits are\nallowed, provided reservations do not overlap and all other constraints hold.\nUse bounded candidate generation and route search, including several stop orders\nand charging choices. Do not enumerate all permutations of ten delivery stops.\nUse measured QAOA to choose candidates within the worker budget; do not substitute\nan exact classical answer for a failed measurement. Independently verify all\nstops, road metrics, event timing, batteries, slots, home returns and USD costs.\nCompute a classical reference over the same candidates. Disclose heuristic\npruning and scope any optimality proof to that candidate set.\nMinimize driving_per_km for all ROAD kilometers including returns, electricity_per_kwh\nfor actual charged energy, waiting_per_hour for explicit waits, and late_per_hour\nfor late delivery minutes. Prorate hourly rates by minutes / 60. Report USD\ncost_breakdown fields driving_cost, electricity_cost, waiting_cost, late_penalty.\nEmit simulation.map {kind:\"geographic\",profile:\"driving\",routing_digest:<routing.json digest>}\nand NO grid field. Include depots, chargers and deliveries at their SNAP positions,\nthe existing start_hour, duration_min, battery_capacity_kwh, reserve_pct and vans.\nEach van has id, depot_id, initial_battery_kwh, delivery_ids and timed events.\nEach event includes position and battery_start_kwh/battery_end_kwh. A drive adds\nfrom_id, to_id and distance_km, with event duration taken from the directed matrix.\nDo not fabricate a path: the host adds actual road geometry for selected legs.\nOmit a zero-time, zero-distance drive between coincident routing points. Deliver\nevents identify delivery_id; charge/wait events identify charger_id when relevant.\nInclude reference.simulation for a feasible classical schedule, with the same\nrouting digest, snapped nodes and input settings.\nYou may approve a small subset of numeric controls in the registry below. Defaults\nMUST equal source values. Do not invent keys, location/assignment/entity controls,\nor a speed control. Apply effective values to both solver and independent verifier.\n\nAuthoritative geographic scenario JSON:\n{\"chargers\":[{\"id\":\"C1\",\"position\":[-79.386,43.65],\"power_kw\":10,\"slots\":[{\"end_min\":60,\"id\":\"S1\",\"start_min\":30},{\"end_min\":90,\"id\":\"S2\",\"start_min\":60}]},{\"id\":\"C2\",\"position\":[-79.389,43.655],\"power_kw\":10,\"slots\":[{\"end_min\":60,\"id\":\"S1\",\"start_min\":30},{\"end_min\":90,\"id\":\"S2\",\"start_min\":60}]}],\"costs\":{\"driving_per_km\":0.3,\"electricity_per_kwh\":0.2,\"late_per_hour\":60,\"waiting_per_hour\":25},\"deliveries\":[{\"deadline_min\":60,\"id\":\"D1\",\"position\":[-79.379,43.65],\"service_min\":5,\"vehicle_id\":\"V1\"},{\"deadline_min\":90,\"id\":\"D2\",\"position\":[-79.392,43.65],\"service_min\":5,\"vehicle_id\":\"V1\"},{\"deadline_min\":90,\"id\":\"D3\",\"position\":[-79.398,43.655],\"service_min\":5,\"vehicle_id\":\"V2\"}],\"depots\":[{\"id\":\"P1\",\"position\":[-79.3832,43.6532]},{\"id\":\"P2\",\"position\":[-79.395,43.653]}],\"fleet\":{\"battery_capacity_kwh\":20,\"energy_use_kwh_per_km\":0.3,\"reserve_pct\":15},\"map\":{\"kind\":\"geographic\",\"profile\":\"driving\"},\"schema_version\":2,\"timing\":{\"duration_min\":120,\"start_hour\":8},\"title\":\"Toronto delivery routes\",\"vehicles\":[{\"depot_id\":\"P1\",\"id\":\"V1\",\"initial_charge_pct\":40},{\"depot_id\":\"P2\",\"id\":\"V2\",\"initial_charge_pct\":35}]}\n\nHost numeric control registry (entity IDs address list members):\n{\"battery_capacity_kwh\":[\"fleet\",\"battery_capacity_kwh\"],\"charger_c1_power_kw\":[\"chargers\",\"C1\",\"power_kw\"],\"charger_c1_slot_s1_end_min\":[\"chargers\",\"C1\",\"slots\",\"S1\",\"end_min\"],\"charger_c1_slot_s1_start_min\":[\"chargers\",\"C1\",\"slots\",\"S1\",\"start_min\"],\"charger_c1_slot_s2_end_min\":[\"chargers\",\"C1\",\"slots\",\"S2\",\"end_min\"],\"charger_c1_slot_s2_start_min\":[\"chargers\",\"C1\",\"slots\",\"S2\",\"start_min\"],\"charger_c2_power_kw\":[\"chargers\",\"C2\",\"power_kw\"],\"charger_c2_slot_s1_end_min\":[\"chargers\",\"C2\",\"slots\",\"S1\",\"end_min\"],\"charger_c2_slot_s1_start_min\":[\"chargers\",\"C2\",\"slots\",\"S1\",\"start_min\"],\"charger_c2_slot_s2_end_min\":[\"chargers\",\"C2\",\"slots\",\"S2\",\"end_min\"],\"charger_c2_slot_s2_start_min\":[\"chargers\",\"C2\",\"slots\",\"S2\",\"start_min\"],\"delivery_d1_deadline_min\":[\"deliveries\",\"D1\",\"deadline_min\"],\"delivery_d1_service_min\":[\"deliveries\",\"D1\",\"service_min\"],\"delivery_d2_deadline_min\":[\"deliveries\",\"D2\",\"deadline_min\"],\"delivery_d2_service_min\":[\"deliveries\",\"D2\",\"service_min\"],\"delivery_d3_deadline_min\":[\"deliveries\",\"D3\",\"deadline_min\"],\"delivery_d3_service_min\":[\"deliveries\",\"D3\",\"service_min\"],\"driving_cost_per_km\":[\"costs\",\"driving_per_km\"],\"electricity_price_per_kwh\":[\"costs\",\"electricity_per_kwh\"],\"energy_use_kwh_per_km\":[\"fleet\",\"energy_use_kwh_per_km\"],\"late_delivery_cost_per_hour\":[\"costs\",\"late_per_hour\"],\"minimum_reserve_pct\":[\"fleet\",\"reserve_pct\"],\"shift_duration_minutes\":[\"timing\",\"duration_min\"],\"start_hour\":[\"timing\",\"start_hour\"],\"van_1_initial_charge_pct\":[\"vehicles\",\"V1\",\"initial_charge_pct\"],\"van_2_initial_charge_pct\":[\"vehicles\",\"V2\",\"initial_charge_pct\"],\"waiting_cost_per_hour\":[\"costs\",\"waiting_per_hour\"]}"
+    },
+    "variables": [],
+    "effective_values": {},
+    "simulation": {
+      "kind": "ev_fleet",
+      "map": {
+        "kind": "geographic",
+        "profile": "driving",
+        "routing_digest": "1b76df0d9d1841cb07201ede81d720a348f1cfa7ed37d87b41d089b879cead0a"
+      },
+      "depots": [
+        {
+          "id": "P1",
+          "position": [
+            -79.38276,
+            43.653292
+          ]
+        },
+        {
+          "id": "P2",
+          "position": [
+            -79.394992,
+            43.652981
+          ]
+        }
+      ],
+      "chargers": [
+        {
+          "id": "C1",
+          "position": [
+            -79.386046,
+            43.649988
+          ]
+        },
+        {
+          "id": "C2",
+          "position": [
+            -79.389308,
+            43.654932
+          ]
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "D1",
+          "position": [
+            -79.378967,
+            43.650007
+          ],
+          "deadline_min": 60
+        },
+        {
+          "id": "D2",
+          "position": [
+            -79.392228,
+            43.649957
+          ],
+          "deadline_min": 90
+        },
+        {
+          "id": "D3",
+          "position": [
+            -79.397995,
+            43.655001
+          ],
+          "deadline_min": 90
+        }
+      ],
+      "start_hour": 8,
+      "duration_min": 120,
+      "battery_capacity_kwh": 20,
+      "reserve_pct": 15,
+      "vans": [
+        {
+          "id": "V1",
+          "depot_id": "P1",
+          "initial_battery_kwh": 8.0,
+          "delivery_ids": [
+            "D1",
+            "D2"
+          ],
+          "events": [
+            {
+              "type": "drive",
+              "from_id": "P1",
+              "to_id": "D1",
+              "distance_km": 0.597,
+              "start_min": 0.0,
+              "end_min": 1.4349999999999998,
+              "position": [
+                -79.38276,
+                43.653292
+              ],
+              "battery_start_kwh": 8.0,
+              "battery_end_kwh": 7.8209,
+              "path": [
+                [
+                  -79.38276,
+                  43.653292
+                ],
+                [
+                  -79.382742,
+                  43.653248
+                ],
+                [
+                  -79.382658,
+                  43.653037
+                ],
+                [
+                  -79.382636,
+                  43.652981
+                ],
+                [
+                  -79.382606,
+                  43.652904
+                ],
+                [
+                  -79.382418,
+                  43.652434
+                ],
+                [
+                  -79.382357,
+                  43.652279
+                ],
+                [
+                  -79.382331,
+                  43.652207
+                ],
+                [
+                  -79.382296,
+                  43.652147
+                ],
+                [
+                  -79.382251,
+                  43.652086
+                ],
+                [
+                  -79.382192,
+                  43.65204
+                ],
+                [
+                  -79.382118,
+                  43.65201
+                ],
+                [
+                  -79.382035,
+                  43.651986
+                ],
+                [
+                  -79.381876,
+                  43.651941
+                ],
+                [
+                  -79.381761,
+                  43.651899
+                ],
+                [
+                  -79.381734,
+                  43.651889
+                ],
+                [
+                  -79.381716,
+                  43.65188
+                ],
+                [
+                  -79.381681,
+                  43.651863
+                ],
+                [
+                  -79.38162,
+                  43.651826
+                ],
+                [
+                  -79.381577,
+                  43.651772
+                ],
+                [
+                  -79.381529,
+                  43.651696
+                ],
+                [
+                  -79.381336,
+                  43.651262
+                ],
+                [
+                  -79.381326,
+                  43.651234
+                ],
+                [
+                  -79.381312,
+                  43.651199
+                ],
+                [
+                  -79.381302,
+                  43.651174
+                ],
+                [
+                  -79.381275,
+                  43.651108
+                ],
+                [
+                  -79.38105,
+                  43.650568
+                ],
+                [
+                  -79.380814,
+                  43.649995
+                ],
+                [
+                  -79.380785,
+                  43.649922
+                ],
+                [
+                  -79.380679,
+                  43.649944
+                ],
+                [
+                  -79.380262,
+                  43.650034
+                ],
+                [
+                  -79.380104,
+                  43.650068
+                ],
+                [
+                  -79.38006,
+                  43.650078
+                ],
+                [
+                  -79.379557,
+                  43.650185
+                ],
+                [
+                  -79.37917,
+                  43.650269
+                ],
+                [
+                  -79.379089,
+                  43.650286
+                ],
+                [
+                  -79.379079,
+                  43.650264
+                ],
+                [
+                  -79.379056,
+                  43.650218
+                ],
+                [
+                  -79.378967,
+                  43.650007
+                ]
+              ]
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D1",
+              "start_min": 1.4349999999999998,
+              "end_min": 6.435,
+              "position": [
+                -79.378967,
+                43.650007
+              ],
+              "battery_start_kwh": 7.8209,
+              "battery_end_kwh": 7.8209
+            },
+            {
+              "type": "drive",
+              "from_id": "D1",
+              "to_id": "D2",
+              "distance_km": 1.7235,
+              "start_min": 6.435,
+              "end_min": 10.08,
+              "position": [
+                -79.378967,
+                43.650007
+              ],
+              "battery_start_kwh": 7.8209,
+              "battery_end_kwh": 7.30385,
+              "path": [
+                [
+                  -79.378967,
+                  43.650007
+                ],
+                [
+                  -79.379056,
+                  43.650218
+                ],
+                [
+                  -79.379079,
+                  43.650264
+                ],
+                [
+                  -79.379089,
+                  43.650286
+                ],
+                [
+                  -79.378529,
+                  43.650408
+                ],
+                [
+                  -79.378427,
+                  43.650429
+                ],
+                [
+                  -79.378419,
+                  43.650408
+                ],
+                [
+                  -79.378396,
+                  43.650353
+                ],
+                [
+                  -79.377927,
+                  43.649247
+                ],
+                [
+                  -79.3779,
+                  43.649182
+                ],
+                [
+                  -79.377895,
+                  43.649169
+                ],
+                [
+                  -79.378001,
+                  43.649146
+                ],
+                [
+                  -79.37819,
+                  43.649105
+                ],
+                [
+                  -79.378803,
+                  43.648973
+                ],
+                [
+                  -79.379491,
+                  43.648826
+                ],
+                [
+                  -79.380126,
+                  43.648685
+                ],
+                [
+                  -79.380263,
+                  43.648656
+                ],
+                [
+                  -79.380269,
+                  43.648669
+                ],
+                [
+                  -79.380295,
+                  43.648731
+                ],
+                [
+                  -79.380625,
+                  43.649528
+                ],
+                [
+                  -79.380641,
+                  43.649567
+                ],
+                [
+                  -79.38075,
+                  43.64983
+                ],
+                [
+                  -79.380774,
+                  43.649895
+                ],
+                [
+                  -79.380785,
+                  43.649922
+                ],
+                [
+                  -79.380814,
+                  43.649995
+                ],
+                [
+                  -79.38105,
+                  43.650568
+                ],
+                [
+                  -79.381275,
+                  43.651108
+                ],
+                [
+                  -79.381302,
+                  43.651174
+                ],
+                [
+                  -79.381312,
+                  43.651199
+                ],
+                [
+                  -79.381326,
+                  43.651234
+                ],
+                [
+                  -79.381336,
+                  43.651262
+                ],
+                [
+                  -79.381529,
+                  43.651696
+                ],
+                [
+                  -79.381577,
+                  43.651772
+                ],
+                [
+                  -79.38162,
+                  43.651826
+                ],
+                [
+                  -79.381681,
+                  43.651863
+                ],
+                [
+                  -79.381716,
+                  43.65188
+                ],
+                [
+                  -79.381734,
+                  43.651889
+                ],
+                [
+                  -79.382042,
+                  43.651825
+                ],
+                [
+                  -79.382457,
+                  43.651737
+                ],
+                [
+                  -79.383687,
+                  43.65147
+                ],
+                [
+                  -79.384303,
+                  43.651336
+                ],
+                [
+                  -79.38442,
+                  43.651311
+                ],
+                [
+                  -79.384458,
+                  43.651303
+                ],
+                [
+                  -79.38454,
+                  43.651285
+                ],
+                [
+                  -79.384809,
+                  43.651229
+                ],
+                [
+                  -79.38491,
+                  43.651208
+                ],
+                [
+                  -79.385006,
+                  43.651187
+                ],
+                [
+                  -79.385016,
+                  43.651184
+                ],
+                [
+                  -79.386302,
+                  43.650905
+                ],
+                [
+                  -79.386439,
+                  43.650876
+                ],
+                [
+                  -79.386621,
+                  43.650837
+                ],
+                [
+                  -79.386776,
+                  43.650803
+                ],
+                [
+                  -79.386903,
+                  43.650775
+                ],
+                [
+                  -79.387437,
+                  43.650661
+                ],
+                [
+                  -79.387501,
+                  43.650647
+                ],
+                [
+                  -79.388496,
+                  43.650422
+                ],
+                [
+                  -79.388596,
+                  43.6504
+                ],
+                [
+                  -79.388683,
+                  43.650383
+                ],
+                [
+                  -79.389446,
+                  43.650216
+                ],
+                [
+                  -79.389581,
+                  43.650187
+                ],
+                [
+                  -79.389588,
+                  43.650185
+                ],
+                [
+                  -79.389696,
+                  43.650162
+                ],
+                [
+                  -79.389782,
+                  43.650143
+                ],
+                [
+                  -79.38979,
+                  43.650142
+                ],
+                [
+                  -79.390987,
+                  43.649889
+                ],
+                [
+                  -79.391083,
+                  43.649868
+                ],
+                [
+                  -79.391177,
+                  43.649848
+                ],
+                [
+                  -79.392115,
+                  43.64965
+                ],
+                [
+                  -79.39212,
+                  43.649664
+                ],
+                [
+                  -79.392143,
+                  43.649725
+                ],
+                [
+                  -79.392155,
+                  43.649755
+                ],
+                [
+                  -79.392228,
+                  43.649957
+                ]
+              ]
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D2",
+              "start_min": 10.08,
+              "end_min": 15.08,
+              "position": [
+                -79.392228,
+                43.649957
+              ],
+              "battery_start_kwh": 7.30385,
+              "battery_end_kwh": 7.30385
+            },
+            {
+              "type": "drive",
+              "from_id": "D2",
+              "to_id": "P1",
+              "distance_km": 1.0967,
+              "start_min": 15.08,
+              "end_min": 17.468333333333334,
+              "position": [
+                -79.392228,
+                43.649957
+              ],
+              "battery_start_kwh": 7.30385,
+              "battery_end_kwh": 6.9748399999999995,
+              "path": [
+                [
+                  -79.392228,
+                  43.649957
+                ],
+                [
+                  -79.392155,
+                  43.649755
+                ],
+                [
+                  -79.392143,
+                  43.649725
+                ],
+                [
+                  -79.39212,
+                  43.649664
+                ],
+                [
+                  -79.392115,
+                  43.64965
+                ],
+                [
+                  -79.391177,
+                  43.649848
+                ],
+                [
+                  -79.391083,
+                  43.649868
+                ],
+                [
+                  -79.390987,
+                  43.649889
+                ],
+                [
+                  -79.38979,
+                  43.650142
+                ],
+                [
+                  -79.389782,
+                  43.650143
+                ],
+                [
+                  -79.389696,
+                  43.650162
+                ],
+                [
+                  -79.389588,
+                  43.650185
+                ],
+                [
+                  -79.389581,
+                  43.650187
+                ],
+                [
+                  -79.389446,
+                  43.650216
+                ],
+                [
+                  -79.388683,
+                  43.650383
+                ],
+                [
+                  -79.388596,
+                  43.6504
+                ],
+                [
+                  -79.388496,
+                  43.650422
+                ],
+                [
+                  -79.387501,
+                  43.650647
+                ],
+                [
+                  -79.387437,
+                  43.650661
+                ],
+                [
+                  -79.386903,
+                  43.650775
+                ],
+                [
+                  -79.386776,
+                  43.650803
+                ],
+                [
+                  -79.386621,
+                  43.650837
+                ],
+                [
+                  -79.386439,
+                  43.650876
+                ],
+                [
+                  -79.386302,
+                  43.650905
+                ],
+                [
+                  -79.385016,
+                  43.651184
+                ],
+                [
+                  -79.385006,
+                  43.651187
+                ],
+                [
+                  -79.38491,
+                  43.651208
+                ],
+                [
+                  -79.384809,
+                  43.651229
+                ],
+                [
+                  -79.38454,
+                  43.651285
+                ],
+                [
+                  -79.384458,
+                  43.651303
+                ],
+                [
+                  -79.38442,
+                  43.651311
+                ],
+                [
+                  -79.384303,
+                  43.651336
+                ],
+                [
+                  -79.383687,
+                  43.65147
+                ],
+                [
+                  -79.382457,
+                  43.651737
+                ],
+                [
+                  -79.382042,
+                  43.651825
+                ],
+                [
+                  -79.381734,
+                  43.651889
+                ],
+                [
+                  -79.381761,
+                  43.651899
+                ],
+                [
+                  -79.381876,
+                  43.651941
+                ],
+                [
+                  -79.382035,
+                  43.651986
+                ],
+                [
+                  -79.382118,
+                  43.65201
+                ],
+                [
+                  -79.382192,
+                  43.65204
+                ],
+                [
+                  -79.382251,
+                  43.652086
+                ],
+                [
+                  -79.382296,
+                  43.652147
+                ],
+                [
+                  -79.382331,
+                  43.652207
+                ],
+                [
+                  -79.382357,
+                  43.652279
+                ],
+                [
+                  -79.382418,
+                  43.652434
+                ],
+                [
+                  -79.382606,
+                  43.652904
+                ],
+                [
+                  -79.382636,
+                  43.652981
+                ],
+                [
+                  -79.382658,
+                  43.653037
+                ],
+                [
+                  -79.382742,
+                  43.653248
+                ],
+                [
+                  -79.38276,
+                  43.653292
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "id": "V2",
+          "depot_id": "P2",
+          "initial_battery_kwh": 7.0,
+          "delivery_ids": [
+            "D3"
+          ],
+          "events": [
+            {
+              "type": "drive",
+              "from_id": "P2",
+              "to_id": "D3",
+              "distance_km": 0.5709,
+              "start_min": 0.0,
+              "end_min": 1.8816666666666668,
+              "position": [
+                -79.394992,
+                43.652981
+              ],
+              "battery_start_kwh": 7.0,
+              "battery_end_kwh": 6.82873,
+              "path": [
+                [
+                  -79.394992,
+                  43.652981
+                ],
+                [
+                  -79.395331,
+                  43.652909
+                ],
+                [
+                  -79.395523,
+                  43.653391
+                ],
+                [
+                  -79.395545,
+                  43.653451
+                ],
+                [
+                  -79.39555,
+                  43.653464
+                ],
+                [
+                  -79.396073,
+                  43.653357
+                ],
+                [
+                  -79.396144,
+                  43.653342
+                ],
+                [
+                  -79.396229,
+                  43.653325
+                ],
+                [
+                  -79.397014,
+                  43.653165
+                ],
+                [
+                  -79.39725,
+                  43.653114
+                ],
+                [
+                  -79.397427,
+                  43.653078
+                ],
+                [
+                  -79.397795,
+                  43.652996
+                ],
+                [
+                  -79.397828,
+                  43.652988
+                ],
+                [
+                  -79.397926,
+                  43.652964
+                ],
+                [
+                  -79.397947,
+                  43.65296
+                ],
+                [
+                  -79.397949,
+                  43.652966
+                ],
+                [
+                  -79.397952,
+                  43.652973
+                ],
+                [
+                  -79.397966,
+                  43.65301
+                ],
+                [
+                  -79.397986,
+                  43.653062
+                ],
+                [
+                  -79.398329,
+                  43.653954
+                ],
+                [
+                  -79.398213,
+                  43.653978
+                ],
+                [
+                  -79.397795,
+                  43.654064
+                ],
+                [
+                  -79.39764,
+                  43.654096
+                ],
+                [
+                  -79.397656,
+                  43.654135
+                ],
+                [
+                  -79.397829,
+                  43.654589
+                ],
+                [
+                  -79.397995,
+                  43.655001
+                ]
+              ]
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D3",
+              "start_min": 1.8816666666666668,
+              "end_min": 6.881666666666667,
+              "position": [
+                -79.397995,
+                43.655001
+              ],
+              "battery_start_kwh": 6.82873,
+              "battery_end_kwh": 6.82873
+            },
+            {
+              "type": "drive",
+              "from_id": "D3",
+              "to_id": "P2",
+              "distance_km": 0.4526,
+              "start_min": 6.881666666666667,
+              "end_min": 8.648333333333333,
+              "position": [
+                -79.397995,
+                43.655001
+              ],
+              "battery_start_kwh": 6.82873,
+              "battery_end_kwh": 6.692950000000001,
+              "path": [
+                [
+                  -79.397995,
+                  43.655001
+                ],
+                [
+                  -79.397829,
+                  43.654589
+                ],
+                [
+                  -79.397656,
+                  43.654135
+                ],
+                [
+                  -79.39764,
+                  43.654096
+                ],
+                [
+                  -79.396648,
+                  43.654302
+                ],
+                [
+                  -79.39662,
+                  43.654306
+                ],
+                [
+                  -79.396541,
+                  43.654322
+                ],
+                [
+                  -79.39652,
+                  43.654267
+                ],
+                [
+                  -79.396346,
+                  43.65384
+                ],
+                [
+                  -79.396236,
+                  43.653568
+                ],
+                [
+                  -79.396174,
+                  43.653416
+                ],
+                [
+                  -79.396149,
+                  43.653355
+                ],
+                [
+                  -79.396144,
+                  43.653342
+                ],
+                [
+                  -79.396073,
+                  43.653357
+                ],
+                [
+                  -79.39555,
+                  43.653464
+                ],
+                [
+                  -79.395545,
+                  43.653451
+                ],
+                [
+                  -79.395523,
+                  43.653391
+                ],
+                [
+                  -79.395331,
+                  43.652909
+                ],
+                [
+                  -79.394992,
+                  43.652981
+                ]
+              ]
+            }
+          ]
+        }
+      ],
+      "counts": {}
+    },
+    "evaluation": {
+      "feasible": true,
+      "objective_value": 1.3322100000000001,
+      "costs": {
+        "driving_cost": 1.3322100000000001,
+        "electricity_cost": 0.0,
+        "waiting_cost": 0.0,
+        "late_penalty": 0.0
+      },
+      "delivered": 3,
+      "reference_value": 1.3322100000000001,
+      "gap": 0.0,
+      "classical": {
+        "method": "Road-matrix test fixture",
+        "objective_value": 1.3322100000000001,
+        "feasible": true,
+        "optimality_proven": false
+      }
+    },
+    "circuits": [],
+    "quantum": {
+      "method": "Test fixture: no quantum execution",
+      "qubits": null,
+      "decision_qubits": null,
+      "actual_qubits": null,
+      "binary_variables": null
+    },
+    "assumptions": [
+      "Route search uses bounded candidates. An exact classical comparison proves optimality over those candidates."
+    ],
+    "explanation": "",
+    "classical_simulation": {
+      "kind": "ev_fleet",
+      "map": {
+        "kind": "geographic",
+        "profile": "driving",
+        "routing_digest": "1b76df0d9d1841cb07201ede81d720a348f1cfa7ed37d87b41d089b879cead0a"
+      },
+      "depots": [
+        {
+          "id": "P1",
+          "position": [
+            -79.38276,
+            43.653292
+          ]
+        },
+        {
+          "id": "P2",
+          "position": [
+            -79.394992,
+            43.652981
+          ]
+        }
+      ],
+      "chargers": [
+        {
+          "id": "C1",
+          "position": [
+            -79.386046,
+            43.649988
+          ]
+        },
+        {
+          "id": "C2",
+          "position": [
+            -79.389308,
+            43.654932
+          ]
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "D1",
+          "position": [
+            -79.378967,
+            43.650007
+          ],
+          "deadline_min": 60
+        },
+        {
+          "id": "D2",
+          "position": [
+            -79.392228,
+            43.649957
+          ],
+          "deadline_min": 90
+        },
+        {
+          "id": "D3",
+          "position": [
+            -79.397995,
+            43.655001
+          ],
+          "deadline_min": 90
+        }
+      ],
+      "start_hour": 8,
+      "duration_min": 120,
+      "battery_capacity_kwh": 20,
+      "reserve_pct": 15,
+      "vans": [
+        {
+          "id": "V1",
+          "depot_id": "P1",
+          "initial_battery_kwh": 8.0,
+          "delivery_ids": [
+            "D1",
+            "D2"
+          ],
+          "events": [
+            {
+              "type": "drive",
+              "from_id": "P1",
+              "to_id": "D1",
+              "distance_km": 0.597,
+              "start_min": 0.0,
+              "end_min": 1.4349999999999998,
+              "position": [
+                -79.38276,
+                43.653292
+              ],
+              "battery_start_kwh": 8.0,
+              "battery_end_kwh": 7.8209,
+              "path": [
+                [
+                  -79.38276,
+                  43.653292
+                ],
+                [
+                  -79.382742,
+                  43.653248
+                ],
+                [
+                  -79.382658,
+                  43.653037
+                ],
+                [
+                  -79.382636,
+                  43.652981
+                ],
+                [
+                  -79.382606,
+                  43.652904
+                ],
+                [
+                  -79.382418,
+                  43.652434
+                ],
+                [
+                  -79.382357,
+                  43.652279
+                ],
+                [
+                  -79.382331,
+                  43.652207
+                ],
+                [
+                  -79.382296,
+                  43.652147
+                ],
+                [
+                  -79.382251,
+                  43.652086
+                ],
+                [
+                  -79.382192,
+                  43.65204
+                ],
+                [
+                  -79.382118,
+                  43.65201
+                ],
+                [
+                  -79.382035,
+                  43.651986
+                ],
+                [
+                  -79.381876,
+                  43.651941
+                ],
+                [
+                  -79.381761,
+                  43.651899
+                ],
+                [
+                  -79.381734,
+                  43.651889
+                ],
+                [
+                  -79.381716,
+                  43.65188
+                ],
+                [
+                  -79.381681,
+                  43.651863
+                ],
+                [
+                  -79.38162,
+                  43.651826
+                ],
+                [
+                  -79.381577,
+                  43.651772
+                ],
+                [
+                  -79.381529,
+                  43.651696
+                ],
+                [
+                  -79.381336,
+                  43.651262
+                ],
+                [
+                  -79.381326,
+                  43.651234
+                ],
+                [
+                  -79.381312,
+                  43.651199
+                ],
+                [
+                  -79.381302,
+                  43.651174
+                ],
+                [
+                  -79.381275,
+                  43.651108
+                ],
+                [
+                  -79.38105,
+                  43.650568
+                ],
+                [
+                  -79.380814,
+                  43.649995
+                ],
+                [
+                  -79.380785,
+                  43.649922
+                ],
+                [
+                  -79.380679,
+                  43.649944
+                ],
+                [
+                  -79.380262,
+                  43.650034
+                ],
+                [
+                  -79.380104,
+                  43.650068
+                ],
+                [
+                  -79.38006,
+                  43.650078
+                ],
+                [
+                  -79.379557,
+                  43.650185
+                ],
+                [
+                  -79.37917,
+                  43.650269
+                ],
+                [
+                  -79.379089,
+                  43.650286
+                ],
+                [
+                  -79.379079,
+                  43.650264
+                ],
+                [
+                  -79.379056,
+                  43.650218
+                ],
+                [
+                  -79.378967,
+                  43.650007
+                ]
+              ]
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D1",
+              "start_min": 1.4349999999999998,
+              "end_min": 6.435,
+              "position": [
+                -79.378967,
+                43.650007
+              ],
+              "battery_start_kwh": 7.8209,
+              "battery_end_kwh": 7.8209
+            },
+            {
+              "type": "drive",
+              "from_id": "D1",
+              "to_id": "D2",
+              "distance_km": 1.7235,
+              "start_min": 6.435,
+              "end_min": 10.08,
+              "position": [
+                -79.378967,
+                43.650007
+              ],
+              "battery_start_kwh": 7.8209,
+              "battery_end_kwh": 7.30385,
+              "path": [
+                [
+                  -79.378967,
+                  43.650007
+                ],
+                [
+                  -79.379056,
+                  43.650218
+                ],
+                [
+                  -79.379079,
+                  43.650264
+                ],
+                [
+                  -79.379089,
+                  43.650286
+                ],
+                [
+                  -79.378529,
+                  43.650408
+                ],
+                [
+                  -79.378427,
+                  43.650429
+                ],
+                [
+                  -79.378419,
+                  43.650408
+                ],
+                [
+                  -79.378396,
+                  43.650353
+                ],
+                [
+                  -79.377927,
+                  43.649247
+                ],
+                [
+                  -79.3779,
+                  43.649182
+                ],
+                [
+                  -79.377895,
+                  43.649169
+                ],
+                [
+                  -79.378001,
+                  43.649146
+                ],
+                [
+                  -79.37819,
+                  43.649105
+                ],
+                [
+                  -79.378803,
+                  43.648973
+                ],
+                [
+                  -79.379491,
+                  43.648826
+                ],
+                [
+                  -79.380126,
+                  43.648685
+                ],
+                [
+                  -79.380263,
+                  43.648656
+                ],
+                [
+                  -79.380269,
+                  43.648669
+                ],
+                [
+                  -79.380295,
+                  43.648731
+                ],
+                [
+                  -79.380625,
+                  43.649528
+                ],
+                [
+                  -79.380641,
+                  43.649567
+                ],
+                [
+                  -79.38075,
+                  43.64983
+                ],
+                [
+                  -79.380774,
+                  43.649895
+                ],
+                [
+                  -79.380785,
+                  43.649922
+                ],
+                [
+                  -79.380814,
+                  43.649995
+                ],
+                [
+                  -79.38105,
+                  43.650568
+                ],
+                [
+                  -79.381275,
+                  43.651108
+                ],
+                [
+                  -79.381302,
+                  43.651174
+                ],
+                [
+                  -79.381312,
+                  43.651199
+                ],
+                [
+                  -79.381326,
+                  43.651234
+                ],
+                [
+                  -79.381336,
+                  43.651262
+                ],
+                [
+                  -79.381529,
+                  43.651696
+                ],
+                [
+                  -79.381577,
+                  43.651772
+                ],
+                [
+                  -79.38162,
+                  43.651826
+                ],
+                [
+                  -79.381681,
+                  43.651863
+                ],
+                [
+                  -79.381716,
+                  43.65188
+                ],
+                [
+                  -79.381734,
+                  43.651889
+                ],
+                [
+                  -79.382042,
+                  43.651825
+                ],
+                [
+                  -79.382457,
+                  43.651737
+                ],
+                [
+                  -79.383687,
+                  43.65147
+                ],
+                [
+                  -79.384303,
+                  43.651336
+                ],
+                [
+                  -79.38442,
+                  43.651311
+                ],
+                [
+                  -79.384458,
+                  43.651303
+                ],
+                [
+                  -79.38454,
+                  43.651285
+                ],
+                [
+                  -79.384809,
+                  43.651229
+                ],
+                [
+                  -79.38491,
+                  43.651208
+                ],
+                [
+                  -79.385006,
+                  43.651187
+                ],
+                [
+                  -79.385016,
+                  43.651184
+                ],
+                [
+                  -79.386302,
+                  43.650905
+                ],
+                [
+                  -79.386439,
+                  43.650876
+                ],
+                [
+                  -79.386621,
+                  43.650837
+                ],
+                [
+                  -79.386776,
+                  43.650803
+                ],
+                [
+                  -79.386903,
+                  43.650775
+                ],
+                [
+                  -79.387437,
+                  43.650661
+                ],
+                [
+                  -79.387501,
+                  43.650647
+                ],
+                [
+                  -79.388496,
+                  43.650422
+                ],
+                [
+                  -79.388596,
+                  43.6504
+                ],
+                [
+                  -79.388683,
+                  43.650383
+                ],
+                [
+                  -79.389446,
+                  43.650216
+                ],
+                [
+                  -79.389581,
+                  43.650187
+                ],
+                [
+                  -79.389588,
+                  43.650185
+                ],
+                [
+                  -79.389696,
+                  43.650162
+                ],
+                [
+                  -79.389782,
+                  43.650143
+                ],
+                [
+                  -79.38979,
+                  43.650142
+                ],
+                [
+                  -79.390987,
+                  43.649889
+                ],
+                [
+                  -79.391083,
+                  43.649868
+                ],
+                [
+                  -79.391177,
+                  43.649848
+                ],
+                [
+                  -79.392115,
+                  43.64965
+                ],
+                [
+                  -79.39212,
+                  43.649664
+                ],
+                [
+                  -79.392143,
+                  43.649725
+                ],
+                [
+                  -79.392155,
+                  43.649755
+                ],
+                [
+                  -79.392228,
+                  43.649957
+                ]
+              ]
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D2",
+              "start_min": 10.08,
+              "end_min": 15.08,
+              "position": [
+                -79.392228,
+                43.649957
+              ],
+              "battery_start_kwh": 7.30385,
+              "battery_end_kwh": 7.30385
+            },
+            {
+              "type": "drive",
+              "from_id": "D2",
+              "to_id": "P1",
+              "distance_km": 1.0967,
+              "start_min": 15.08,
+              "end_min": 17.468333333333334,
+              "position": [
+                -79.392228,
+                43.649957
+              ],
+              "battery_start_kwh": 7.30385,
+              "battery_end_kwh": 6.9748399999999995,
+              "path": [
+                [
+                  -79.392228,
+                  43.649957
+                ],
+                [
+                  -79.392155,
+                  43.649755
+                ],
+                [
+                  -79.392143,
+                  43.649725
+                ],
+                [
+                  -79.39212,
+                  43.649664
+                ],
+                [
+                  -79.392115,
+                  43.64965
+                ],
+                [
+                  -79.391177,
+                  43.649848
+                ],
+                [
+                  -79.391083,
+                  43.649868
+                ],
+                [
+                  -79.390987,
+                  43.649889
+                ],
+                [
+                  -79.38979,
+                  43.650142
+                ],
+                [
+                  -79.389782,
+                  43.650143
+                ],
+                [
+                  -79.389696,
+                  43.650162
+                ],
+                [
+                  -79.389588,
+                  43.650185
+                ],
+                [
+                  -79.389581,
+                  43.650187
+                ],
+                [
+                  -79.389446,
+                  43.650216
+                ],
+                [
+                  -79.388683,
+                  43.650383
+                ],
+                [
+                  -79.388596,
+                  43.6504
+                ],
+                [
+                  -79.388496,
+                  43.650422
+                ],
+                [
+                  -79.387501,
+                  43.650647
+                ],
+                [
+                  -79.387437,
+                  43.650661
+                ],
+                [
+                  -79.386903,
+                  43.650775
+                ],
+                [
+                  -79.386776,
+                  43.650803
+                ],
+                [
+                  -79.386621,
+                  43.650837
+                ],
+                [
+                  -79.386439,
+                  43.650876
+                ],
+                [
+                  -79.386302,
+                  43.650905
+                ],
+                [
+                  -79.385016,
+                  43.651184
+                ],
+                [
+                  -79.385006,
+                  43.651187
+                ],
+                [
+                  -79.38491,
+                  43.651208
+                ],
+                [
+                  -79.384809,
+                  43.651229
+                ],
+                [
+                  -79.38454,
+                  43.651285
+                ],
+                [
+                  -79.384458,
+                  43.651303
+                ],
+                [
+                  -79.38442,
+                  43.651311
+                ],
+                [
+                  -79.384303,
+                  43.651336
+                ],
+                [
+                  -79.383687,
+                  43.65147
+                ],
+                [
+                  -79.382457,
+                  43.651737
+                ],
+                [
+                  -79.382042,
+                  43.651825
+                ],
+                [
+                  -79.381734,
+                  43.651889
+                ],
+                [
+                  -79.381761,
+                  43.651899
+                ],
+                [
+                  -79.381876,
+                  43.651941
+                ],
+                [
+                  -79.382035,
+                  43.651986
+                ],
+                [
+                  -79.382118,
+                  43.65201
+                ],
+                [
+                  -79.382192,
+                  43.65204
+                ],
+                [
+                  -79.382251,
+                  43.652086
+                ],
+                [
+                  -79.382296,
+                  43.652147
+                ],
+                [
+                  -79.382331,
+                  43.652207
+                ],
+                [
+                  -79.382357,
+                  43.652279
+                ],
+                [
+                  -79.382418,
+                  43.652434
+                ],
+                [
+                  -79.382606,
+                  43.652904
+                ],
+                [
+                  -79.382636,
+                  43.652981
+                ],
+                [
+                  -79.382658,
+                  43.653037
+                ],
+                [
+                  -79.382742,
+                  43.653248
+                ],
+                [
+                  -79.38276,
+                  43.653292
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "id": "V2",
+          "depot_id": "P2",
+          "initial_battery_kwh": 7.0,
+          "delivery_ids": [
+            "D3"
+          ],
+          "events": [
+            {
+              "type": "drive",
+              "from_id": "P2",
+              "to_id": "D3",
+              "distance_km": 0.5709,
+              "start_min": 0.0,
+              "end_min": 1.8816666666666668,
+              "position": [
+                -79.394992,
+                43.652981
+              ],
+              "battery_start_kwh": 7.0,
+              "battery_end_kwh": 6.82873,
+              "path": [
+                [
+                  -79.394992,
+                  43.652981
+                ],
+                [
+                  -79.395331,
+                  43.652909
+                ],
+                [
+                  -79.395523,
+                  43.653391
+                ],
+                [
+                  -79.395545,
+                  43.653451
+                ],
+                [
+                  -79.39555,
+                  43.653464
+                ],
+                [
+                  -79.396073,
+                  43.653357
+                ],
+                [
+                  -79.396144,
+                  43.653342
+                ],
+                [
+                  -79.396229,
+                  43.653325
+                ],
+                [
+                  -79.397014,
+                  43.653165
+                ],
+                [
+                  -79.39725,
+                  43.653114
+                ],
+                [
+                  -79.397427,
+                  43.653078
+                ],
+                [
+                  -79.397795,
+                  43.652996
+                ],
+                [
+                  -79.397828,
+                  43.652988
+                ],
+                [
+                  -79.397926,
+                  43.652964
+                ],
+                [
+                  -79.397947,
+                  43.65296
+                ],
+                [
+                  -79.397949,
+                  43.652966
+                ],
+                [
+                  -79.397952,
+                  43.652973
+                ],
+                [
+                  -79.397966,
+                  43.65301
+                ],
+                [
+                  -79.397986,
+                  43.653062
+                ],
+                [
+                  -79.398329,
+                  43.653954
+                ],
+                [
+                  -79.398213,
+                  43.653978
+                ],
+                [
+                  -79.397795,
+                  43.654064
+                ],
+                [
+                  -79.39764,
+                  43.654096
+                ],
+                [
+                  -79.397656,
+                  43.654135
+                ],
+                [
+                  -79.397829,
+                  43.654589
+                ],
+                [
+                  -79.397995,
+                  43.655001
+                ]
+              ]
+            },
+            {
+              "type": "deliver",
+              "delivery_id": "D3",
+              "start_min": 1.8816666666666668,
+              "end_min": 6.881666666666667,
+              "position": [
+                -79.397995,
+                43.655001
+              ],
+              "battery_start_kwh": 6.82873,
+              "battery_end_kwh": 6.82873
+            },
+            {
+              "type": "drive",
+              "from_id": "D3",
+              "to_id": "P2",
+              "distance_km": 0.4526,
+              "start_min": 6.881666666666667,
+              "end_min": 8.648333333333333,
+              "position": [
+                -79.397995,
+                43.655001
+              ],
+              "battery_start_kwh": 6.82873,
+              "battery_end_kwh": 6.692950000000001,
+              "path": [
+                [
+                  -79.397995,
+                  43.655001
+                ],
+                [
+                  -79.397829,
+                  43.654589
+                ],
+                [
+                  -79.397656,
+                  43.654135
+                ],
+                [
+                  -79.39764,
+                  43.654096
+                ],
+                [
+                  -79.396648,
+                  43.654302
+                ],
+                [
+                  -79.39662,
+                  43.654306
+                ],
+                [
+                  -79.396541,
+                  43.654322
+                ],
+                [
+                  -79.39652,
+                  43.654267
+                ],
+                [
+                  -79.396346,
+                  43.65384
+                ],
+                [
+                  -79.396236,
+                  43.653568
+                ],
+                [
+                  -79.396174,
+                  43.653416
+                ],
+                [
+                  -79.396149,
+                  43.653355
+                ],
+                [
+                  -79.396144,
+                  43.653342
+                ],
+                [
+                  -79.396073,
+                  43.653357
+                ],
+                [
+                  -79.39555,
+                  43.653464
+                ],
+                [
+                  -79.395545,
+                  43.653451
+                ],
+                [
+                  -79.395523,
+                  43.653391
+                ],
+                [
+                  -79.395331,
+                  43.652909
+                ],
+                [
+                  -79.394992,
+                  43.652981
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "view_id": "road-fixture-1",
+    "scenario_context": {
+      "base_digest": "63ce2c9a81a49a8fa772992ac77c4096e26b4ab72676b320c7a3ff4279278b8a",
+      "effective_digest": "63ce2c9a81a49a8fa772992ac77c4096e26b4ab72676b320c7a3ff4279278b8a",
+      "effective_scenario": {
+        "schema_version": 2,
+        "title": "Toronto delivery routes",
+        "depots": [
+          {
+            "id": "P1",
+            "position": [
+              -79.3832,
+              43.6532
+            ]
+          },
+          {
+            "id": "P2",
+            "position": [
+              -79.395,
+              43.653
+            ]
+          }
+        ],
+        "chargers": [
+          {
+            "id": "C1",
+            "position": [
+              -79.386,
+              43.65
+            ],
+            "power_kw": 10,
+            "slots": [
+              {
+                "id": "S1",
+                "start_min": 30,
+                "end_min": 60
+              },
+              {
+                "id": "S2",
+                "start_min": 60,
+                "end_min": 90
+              }
+            ]
+          },
+          {
+            "id": "C2",
+            "position": [
+              -79.389,
+              43.655
+            ],
+            "power_kw": 10,
+            "slots": [
+              {
+                "id": "S1",
+                "start_min": 30,
+                "end_min": 60
+              },
+              {
+                "id": "S2",
+                "start_min": 60,
+                "end_min": 90
+              }
+            ]
+          }
+        ],
+        "deliveries": [
+          {
+            "id": "D1",
+            "position": [
+              -79.379,
+              43.65
+            ],
+            "vehicle_id": "V1",
+            "deadline_min": 60,
+            "service_min": 5
+          },
+          {
+            "id": "D2",
+            "position": [
+              -79.392,
+              43.65
+            ],
+            "vehicle_id": "V1",
+            "deadline_min": 90,
+            "service_min": 5
+          },
+          {
+            "id": "D3",
+            "position": [
+              -79.398,
+              43.655
+            ],
+            "vehicle_id": "V2",
+            "deadline_min": 90,
+            "service_min": 5
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V1",
+            "depot_id": "P1",
+            "initial_charge_pct": 40
+          },
+          {
+            "id": "V2",
+            "depot_id": "P2",
+            "initial_charge_pct": 35
+          }
+        ],
+        "fleet": {
+          "battery_capacity_kwh": 20,
+          "reserve_pct": 15,
+          "energy_use_kwh_per_km": 0.3
+        },
+        "timing": {
+          "start_hour": 8,
+          "duration_min": 120
+        },
+        "costs": {
+          "driving_per_km": 0.3,
+          "electricity_per_kwh": 0.2,
+          "waiting_per_hour": 25,
+          "late_per_hour": 60
+        },
+        "map": {
+          "kind": "geographic",
+          "profile": "driving"
+        }
+      },
+      "bindings": {},
+      "routing_digest": "1b76df0d9d1841cb07201ede81d720a348f1cfa7ed37d87b41d089b879cead0a"
+    }
+  },
+  "attribution": "Map data \u00a9 OpenStreetMap contributors, ODbL; road distances, times and geometry from OSRM. Schedule is a deterministic test fixture with no quantum measurements."
+}

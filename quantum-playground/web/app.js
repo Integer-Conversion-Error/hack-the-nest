@@ -51,6 +51,10 @@ const classicalCanvas = $('classical-map');
 const map = FleetMap.create(mapCanvas, { colors, onInspect: inspect, motionAllowed: () => !reducedMotion });
 const classicalMap = FleetMap.create(classicalCanvas, { colors,
   onInspect: target => inspect(target, 'classical'), motionAllowed: () => !reducedMotion });
+const geographicMap = typeof GeoMap === 'undefined' ? null : GeoMap.createReplay($('geographic-map'),
+  { colors, onInspect: inspect, motionAllowed: () => !reducedMotion });
+const classicalGeographicMap = typeof GeoMap === 'undefined' ? null : GeoMap.createReplay($('classical-geographic-map'),
+  { colors, onInspect: target => inspect(target, 'classical'), motionAllowed: () => !reducedMotion });
 const builder = ScenarioBuilder.create({ onSubmit: submitScenario });
 
 const node = (tag, text, cls) => {
@@ -774,9 +778,23 @@ function render(data, {preserve = false} = {}) {
   $('delivered-summary').hidden = Boolean(classicalSim);
   $('schedule-heading').textContent = classicalSim ? 'Quantum schedule' : 'Schedule';
   mapCanvas.setAttribute('aria-label', classicalSim ? 'Interactive quantum fleet map' : 'Interactive fleet map');
-  map.setSimulation(sim);
-  classicalMap.setSimulation(classicalSim);
-  mapCanvas.hidden = false;
+  const geographic = sim.map?.kind === 'geographic';
+  if (geographic && !geographicMap) throw Error('Reload the dashboard to load geographic map support.');
+  map.setSimulation(geographic ? null : sim);
+  classicalMap.setSimulation(geographic ? null : classicalSim);
+  mapCanvas.hidden = geographic;
+  classicalCanvas.hidden = geographic;
+  $('geographic-map').hidden = !geographic;
+  $('classical-geographic-map').hidden = !geographic;
+  geographicMap?.setSimulation(geographic ? sim : null);
+  classicalGeographicMap?.setSimulation(geographic ? classicalSim : null);
+  if (geographic) {
+    geographicMap.invalidateSize();
+    classicalGeographicMap?.invalidateSize();
+  }
+  $('map-help').textContent = geographic
+    ? 'Use map controls to pan and zoom, and playback controls to play or seek. Select a location or vehicle to inspect it.'
+    : 'Both maps share the playback clock. Press Space to play or pause, the arrow keys to seek, V to inspect vans, C to inspect chargers, D to inspect deliveries, or Escape to clear.';
   $('frame-status').hidden = true;
   updatePlayback();
 }
@@ -889,7 +907,7 @@ function buildTimeline() {
 
 function updatePlayback() {
   if (!sim) return;
-  map.draw(minute, inspectedVan('primary'), playing);
+  (sim.map?.kind === 'geographic' ? geographicMap : map)?.draw(minute, inspectedVan('primary'), playing);
   writeText($('clock'), clock(minute));
   $('scrub').value = String(minute);
   $('scrub').setAttribute('aria-valuetext', clock(minute));
@@ -897,13 +915,13 @@ function updatePlayback() {
   const delivered = done.size + ' / ' + sim.deliveries.length;
   writeText($('delivered'), delivered);
   if (classicalSim) {
-    classicalMap.draw(minute, inspectedVan('classical'), playing);
+    (sim.map?.kind === 'geographic' ? classicalGeographicMap : classicalMap)?.draw(minute, inspectedVan('classical'), playing);
     const classicalDone = FleetReplay.deliveredAt(classicalSim, minute);
     writeText($('quantum-delivered'), delivered + ' delivered');
     writeText($('classical-delivered'), classicalDone.size + ' / ' + classicalSim.deliveries.length + ' delivered');
   }
   sim.vans.forEach((van, i) => {
-    const state = FleetReplay.stateAt(van, minute, FleetReplay.depotFor(sim, van));
+    const state = FleetReplay.stateAt(van, minute, FleetReplay.depotFor(sim, van), sim.map?.kind === 'geographic');
     const {status, energy, fill, color} = vanCards[i];
     const percent = state.battery / sim.battery_capacity_kwh * 100;
     writeText(status, state.status);
@@ -1002,7 +1020,7 @@ function updateInspector() {
 
   let details;
   if (kind === 'van') {
-    const state = FleetReplay.stateAt(item, minute, FleetReplay.depotFor(replay, item));
+    const state = FleetReplay.stateAt(item, minute, FleetReplay.depotFor(replay, item), replay.map?.kind === 'geographic');
     const upcoming = item.events.find(event => event.end_min > minute);
     const percent = (state.battery / replay.battery_capacity_kwh * 100).toFixed(0);
     details = [item.name || id, state.status, state.battery.toFixed(2) + ' kWh (' + percent + '%)',
@@ -1088,6 +1106,7 @@ async function init() {
     liveExamplePrompt = example.live_prompt || examplePrompt;
     localBackendConfigured = Boolean(config.local_backend_configured);
     pipelineBackendConfigured = Boolean(config.pipeline_backend_configured);
+    if (config.maps && typeof GeoMap !== 'undefined') GeoMap.configure(config.maps);
     builder.setConfigured(Boolean(config.scenario_backend_configured ?? config.pipeline_backend_configured));
     savedRunRecalculationConfigured = Boolean(config.saved_run_recalculation_configured ?? config.pipeline_backend_configured);
     backendConfigured = localBackendConfigured || pipelineBackendConfigured || Boolean(config.backend_configured);
