@@ -7,3 +7,5 @@ __pycache__/
 !docs/evidence/circuit-sidebar/*.png
 !docs/evidence/pr-fixes/*.png
 !docs/evidence/scenario-builder/*.png
+!docs/evidence/geographic-maps/*.png
+!web/vendor/leaflet/images/*.png

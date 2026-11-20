@@ -69,6 +69,18 @@ class DashboardPipelineTests(unittest.TestCase):
         self.assertIn(("Check solver output", "completed", None), steps)
         self.assertEqual(steps[-1], ("Check the dashboard result", "failed", "Missing EV simulation."))
 
+    def test_planner_receives_the_installed_measurement_api_without_importing_a_license(self):
+        from backend.planning import _review_policy
+        with patch.dict("os.environ", {"QR_KEY": "", "QR_ACCOUNT": ""}):
+            _, context = _review_policy(self.workspace, (5, 10))
+        api = context["quantum_runtime"]
+        signatures = {entry["signature"].split("(")[0]: entry for entry in api["functions"]}
+        self.assertEqual(set(signatures), {"run_counts", "bit", "save_circuit_diagram"})
+        self.assertIn("shots", signatures["run_counts"]["signature"])
+        self.assertIn("bitstring", signatures["bit"]["signature"])
+        self.assertIn("circuit_diagram", signatures["save_circuit_diagram"]["documentation"])
+        self.assertIn("no results.json writer API", api["results"])
+
     def test_stage_updates_follow_early_fidelity_checks_and_scoped_build_repairs(self):
         problem = SimpleNamespace(
             is_optimization_problem=True, title="Schedule the fleet", quantum=SimpleNamespace(method="QAOA", qubit_budget=None),

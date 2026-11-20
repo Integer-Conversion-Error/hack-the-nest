@@ -11,9 +11,12 @@
     const host = document.getElementById('scenario-builder');
     let storage;
     try { storage = root.localStorage; } catch { /* Private browsing may disable storage. */ }
-    let draft = D.load(storage), source = null, configured = false, busy = false;
+    const drafts = D.loadState(storage), sources = { grid: null, geographic: null };
+    let draft = drafts.drafts[drafts.active], source = null, configured = false, busy = false;
     let selected = { kind: 'vehicles', id: draft.vehicles[0]?.id }, moveMode = false;
     let mode = 'builder', serverError = '', saved = true, showErrors = false, overlap = null;
+    let geographicMap = null, fitGeographic = true, searchRequest = null, searchSerial = 0, searchResults = [];
+    const geographic = () => D.typeOf(draft) === 'geographic';
     const element = (tag, className, text) => {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -35,10 +38,20 @@
     title.oninput = () => { draft.title = title.value; changed(false); };
     const reset = button('Reset to example', () => {
       if (!root.confirm('Replace your draft with the example scenario?')) return;
-      draft = D.seed(); source = null; selected = { kind: 'vehicles', id: 'V1' };
+      draft = geographic() ? D.geographicSeed() : D.seed(); source = null; sources[D.typeOf(draft)] = null; selected = { kind: 'vehicles', id: 'V1' };
+      fitGeographic = true;
       title.value = draft.title; moveMode = false; showErrors = false; changed();
     }, 'text-button');
     toolbar.append(titleLabel, reset);
+    const mapTypeLabel = element('label', 'builder-map-type', 'Map type');
+    const mapType = element('select'); mapType.id = 'scenario-map-type'; mapTypeLabel.htmlFor = mapType.id;
+    for (const [value, text] of [['grid', 'Street grid'], ['geographic', 'Real map']]) {
+      const option = element('option', null, text); option.value = value; mapType.append(option);
+    }
+    mapType.value = drafts.active;
+    mapType.onchange = () => switchMapType(mapType.value);
+    mapTypeLabel.append(mapType);
+    toolbar.append(mapTypeLabel);
     const intro = element('p', 'builder-intro', 'Place your depots, chargers, and deliveries. Assign stops to vehicles; the solver chooses their visit order.');
     const layout = element('div', 'builder-layout');
     const mapPanel = element('section', 'panel builder-map-panel'); mapPanel.setAttribute('aria-label', 'Scenario map');
@@ -49,12 +62,27 @@
     const move = button('Move selected', () => { moveMode = !moveMode; renderMap(); renderStatus(); });
     move.id = 'scenario-move'; mapHeader.append(mapSummary, move);
     const mapHost = element('div', 'builder-map'); mapHost.id = 'scenario-map';
+    const gridHost = element('div', 'builder-grid-map');
+    const geographicHost = element('div', 'geo-map builder-real-map'); geographicHost.id = 'scenario-geographic-map'; geographicHost.hidden = true;
+    mapHost.append(gridHost, geographicHost);
+    mapHost.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && moveMode) { event.preventDefault(); event.stopPropagation(); moveMode = false; renderMap(); renderStatus(); }
+    }, true);
+    const search = element('form', 'builder-search'); search.id = 'scenario-search-form'; search.hidden = true;
+    const searchLabel = element('label', 'sr-only', 'Search for an address or place'); searchLabel.htmlFor = 'scenario-address-search';
+    const searchInput = element('input'); searchInput.id = searchLabel.htmlFor; searchInput.type = 'search'; searchInput.maxLength = 200; searchInput.placeholder = 'Search an address or place';
+    const searchButton = element('button', 'secondary', 'Search'); searchButton.type = 'submit';
+    const searchStatus = element('p', 'hint builder-search-status'); searchStatus.setAttribute('role', 'status');
+    const searchList = element('div', 'builder-search-results');
+    const searchAttribution = element('p', 'hint builder-search-attribution', 'Search: Photon / OpenStreetMap');
+    search.append(searchLabel, searchInput, searchButton, searchStatus, searchList, searchAttribution);
+    search.onsubmit = searchAddress;
     const overlapHost = element('div', 'builder-overlap'); overlapHost.hidden = true;
     const legend = element('div', 'builder-legend');
     for (const [symbol, text] of [['■', 'Depot'], ['ϟ', 'Charger'], ['●', 'Delivery']]) {
       legend.append(element('span', null, symbol + ' ' + text));
     }
-    mapPanel.append(mapHeader, mapHost, overlapHost, legend, mapInstruction);
+    mapPanel.append(mapHeader, search, mapHost, overlapHost, legend, mapInstruction);
     const inspector = element('section', 'panel builder-inspector'); inspector.setAttribute('aria-label', 'Scenario inspector');
     layout.append(mapPanel, inspector);
     const footer = element('div', 'builder-footer');
@@ -69,7 +97,8 @@
       selected = { kind, id }; moveMode = false; overlap = null; render();
     }
     function changed(full = true) {
-      saved = D.save(storage, draft); serverError = '';
+      drafts.active = D.typeOf(draft); drafts.drafts[drafts.active] = draft;
+      saved = D.saveState(storage, drafts); serverError = '';
       if (full) render(); else { renderMap(); renderStatus(); }
     }
     function renderStatus() {
@@ -77,7 +106,8 @@
       run.disabled = busy || !configured;
       const eligible = !errors.length && D.reuse(source, D.normalize(draft), root.ScenarioControls?.isValidValue || (() => false));
       run.textContent = busy ? 'Solving scenario…' : eligible ? 'Recalculate settings' : source ? 'Plan new scenario' : 'Run scenario';
-      reset.disabled = busy; title.disabled = busy;
+      reset.disabled = busy; title.disabled = busy; mapType.disabled = busy;
+      searchInput.disabled = busy; searchButton.disabled = busy;
       status.textContent = busy ? 'Your draft is saved while the solver runs.' : !configured
         ? 'Configure a planning backend to solve a custom scenario. You can keep editing.'
         : saved ? 'Draft saved in this browser.' : 'Draft stays open here; browser storage is unavailable.';
@@ -92,8 +122,9 @@
       move.disabled = busy || !selectedItem()?.position;
       move.textContent = moveMode ? 'Cancel move' : 'Move selected';
       move.setAttribute('aria-pressed', String(moveMode));
-      mapInstruction.textContent = moveMode ? 'Tap an intersection to place ' + selected.id + '. Escape cancels.'
-        : 'Drag a marker to an intersection, or select it and edit its coordinates. Arrow keys move a focused marker.';
+      mapInstruction.textContent = moveMode ? (geographic() ? 'Tap the map' : 'Tap an intersection') + ' to place ' + selected.id + '. Escape cancels.'
+        : geographic() ? 'Drag a marker, search for a place, or enter latitude and longitude. Arrow keys move a focused marker.'
+          : 'Drag a marker to an intersection, or select it and edit its coordinates. Arrow keys move a focused marker.';
     }
     function field(container, label, object, key, { min, max, step = 'any', suffix, onChange } = {}) {
       const row = element('div', 'builder-field');
@@ -154,8 +185,13 @@
       if (lastRequired) body.append(element('p', 'hint', 'Keep at least one ' + (selected.kind === 'depots' ? 'depot' : 'vehicle') + '.'));
       if (item.position) {
         const coordinates = element('div', 'builder-coordinates');
-        field(coordinates, 'X', item.position, 0, { min: 0, max: Number(draft.grid.width) - 1, step: 1 });
-        field(coordinates, 'Y', item.position, 1, { min: 0, max: Number(draft.grid.height) - 1, step: 1 });
+        if (geographic()) {
+          field(coordinates, 'Latitude', item.position, 1, { min: -85, max: 85, step: 'any' });
+          field(coordinates, 'Longitude', item.position, 0, { min: -180, max: 180, step: 'any' });
+        } else {
+          field(coordinates, 'X', item.position, 0, { min: 0, max: Number(draft.grid.width) - 1, step: 1 });
+          field(coordinates, 'Y', item.position, 1, { min: 0, max: Number(draft.grid.height) - 1, step: 1 });
+        }
         body.append(coordinates);
       }
       if (selected.kind === 'vehicles') {
@@ -208,9 +244,12 @@
           renderStatus(); error.tabIndex = -1; error.focus();
         } else changed();
       };
-      section(body, 'Street grid', [['width', 'Width (intersections)', { min: 2, max: 50, step: 1, onChange: resize('width', draft.grid.width) }], ['height', 'Height (intersections)', { min: 2, max: 50, step: 1, onChange: resize('height', draft.grid.height) }], ['block_km', 'Distance per block (km)', { min: 0.001 }]], draft.grid);
+      if (!geographic()) section(body, 'Street grid', [['width', 'Width (intersections)', { min: 2, max: 50, step: 1, onChange: resize('width', draft.grid.width) }], ['height', 'Height (intersections)', { min: 2, max: 50, step: 1, onChange: resize('height', draft.grid.height) }], ['block_km', 'Distance per block (km)', { min: 0.001 }]], draft.grid);
       section(body, 'Fleet limits', [['battery_capacity_kwh', 'Battery capacity (kWh)', { min: 0.001 }], ['reserve_pct', 'Minimum reserve (%)', { min: 0, max: 100 }], ['energy_use_kwh_per_km', 'Energy use (kWh/km)', { min: 0.001 }]], draft.fleet);
-      section(body, 'Shift and timing', [['start_hour', 'Start hour (24-hour clock)', { min: 0, max: 23.99 }], ['duration_min', 'Shift length (min)', { min: 1, max: 1440 }], ['speed_kmh', 'Driving speed (km/h)', { min: 0.001 }]], draft.timing);
+      const timingFields = [['start_hour', 'Start hour (24-hour clock)', { min: 0, max: 23.99 }], ['duration_min', 'Shift length (min)', { min: 1, max: 1440 }]];
+      if (!geographic()) timingFields.push(['speed_kmh', 'Driving speed (km/h)', { min: 0.001 }]);
+      section(body, 'Shift and timing', timingFields, draft.timing);
+      if (geographic()) body.append(element('p', 'hint', 'Travel times follow driving routes on the road network.'));
       section(body, 'Costs in USD', [['driving_per_km', 'Driving ($/km)'], ['electricity_per_kwh', 'Electricity ($/kWh)'], ['waiting_per_hour', 'Waiting ($/hour)'], ['late_per_hour', 'Lateness ($/hour)']], draft.costs);
       inspector.append(body);
     }
@@ -221,7 +260,8 @@
       const prefixes = { vehicles: 'V', depots: 'P', chargers: 'C', deliveries: 'D' };
       const item = { id: D.nextId(draft[kind], prefixes[kind]) };
       if (kind === 'vehicles') Object.assign(item, { depot_id: draft.depots[0]?.id || '', initial_charge_pct: 50 });
-      else item.position = [Math.max(0, Math.floor((Number(draft.grid.width) || 6) / 2)), Math.max(0, Math.floor((Number(draft.grid.height) || 6) / 2))];
+      else item.position = geographic() ? geographicMap?.getCenter() || [-79.3832, 43.6532]
+        : [Math.max(0, Math.floor((Number(draft.grid.width) || 6) / 2)), Math.max(0, Math.floor((Number(draft.grid.height) || 6) / 2))];
       if (kind === 'deliveries') Object.assign(item, { vehicle_id: assignedVehicle || draft.vehicles.find(vehicle => draft.deliveries.filter(stop => stop.vehicle_id === vehicle.id).length < 10)?.id || '', deadline_min: 90, service_min: 5 });
       if (kind === 'chargers') Object.assign(item, { power_kw: 10, slots: [{ id: 'S1', start_min: 30, end_min: 60 }] });
       draft[kind].push(item); selected = { kind, id: item.id }; changed();
@@ -238,6 +278,28 @@
       selected.id = draft[selected.kind][0]?.id; changed();
     }
     function renderMap() {
+      mapType.value = D.typeOf(draft);
+      gridHost.hidden = geographic(); geographicHost.hidden = !geographic(); search.hidden = !geographic();
+      if (geographic()) {
+        if (!geographicMap && root.GeoMap) geographicMap = root.GeoMap.createEditor(geographicHost, {
+          onSelect: select,
+          onMove(kind, id, position) {
+            if (busy || !geographic()) return;
+            const item = draft[kind]?.find(row => row.id === id); if (!item) return;
+            item.position = position; selected = { kind, id }; moveMode = false; changed();
+          },
+          onPlace(position) {
+            if (busy || !moveMode || !selectedItem()?.position || !geographic()) return;
+            selectedItem().position = position; moveMode = false; changed();
+          },
+        });
+        geographicMap?.setScenario(draft, { selected, busy, placing: moveMode, fit: fitGeographic });
+        fitGeographic = false;
+        geographicMap?.invalidateSize();
+        mapSummary.textContent = 'Real map · Driving routes';
+        overlap = null; renderOverlap(); renderSearchResults();
+        return;
+      }
       const width = Math.min(50, Math.max(2, Number(draft.grid.width) || 6));
       const height = Math.min(50, Math.max(2, Number(draft.grid.height) || 6));
       const size = 520, pad = 46, cell = Math.min((size - pad * 2) / (width - 1), (size - pad * 2) / (height - 1));
@@ -324,7 +386,7 @@
         if (!busy && moveMode && selectedItem()?.position) { selectedItem().position = destination(event); moveMode = false; changed(); }
       };
       svg.onkeydown = event => { if (event.key === 'Escape') { moveMode = false; renderStatus(); } };
-      mapHost.replaceChildren(svg); renderOverlap();
+      gridHost.replaceChildren(svg); renderOverlap();
       mapSummary.textContent = draft.grid.width + ' × ' + draft.grid.height + ' grid · ' + draft.grid.block_km + ' km / block';
       mapHost.classList.toggle('is-moving', moveMode);
     }
@@ -333,6 +395,56 @@
       if (!overlap) return;
       overlapHost.append(element('p', 'hint', 'Choose an object at this intersection:'));
       for (const entry of overlap) overlapHost.append(button(entry.item.id + ' · ' + names[entry.kind].toLowerCase(), () => select(entry.kind, entry.item.id)));
+    }
+    function switchMapType(kind) {
+      if (busy || !['grid', 'geographic'].includes(kind)) return;
+      sources[D.typeOf(draft)] = source;
+      drafts.drafts[D.typeOf(draft)] = draft;
+      draft = drafts.drafts[kind]; source = sources[kind]; drafts.active = kind;
+      title.value = draft.title; selected = { kind: 'vehicles', id: draft.vehicles[0]?.id };
+      moveMode = false; overlap = null; showErrors = false; serverError = '';
+      searchRequest?.abort(); searchSerial++; searchResults = []; searchStatus.textContent = ''; searchInput.value = '';
+      changed();
+    }
+    async function searchAddress(event) {
+      event.preventDefault(); if (busy || !geographic()) return;
+      const query = searchInput.value.trim();
+      if (!query) { searchStatus.textContent = 'Enter an address or place to search.'; return; }
+      const serial = ++searchSerial;
+      searchRequest?.abort(); searchRequest = new root.AbortController();
+      searchStatus.textContent = 'Searching…'; searchResults = []; renderSearchResults();
+      try {
+        const response = await root.fetch('/api/maps/search?q=' + encodeURIComponent(query), { signal: searchRequest.signal });
+        const data = await response.json();
+        if (serial !== searchSerial || !geographic()) return;
+        if (!response.ok) throw Error(data.error || 'Address search is unavailable.');
+        if (!Array.isArray(data.results)) throw Error('Address search returned unreadable results.');
+        searchResults = data.results.filter(result => typeof result.label === 'string' && root.GeoMap?.validPosition(result.position));
+        searchStatus.textContent = searchResults.length ? 'Choose a result to view it or place the selected object.' : 'No matching places found. Try a nearby street or enter coordinates.';
+        renderSearchResults();
+      } catch (error) {
+        if (serial !== searchSerial || error.name === 'AbortError') return;
+        const message = error.name === 'TypeError' || error.name === 'SyntaxError' ? 'Address search is unavailable.' : error.message;
+        searchStatus.textContent = message + ' You can still place markers or enter coordinates.';
+      }
+    }
+    function renderSearchResults() {
+      searchList.replaceChildren();
+      if (!geographic()) return;
+      for (const result of searchResults) {
+        const row = element('div', 'builder-search-result');
+        const view = button(result.label, () => geographicMap?.setView(result.position), 'text-button');
+        view.disabled = busy; row.append(view);
+        if (selectedItem()?.position) {
+          const place = button('Place ' + selected.id + ' here', () => {
+            if (busy || !selectedItem()?.position) return;
+            selectedItem().position = D.roundPosition(result.position); moveMode = false;
+            geographicMap?.setView(result.position); changed();
+          });
+          place.disabled = busy; row.append(place);
+        }
+        searchList.append(row);
+      }
     }
     function render() { renderInspector(); renderMap(); renderStatus(); }
     function submit() {
@@ -373,6 +485,8 @@
       setBusy(value) { if (busy === Boolean(value)) return; busy = Boolean(value); render(); },
       edit(scenario, view = null) {
         draft = D.clone(scenario); source = view; selected = { kind: 'vehicles', id: draft.vehicles[0]?.id };
+        sources[D.typeOf(draft)] = view;
+        fitGeographic = true; searchRequest?.abort(); searchSerial++; searchResults = []; searchStatus.textContent = '';
         title.value = draft.title; showErrors = false; serverError = ''; moveMode = false; changed(); showMode('builder');
       },
       getScenario() { return D.validate(draft).length ? null : D.normalize(draft); },

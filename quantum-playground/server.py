@@ -17,9 +17,10 @@ from uuid import uuid4
 from ev_live import LOCAL_PLAN_IDS, SolverUnavailable, SolverFailed, local_solver_available, local_handoff
 from ev_recorded import LIVE_PROMPT, RECORDED_CONTROLS, RECORDED_PROMPT, REPO_ROOT, recorded_handoff
 from ev_reference import PROMPT, reference_handoff
-from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, normalize_handoff
+from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, is_geographic_replay, normalize_handoff
 from pipeline_live import pipeline_handoff, planner_configured
 from scenario import normalize_scenario, scenario_prompt
+from road_network import MapServiceError, maps_config, search_places
 from workspace_runs import (
     SavedResultUnavailable, SavedRunNotFound, SavedRunUnavailable, list_saved_runs, open_saved_run,
     saved_artifact, saved_run,
@@ -479,6 +480,23 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/api/maps/config":
+            try:
+                return self.send_json(200, maps_config())
+            except MapServiceError as exc:
+                return self.send_json(503, {"error": str(exc)})
+        if url.path == "/api/maps/search":
+            try:
+                query = parse_qs(url.query)
+                def coordinate(name):
+                    value = query.get(name, [None])[0]
+                    return None if value is None else float(value)
+                return self.send_json(200, {"results": search_places(query.get("q", [""])[0],
+                                                                     lon=coordinate("lon"), lat=coordinate("lat"))})
+            except MapServiceError as exc:
+                return self.send_json(exc.status, {"error": str(exc)})
+            except ValueError as exc:
+                return self.send_json(400, {"error": str(exc)})
         if url.path == "/api/pygame-frame":
             return self.send_frame(parse_qs(url.query))
         if url.path == "/api/frame":
@@ -496,12 +514,18 @@ class Handler(SimpleHTTPRequestHandler):
             external = bool(backend_url())
             pipeline = native_pipeline_configured()
             local = not external and not pipeline and local_solver_available()
+            try:
+                map_settings, map_error = maps_config(), None
+            except MapServiceError as exc:
+                map_settings, map_error = None, str(exc)
             return self.send_json(200, {
                 "backend_configured": external or pipeline or local,
                 "pipeline_backend_configured": pipeline,
                 "scenario_backend_configured": pipeline,
                 "local_backend_configured": local,
                 "saved_run_recalculation_configured": planner_configured(),
+                "maps": map_settings,
+                **({"maps_error": map_error} if map_error else {}),
             })
         if url.path.startswith("/api/pipeline-runs/"):
             try:
@@ -542,6 +566,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             run = read_view(params.get("view_id", [""])[0])
             simulation = run["simulation"]
+            if is_geographic_replay(simulation):
+                raise RequestError(422, "Geographic road replay is available in the browser map; PNG frames support street-grid runs.")
             minute = float(params.get("minute", ["0"])[0])
             if not math.isfinite(minute) or not 0 <= minute <= simulation["duration_min"]:
                 raise ValueError("Invalid replay time.")

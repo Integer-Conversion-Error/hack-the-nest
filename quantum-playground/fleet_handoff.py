@@ -32,6 +32,11 @@ def is_text(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def is_geographic_replay(simulation):
+    return (isinstance(simulation, dict) and isinstance(simulation.get("map"), dict)
+            and simulation["map"].get("kind") == "geographic")
+
+
 def control_type_matches(kind, value):
     if kind == "integer":
         return type(value) is int and is_number(value)
@@ -171,8 +176,17 @@ def depot_for(sim, van):
 
 def validate_replay(sim):
     require(isinstance(sim, dict) and sim.get("kind") == "ev_fleet", "Missing EV fleet scene.")
+    geographic = is_geographic_replay(sim)
+    require("map" not in sim or geographic, "Invalid geographic map metadata.")
     grid = sim.get("grid")
-    require(
+    if geographic:
+        require("grid" not in sim and "depot" not in sim and "depots" in sim
+                and sim["map"].get("profile") == "driving"
+                and isinstance(sim["map"].get("routing_digest"), str)
+                and re.fullmatch(r"[a-f0-9]{64}", sim["map"]["routing_digest"]),
+                "Invalid geographic road map metadata.")
+    else:
+        require(
         isinstance(grid, dict)
         and all(type(grid.get(axis)) is int and 2 <= grid[axis] <= 50 for axis in ("width", "height"))
         and is_number(grid.get("block_km")) and grid["block_km"] > 0,
@@ -189,6 +203,9 @@ def validate_replay(sim):
     )
 
     def point(value):
+        if geographic:
+            return (isinstance(value, list) and len(value) == 2 and all(is_number(n) for n in value)
+                    and -180 <= value[0] <= 180 and -85 <= value[1] <= 85)
         return (
             isinstance(value, list) and len(value) == 2
             and all(type(coordinate) is int for coordinate in value)
@@ -199,10 +216,13 @@ def validate_replay(sim):
     chargers = named_items(sim.get("chargers"), "charger")
     deliveries = named_items(sim.get("deliveries"), "delivery")
     vans = named_items(sim.get("vans"), "van")
+    road_nodes = {item["id"]: item.get("position") for item in (*depots, *chargers.values(), *deliveries.values())}
+    if geographic:
+        require(len(road_nodes) == len(depots) + len(chargers) + len(deliveries), "Geographic node IDs must be unique.")
     require(1 <= len(vans) <= 6, "The EV scene supports one to six vans.")
     require(
         all(point(item.get("position")) for item in (*depots, *chargers.values(), *deliveries.values())),
-        "A scene entity is outside the grid.",
+        "A scene entity has invalid geographic coordinates." if geographic else "A scene entity is outside the grid.",
     )
     require(
         all(is_number(delivery.get("deadline_min")) and delivery["deadline_min"] >= 0
@@ -240,9 +260,15 @@ def validate_replay(sim):
                 path = event.get("path")
                 require(
                     isinstance(path, list) and len(path) >= 2 and path[0] == position and all(map(point, path))
-                    and all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1 for a, b in zip(path, path[1:])),
+                    and (geographic or all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1 for a, b in zip(path, path[1:]))),
                     f"Invalid street path for {van_id}.",
                 )
+                if geographic:
+                    origin, destination = event.get("from_id"), event.get("to_id")
+                    require(is_text(origin) and is_text(destination) and origin in road_nodes and destination in road_nodes
+                            and road_nodes[origin] == path[0] and road_nodes[destination] == path[-1]
+                            and is_number(event.get("distance_km")) and event["distance_km"] >= 0,
+                            f"Invalid geographic road leg for {van_id}.")
                 position = path[-1]
             if kind == "charge" or (kind == "wait" and "charger_id" in event):
                 key = event.get("charger_id")
@@ -261,6 +287,10 @@ def validate_replay(sim):
                 van_delivered.add(key)
             previous_end, battery = end, battery_end
         require(van_delivered == set(required), f"Missing scheduled delivery for {van_id}.")
+        if geographic:
+            require(position == depot_for(sim, van), f"Missing return to home depot for {van_id}.")
+    if geographic:
+        require(delivered == set(deliveries), "The geographic replay omitted delivery stops.")
     return len(delivered)
 
 
@@ -311,7 +341,9 @@ def normalize_classical_replay(classical, simulation):
             for key in ("start_hour", "duration_min", "battery_capacity_kwh", "reserve_pct"))
         and {depot["id"]: depot["position"] for depot in replay_depots(classical)}
             == {depot["id"]: depot["position"] for depot in replay_depots(simulation)}
-        and all(classical["grid"][key] == simulation["grid"][key] for key in ("width", "height", "block_km"))
+        and ((classical.get("map") == simulation.get("map") and classical.get("grid") == simulation.get("grid"))
+             if is_geographic_replay(simulation)
+             else classical.get("grid") is not None and all(classical["grid"][key] == simulation["grid"][key] for key in ("width", "height", "block_km")))
         and same_entities("chargers", "position")
         and same_entities("deliveries", "position", "deadline_min"),
         "The classical map must use the same fleet scenario and operating hours.",
@@ -334,7 +366,7 @@ def normalize_classical_replay(classical, simulation):
 
 def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=None, expected_attempt_id=None):
     require(isinstance(handoff, dict) and type(handoff.get("schema_version")) is int
-            and handoff["schema_version"] in (1, 2), "Expected a VisualizationHandoff with schema_version 1 or 2.")
+            and handoff["schema_version"] in (1, 2, 3), "Expected a VisualizationHandoff with schema_version 1, 2, or 3.")
     result = handoff.get("result")
     require(isinstance(result, dict), "Missing RunResult in the handoff.")
     identity = {key: handoff.get(key) for key in ("run_id", "plan_id", "attempt_id")}
@@ -384,9 +416,13 @@ def normalize_handoff(handoff, mode, prompt, previous=None, *, expected_values=N
     )
 
     simulation = result.get("simulation")
+    if is_geographic_replay(simulation):
+        require(handoff["schema_version"] == 3, "Geographic replay requires VisualizationHandoff version 3.")
+    else:
+        require(handoff["schema_version"] != 3, "VisualizationHandoff version 3 requires a geographic replay.")
     delivered_count = validate_replay(simulation)
-    require((handoff["schema_version"] == 2) == ("depots" in simulation),
-            "Multi-depot replays require VisualizationHandoff schema_version 2.")
+    require((handoff["schema_version"] in (2, 3)) == ("depots" in simulation),
+            "Multi-depot replays require VisualizationHandoff schema_version 2 or 3.")
     van_2_charge = effective.get("van_2_initial_charge_pct")
     if van_2_charge is not None:
         van_2 = next((van for van in simulation["vans"] if van["id"] == "V2"), None)

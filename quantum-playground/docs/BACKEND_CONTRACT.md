@@ -1,5 +1,50 @@
 # Verified EV handoff
 
+## Geographic scenarios and replay
+
+Geographic builder source uses `schema_version: 2`. It replaces `grid` with
+`map: {kind:"geographic", profile:"driving"}`. Positions are GeoJSON
+`[longitude, latitude]`, rounded to six decimals, with longitude −180…180 and
+latitude −85…85. `timing` contains `start_hour` and `duration_min`; geographic
+driving time comes from road routing, so there is no speed input/control. Fleet,
+depot, vehicle, charger, stop assignment, service, deadline and cost fields keep
+their existing meaning. Original source v1 grid shapes and prompt bytes remain
+compatible with saved runs.
+
+`GET /api/maps/config` supplies tile URL and attribution. `GET
+/api/maps/search?q=...` returns `{results:[{label,position:[lon,lat]}]}`; optional
+`lon` and `lat` together bias search. Invalid queries return 400, provider
+failures return an actionable JSON error. Provider URLs are operator-owned
+environment settings and cannot be supplied by clients. Invalid optional map
+configuration does not prevent the grid dashboard from starting.
+
+Before planning, the host prepares read-only `routing.json`: version, source
+digest, provider/profile/endpoint, retrieval time and optional data version,
+stable ordered nodes with requested and road-snapped positions, directed
+`distances_m` and `durations_s` matrices, and its content digest. At most 72
+locations require one table request. Snapping is bounded to 100 metres; null
+cells stay unreachable. The solver and independent verifier read that exact
+snapshot. It participates in approval/cache fingerprints and is downloadable
+from saved-run artifacts. Matrices are separate from the 64 KB scenario prompt.
+
+The normalized VisualizationHandoff is v3 for geographic replay. Its simulation
+has `map: {kind:"geographic",profile:"driving",routing_digest:...}` and no
+`grid`; depots, chargers, stops and event positions use road-snapped coordinates.
+Drives identify `from_id`, `to_id`, and `distance_km`; elapsed time and energy
+are checked independently against the frozen directed matrix. Worker-generated
+paths are not trusted: the host retrieves only selected road legs for quantum
+and classical schedules, verifies provider metrics/endpoints against the
+snapshot, and supplies `path` geometry in the displayed replay.
+
+Captured geometry is saved in the native handoff's `geographic_replay`, bound to
+the raw result and routing digests. Opening saved results never fetches new road
+geometry. Apply uses the same immutable matrix and source with effective numeric
+overlays, capturing any newly selected legs in the temporary attempt; the
+original saved handoff remains unchanged. Material provider/snapshot disagreement
+requires a fresh plan rather than changing verified costs. The browser animates
+geographic paths by traveled distance; the legacy PNG frame endpoint remains
+grid-only and returns an actionable 422 for geographic views.
+
 ## Interactive scenario inputs
 
 `POST /api/pipeline-runs` also accepts `{ "scenario": { ... } }`. The `scenario`
