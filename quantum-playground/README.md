@@ -1,6 +1,6 @@
 # QuantumLoop
 
-A local dashboard for planning, solving, and replaying EV dispatch schedules.
+A local dashboard for EV fleet dispatch and interactive optimization problems.
 
 ## Run from the repository root
 
@@ -10,6 +10,18 @@ python quantum-playground/server.py
 ```
 
 Open **http://127.0.0.1:8000**. Use the prompt screen to start a new run or open the recorded example. With the built-in live backend, the EV example starts Van 2 at 35% charge. Move the slider to any whole percentage from 20% to 35% to launch a fresh solve and update the map when its schedule passes verification.
+
+## Explore optimization problems
+
+Open **Optimization problems** in the dashboard header or visit `/problems/`.
+Choose facility placement, workforce scheduling, production scheduling,
+timetabling, energy scheduling, project selection, or team formation. Each view
+includes editable example inputs and computes a bounded classical solution in
+the browser. Switching views keeps edits for the current page session.
+
+The facility example starts with recorded Toronto road travel times. After moving
+pins, recalculate travel times to request a fresh directed matrix from the
+configured routing service.
 
 ## Build a situation on the map
 

@@ -1,0 +1,171 @@
+.projects-view .projects-top {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.projects-view .projects-top .problem-field {
+  flex: 1;
+  max-width: 300px;
+}
+.projects-view .projects-editors {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 12px;
+}
+.projects-view .project-editor-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.5fr) minmax(80px, 0.8fr) minmax(65px, 0.6fr) auto minmax(100px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface, #f6f7f5);
+  border: 1px solid var(--line, #d3d9d5);
+  border-radius: 4px;
+}
+.projects-view .problem-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+}
+.projects-view .problem-field input,
+.projects-view .problem-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line-strong, #aab6b0);
+  border-radius: 4px;
+  background: white;
+  color: inherit;
+}
+.projects-view .projects-editor-details {
+  display: block;
+  margin-top: 18px;
+}
+.projects-view .projects-editor-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.projects-view .problem-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.projects-view .problem-metrics > .problem-card {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 12px;
+}
+.projects-view .problem-metrics > .problem-card > span {
+  font-size: 12px;
+  color: var(--muted, #536168);
+}
+.projects-view .problem-metrics > .problem-card > strong {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.projects-view .project-required {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  font-size: 12px;
+}
+.projects-view .project-editor-row button {
+  padding: 7px;
+  font-size: 12px;
+}
+.projects-view .projects-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.projects-view .projects-summary .funded {
+  border-top: 3px solid #1e5147;
+}
+.projects-view .projects-summary .deferred {
+  border-top: 3px solid #aab6b0;
+}
+.projects-view .projects-summary p {
+  margin-bottom: 0;
+}
+.projects-view .projects-chart {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.projects-view .projects-chart-heading,
+.projects-view .projects-chart-row {
+  display: grid;
+  grid-template-columns: minmax(115px, 1.2fr) minmax(70px, 1fr) minmax(90px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.projects-view .projects-chart-heading {
+  color: var(--muted, #536168);
+  font-size: 12px;
+}
+.projects-view .projects-chart-row strong {
+  display: block;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.projects-view .projects-chart-row .hint {
+  display: block;
+  font-size: 11px;
+}
+.projects-view .project-bar-cell {
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.projects-view .project-bar-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #edf0ed;
+  margin-top: 5px;
+}
+.projects-view .project-bar-fill {
+  display: block;
+  height: 100%;
+  background: #1e5147;
+}
+.projects-view .project-bar-fill.value {
+  background: #315b8f;
+}
+.projects-view .deferred .project-bar-fill {
+  background: #aab6b0;
+}
+.projects-view .projects-status {
+  font-size: 13px;
+}
+@media (max-width: 900px) {
+  .projects-view .project-editor-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .projects-view .project-editor-row > :first-child {
+    grid-column: 1/-1;
+  }
+  .projects-view .project-editor-row button {
+    justify-self: end;
+  }
+}
+@media (max-width: 560px) {
+  .projects-view .problem-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .projects-view .projects-summary p {
+    font-size: 12px;
+  }
+}
+@media (max-width: 430px) {
+  .projects-view .projects-chart-heading,
+  .projects-view .projects-chart-row {
+    grid-template-columns: minmax(80px, 1.1fr) minmax(45px, 0.7fr) minmax(65px, 1fr);
+    gap: 8px;
+  }
+}
