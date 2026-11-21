@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optimization problems · QuantumLoop</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="problems.css">
+  <link rel="stylesheet" href="scheduling.css">
+  <link rel="stylesheet" href="facility.css">
+  <link rel="stylesheet" href="energy.css">
+  <link rel="stylesheet" href="projects.css">
+  <link rel="stylesheet" href="teams.css">
+</head>
+<body class="problem-workbench">
+  <a class="skip-link" href="#problem-content">Skip to current problem</a>
+  <header>
+    <a class="brand" href="/">QuantumLoop</a>
+    <nav aria-label="Workspace" class="workspace-nav">
+      <a href="/">Fleet dispatch</a>
+      <a href="./" aria-current="page">Optimization problems</a>
+    </nav>
+  </header>
+  <main class="problem-shell">
+    <aside class="problem-picker" aria-label="Problem library">
+      <h2>Problem library</h2>
+      <nav id="problem-links" aria-label="Problem types"></nav>
+      <div class="mobile-picker"><label for="problem-select">Problem type</label><select id="problem-select"></select></div>
+    </aside>
+    <section id="problem-content" tabindex="-1" aria-labelledby="problem-title">
+      <div class="problem-heading">
+        <h1 id="problem-title">Optimization problems</h1>
+        <p id="problem-objective"></p>
+        <p class="solver-note">Computed locally with a classical solver</p>
+      </div>
+      <div id="problem-views"></div>
+      <noscript>Enable JavaScript to edit scenarios and calculate results.</noscript>
+    </section>
+  </main>
+  <script src="../vendor/leaflet/leaflet.js"></script>
+  <script src="library.js"></script>
+</body>
+</html>

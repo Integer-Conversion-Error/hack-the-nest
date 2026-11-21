@@ -1,0 +1,415 @@
+.scheduling-workbench {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.scheduling-workbench .problem-card {
+  padding: clamp(16px, 2.5vw, 24px);
+  min-width: 0;
+  border: 1px solid var(--line, #d3d9d5);
+  background: var(--panel, #fff);
+  border-radius: 8px;
+}
+.scheduling-workbench h2 {
+  font-size: 17px;
+  margin: 0 0 8px;
+}
+.schedule-note {
+  color: var(--muted, #536168);
+  margin: 4px 0 18px;
+  max-width: 80ch;
+}
+.schedule-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.schedule-fields .problem-field {
+  display: grid;
+  gap: 5px;
+  min-width: 130px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.schedule-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+.scheduling-workbench table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.scheduling-workbench th,
+.scheduling-workbench td {
+  border-bottom: 1px solid var(--line, #d3d9d5);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+.scheduling-workbench thead th {
+  color: var(--muted, #536168);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--surface, #f6f7f5);
+}
+.scheduling-workbench th[scope='row'] {
+  font-weight: 600;
+}
+.schedule-input-table {
+  min-width: 560px;
+}
+.schedule-input-table input[type='number'] {
+  width: 90px;
+}
+.schedule-input-table select {
+  max-width: 145px;
+  min-width: 94px;
+}
+.schedule-input-table input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent, #1e5147);
+}
+.schedule-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 18px 0 22px;
+}
+.schedule-metric {
+  display: grid;
+  gap: 3px;
+  min-width: 120px;
+}
+.schedule-metric > span {
+  font-size: 12px;
+  color: var(--muted, #536168);
+}
+.schedule-metric > strong {
+  font: 650 27px/1.2 var(--mono, monospace);
+  letter-spacing: -0.04em;
+}
+.schedule-status {
+  margin: 8px 0;
+  color: var(--accent, #1e5147);
+  font-size: 13px;
+}
+.schedule-error {
+  color: var(--danger, #983d32);
+}
+.schedule-empty {
+  padding: 30px 18px;
+  border: 1px dashed var(--line, #d3d9d5);
+  background: var(--surface, #f6f7f5);
+  color: var(--muted, #536168);
+}
+.schedule-small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+.schedule-roster {
+  min-width: 610px;
+}
+.schedule-roster .schedule-assigned {
+  background: #e7efeb;
+  color: #1e5147;
+  font-weight: 600;
+}
+.schedule-unassigned {
+  color: var(--muted, #536168);
+}
+.schedule-total {
+  color: var(--accent, #1e5147);
+  background: var(--surface, #f6f7f5);
+  font-size: 12px;
+  font-weight: 600;
+}
+.schedule-hours {
+  font-family: var(--mono, monospace);
+}
+.schedule-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 14px 0;
+  font-size: 12px;
+  color: var(--muted, #536168);
+}
+.schedule-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.schedule-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.schedule-job-0 {
+  --job-color: #315b8f;
+  --job-light: #e7edf5;
+}
+.schedule-job-1 {
+  --job-color: #8a4d2d;
+  --job-light: #f5ebe4;
+}
+.schedule-job-2 {
+  --job-color: #497658;
+  --job-light: #e8f0e9;
+}
+.schedule-job-3 {
+  --job-color: #72528b;
+  --job-light: #f0eaf5;
+}
+.schedule-job-4 {
+  --job-color: #8b6930;
+  --job-light: #f5efdf;
+}
+.schedule-job-5 {
+  --job-color: #397a81;
+  --job-light: #e7f1f1;
+}
+.schedule-gantt {
+  min-width: 0;
+  padding: 5px 0;
+}
+.schedule-axis,
+.schedule-machine {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px;
+}
+.schedule-axis {
+  margin-bottom: 8px;
+  color: var(--muted, #536168);
+  font: 11px var(--mono, monospace);
+}
+.schedule-axis-ticks {
+  position: relative;
+  height: 20px;
+  margin-right: 8px;
+}
+.schedule-axis-ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+.schedule-machine {
+  margin-bottom: 12px;
+  align-items: center;
+}
+.schedule-machine-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.schedule-machine-track {
+  position: relative;
+  height: 62px;
+  border: 1px solid var(--line, #d3d9d5);
+  border-radius: 4px;
+  background: var(--surface, #f6f7f5);
+}
+.schedule-operation {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 5px 8px;
+  color: var(--job-color);
+  background: var(--job-light);
+  border: 1px solid var(--job-color);
+  border-left-width: 3px;
+  border-radius: 3px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.schedule-operation small {
+  font: 10px var(--mono, monospace);
+}
+.schedule-op-short {
+  display: none;
+}
+.schedule-chart-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted, #536168);
+}
+.schedule-operation-ledger {
+  margin-bottom: 22px;
+}
+.schedule-operation-ledger caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 0 0 8px;
+  font-size: 12px;
+}
+.schedule-deadline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-right: 2px dashed var(--danger, #983d32);
+  pointer-events: none;
+  z-index: 2;
+}
+.schedule-timetable {
+  table-layout: fixed;
+  min-width: 650px;
+}
+.schedule-timetable th:first-child {
+  width: 130px;
+}
+.schedule-timetable td {
+  height: 120px;
+  vertical-align: top;
+  padding: 9px;
+}
+.schedule-class {
+  border: 1px solid var(--job-color);
+  border-left-width: 4px;
+  border-radius: 4px;
+  padding: 10px;
+  background: var(--job-light);
+  color: var(--job-color);
+  display: grid;
+  gap: 4px;
+}
+.schedule-class strong {
+  font-size: 13px;
+}
+.schedule-class span {
+  font-size: 11px;
+}
+.schedule-preference {
+  font-size: 11px;
+  border-top: 1px solid currentColor;
+  padding-top: 5px;
+  margin-top: 3px;
+}
+.schedule-availability {
+  display: flex;
+  gap: 10px;
+}
+.schedule-availability label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+}
+.schedule-roster-mobile,
+.schedule-timetable-mobile {
+  display: none;
+}
+@media (max-width: 620px) {
+  .schedule-fields {
+    gap: 10px;
+  }
+  .schedule-fields .problem-field {
+    flex: 1 1 130px;
+  }
+  .schedule-metrics {
+    gap: 16px;
+  }
+  .schedule-metric > strong {
+    font-size: 23px;
+  }
+  .schedule-output > .problem-figure {
+    padding: 10px;
+  }
+  .schedule-roster,
+  .schedule-timetable {
+    display: none;
+  }
+  .schedule-roster-mobile,
+  .schedule-timetable-mobile {
+    display: grid;
+    gap: 12px;
+  }
+  .schedule-shift-card {
+    border-left: 3px solid var(--accent, #1e5147);
+    background: var(--surface, #f6f7f5);
+    padding: 10px 12px;
+  }
+  .schedule-shift-card h3 {
+    font-size: 13px;
+  }
+  .schedule-shift-card p {
+    color: var(--accent, #1e5147);
+    font-size: 13px;
+    font-weight: 600;
+    margin: 8px 0 0;
+  }
+  .schedule-axis,
+  .schedule-machine {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+  .schedule-axis-ticks {
+    margin: 4px 7px 0;
+  }
+  .schedule-operation {
+    padding: 3px 4px;
+    border-left-width: 2px;
+  }
+  .schedule-operation .schedule-op-full {
+    display: none;
+  }
+  .schedule-op-short {
+    display: block;
+    font-size: 11px;
+  }
+  .schedule-operation small {
+    font-size: 9px;
+  }
+  .schedule-legend {
+    gap: 7px 10px;
+    font-size: 11px;
+  }
+  .schedule-operation-ledger th,
+  .schedule-operation-ledger td {
+    font-size: 11px;
+    padding: 8px 5px;
+  }
+  .schedule-period-card h3 {
+    font: 600 12px var(--mono, monospace);
+    margin-bottom: 8px;
+  }
+  .schedule-period-rooms {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .schedule-mobile-room {
+    min-width: 0;
+  }
+  .schedule-room-name {
+    display: block;
+    color: var(--muted, #536168);
+    font-size: 10px;
+    margin-bottom: 5px;
+  }
+  .schedule-class-mobile {
+    border-left: 3px solid var(--job-color);
+    background: var(--job-light);
+    color: var(--job-color);
+    padding: 8px;
+    display: grid;
+    gap: 5px;
+    overflow-wrap: anywhere;
+  }
+  .schedule-class-mobile strong {
+    font-size: 12px;
+  }
+  .schedule-class-mobile span {
+    font-size: 10px;
+  }
+}

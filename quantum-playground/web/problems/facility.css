@@ -1,0 +1,242 @@
+.facility-view .problem-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.facility-view input[type='number'] {
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: white;
+  color: var(--text);
+  font: inherit;
+}
+.facility-view input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.facility-view .hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.facility-status {
+  color: var(--accent);
+  min-height: 20px;
+  font-size: 13px;
+}
+.facility-status.request-error {
+  color: var(--danger);
+}
+.facility-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.facility-metrics .problem-card {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 15px;
+}
+.facility-metrics span,
+.facility-metrics small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.facility-metrics strong {
+  font-size: clamp(17px, 2.3vw, 25px);
+  color: var(--accent);
+}
+.facility-map {
+  height: 380px;
+  width: 100%;
+  border-radius: 3px;
+  background: #e7ebe4;
+  z-index: 0;
+}
+.facility-map .leaflet-control-attribution {
+  font-size: 10px;
+}
+.facility-map .leaflet-control-attribution a {
+  color: #1e5147;
+}
+.facility-pin span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  background: #f5f6f3;
+  border: 2px solid #7a8781;
+  border-radius: 5px;
+  font: 600 11px var(--mono);
+  color: #46554e;
+  box-shadow: 0 1px 4px #263f3c33;
+}
+.facility-pin.open span {
+  color: white;
+  background: #276548;
+  border-color: white;
+}
+.facility-pin.demand span {
+  border-radius: 50%;
+}
+.facility-pin.served span {
+  color: white;
+  background: #356b96;
+  border-color: white;
+}
+.facility-pin.unserved span {
+  color: #853d2e;
+  background: #fff2e7;
+  border-color: #ad5f41;
+}
+.facility-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.facility-legend span::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  background: #7a8781;
+}
+.facility-legend .open::before {
+  background: #276548;
+}
+.facility-legend .served::before {
+  background: #356b96;
+  border-radius: 50%;
+}
+.facility-legend .unserved::before {
+  background: #ad5f41;
+  border-radius: 50%;
+}
+.facility-map-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.facility-site-row,
+.facility-zone-row {
+  display: grid;
+  grid-template-columns: 140px minmax(120px, 1fr) minmax(130px, 1fr) minmax(220px, 1.6fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.facility-site-row > button {
+  grid-column: 1;
+  justify-self: start;
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.facility-site-row + button {
+  margin-top: 14px;
+}
+.facility-zone-row {
+  grid-template-columns: 140px minmax(150px, 1fr) minmax(220px, 1.6fr);
+}
+.facility-availability {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+.facility-availability input {
+  width: 17px;
+  height: 17px;
+}
+.facility-coordinates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.facility-coordinates input {
+  font-size: 12px;
+}
+.facility-zone-row > strong {
+  font-size: 13px;
+}
+.facility-table-wrap {
+  overflow-x: auto;
+}
+.facility-table-wrap table {
+  min-width: 560px;
+}
+.facility-unserved-row {
+  background: #fff8ee;
+}
+.facility-utilization {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 18px;
+}
+.facility-utilization-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 115px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+.facility-capacity-track {
+  height: 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.facility-capacity-track span {
+  display: block;
+  height: 100%;
+  background: #39775d;
+}
+.facility-view summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.facility-view details p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+@media (max-width: 1100px) {
+  .facility-site-row {
+    grid-template-columns: 120px 1fr 1fr;
+  }
+  .facility-site-row > .facility-coordinates {
+    grid-column: 2 / -1;
+  }
+}
+@media (max-width: 650px) {
+  .facility-view .problem-controls,
+  .facility-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .facility-map {
+    height: 330px;
+  }
+  .facility-site-row,
+  .facility-zone-row {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  .facility-availability,
+  .facility-zone-row > strong {
+    grid-column: 1 / -1;
+  }
+  .facility-site-row > .facility-coordinates,
+  .facility-zone-row > .facility-coordinates {
+    grid-column: 1 / -1;
+  }
+}

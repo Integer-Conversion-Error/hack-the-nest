@@ -365,9 +365,13 @@ def validate_routing(source, artifact, *, expected_source_digest=None):
     overlays. Geometry and every node still have to match the effective source.
     """
     _normalized, expected_nodes, digest = _source(source)
-    validated = _validate_artifact(artifact)
     expected = digest if expected_source_digest is None else expected_source_digest
-    _require(validated["source_digest"] == expected, "The routing snapshot belongs to a different scenario.")
+    return _validate_table(artifact, expected_nodes, expected)
+
+
+def _validate_table(artifact, expected_nodes, digest):
+    validated = _validate_artifact(artifact)
+    _require(validated["source_digest"] == digest, "The routing snapshot belongs to a different scenario.")
     _require([{key: node[key] for key in ("id", "position")} for node in validated["nodes"]] == expected_nodes,
              "The routing snapshot's locations changed. Prepare routes again.")
     return validated
@@ -384,6 +388,25 @@ def _waypoint(waypoint, original, label):
 
 def prepare_routing(source):
     _normalized, nodes, digest = _source(source)
+    return _prepare_table(nodes, digest)
+
+
+def travel_times(positions):
+    """Return a directed driving-time matrix in the caller's pin order."""
+    _require(isinstance(positions, list) and 2 <= len(positions) <= 24,
+             "Provide between 2 and 24 map positions.", 400)
+    nodes = []
+    for index, value in enumerate(positions, start=1):
+        point = _position(value, f"Pin {index}")
+        _require(abs(point[1]) <= 85, "Pin latitude must be between -85 and 85.", 400)
+        nodes.append({"id": f"P{index}", "position": point})
+    digest = hashlib.sha256(_canonical({"positions": positions})).hexdigest()
+    table = _prepare_table(nodes, digest)
+    return {"positions": positions, "durations_s": table["durations_s"],
+            "snapped_positions": [node["snapped_position"] for node in table["nodes"]]}
+
+
+def _prepare_table(nodes, digest):
     base = _osrm_url()
     key = _cache_key("table", base, digest)
     cached = _cached(key)
@@ -392,7 +415,7 @@ def prepare_routing(source):
             cached = None
     if cached is not None:
         try:
-            return validate_routing(source, cached)
+            return _validate_table(cached, nodes, digest)
         except MapServiceError:
             pass
     coordinates = ";".join(f"{node['position'][0]:.6f},{node['position'][1]:.6f}" for node in nodes)
@@ -416,7 +439,7 @@ def prepare_routing(source):
                 "data_version": result.get("data_version"), "nodes": snapped_nodes,
                 "distances_m": result.get("distances"), "durations_s": result.get("durations")}
     artifact["digest"] = routing_digest(artifact)
-    artifact = validate_routing(source, artifact)
+    artifact = _validate_table(artifact, nodes, digest)
     _store(key, artifact)
     return artifact
 
