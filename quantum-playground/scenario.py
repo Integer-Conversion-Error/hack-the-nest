@@ -70,7 +70,11 @@ def _canonical(value):
 
 
 def normalize_scenario(data):
-    """Validate a complete v1 scenario and return a detached canonical value."""
+    """Validate a versioned scenario and return a detached canonical value."""
+    if isinstance(data, dict) and type(data.get("schema_version")) is int and data["schema_version"] == 2:
+        from geographic import normalize_geographic_scenario
+
+        return normalize_geographic_scenario(data)
     _object(data, ("schema_version", "title", "grid", "depots", "chargers", "deliveries", "vehicles",
                    "fleet", "timing", "costs"), "Scenario")
     _require(type(data["schema_version"]) is int and data["schema_version"] == SCHEMA_VERSION,
@@ -177,6 +181,9 @@ def numeric_bindings(scenario):
         "waiting_cost_per_hour": ["costs", "waiting_per_hour"],
         "late_delivery_cost_per_hour": ["costs", "late_per_hour"],
     }
+    if scenario["schema_version"] == 2:
+        # Geographic travel times come from the immutable road-routing table.
+        bindings.pop("driving_speed_km_per_hour")
     for vehicle in scenario["vehicles"]:
         bindings[f"van_{vehicle['id'][1:]}_initial_charge_pct"] = ["vehicles", vehicle["id"], "initial_charge_pct"]
     for delivery in scenario["deliveries"]:
@@ -281,6 +288,10 @@ def example_scenario():
 def scenario_prompt(scenario):
     """Create the complete deterministic request for the existing native pipeline."""
     scenario = normalize_scenario(scenario)
+    if scenario["schema_version"] == 2:
+        from geographic import geographic_prompt
+
+        return geographic_prompt(scenario)
     prompt = """Solve this interactive EV fleet scenario with measured QAOA and visualize the verified result.
 The complete JSON below is authoritative and is also saved as read-only scenario.json.
 Preserve every entity ID, position, assigned vehicle, home depot, and numeric setting.
@@ -340,13 +351,29 @@ def _entities(items, label):
     return result
 
 
-def _verify_simulation(scenario, simulation, label):
+def _verify_simulation(scenario, simulation, label, routing=None):
     """Recompute physical feasibility and all cost components independently."""
     _require(isinstance(simulation, dict) and simulation.get("kind") == "ev_fleet", f"Missing {label} EV simulation.")
-    grid = simulation.get("grid")
-    _require(isinstance(grid, dict), f"Missing {label} grid.")
-    for field, value in scenario["grid"].items():
-        _close(grid.get(field), value, label + " grid " + field)
+    geographic = scenario["schema_version"] == 2
+    if geographic:
+        _require(isinstance(routing, dict), "A geographic replay requires its saved routing table.")
+        replay_map = simulation.get("map")
+        _require(isinstance(replay_map, dict) and replay_map.get("kind") == "geographic"
+                 and replay_map.get("profile") == "driving" and replay_map.get("routing_digest") == routing["digest"]
+                 and "grid" not in simulation, f"{label} geographic map does not match the routing snapshot.")
+        node_indexes = {node["id"]: index for index, node in enumerate(routing["nodes"])}
+        nodes = {node["id"]: node for node in routing["nodes"]}
+        # Entity/event positions in geographic replays are road-snapped points;
+        # the immutable scenario retains the originally requested map pins.
+        scenario = copy.deepcopy(scenario)
+        for name in ("depots", "chargers", "deliveries"):
+            for item in scenario[name]:
+                item["position"] = nodes[item["id"]]["snapped_position"]
+    else:
+        grid = simulation.get("grid")
+        _require(isinstance(grid, dict), f"Missing {label} grid.")
+        for field, value in scenario["grid"].items():
+            _close(grid.get(field), value, label + " grid " + field)
     for field in ("start_hour", "duration_min"):
         _close(simulation.get(field), scenario["timing"][field], label + " " + field)
     for field in ("battery_capacity_kwh", "reserve_pct"):
@@ -358,8 +385,16 @@ def _verify_simulation(scenario, simulation, label):
         _require(set(actual) == set(source[name]), f"{label} changed or omitted {name}.")
         for key, item in source[name].items():
             position = actual[key].get("position")
-            _require(isinstance(position, list) and all(type(value) is int for value in position)
-                     and position == item["position"], f"{label} moved {key}.")
+            if geographic:
+                from geographic import geographic_point
+
+                geographic_point(position)
+                # Source pins are rounded for stable input identity, while
+                # provider snaps retain their original road-coordinate precision.
+                _require(position == item["position"], f"{label} moved {key}.")
+            else:
+                _require(isinstance(position, list) and all(type(value) is int for value in position)
+                         and position == item["position"], f"{label} moved {key}.")
             if name == "deliveries":
                 _close(actual[key].get("deadline_min"), item["deadline_min"], label + " " + key + " deadline")
     vans = _entities(simulation.get("vans"), label + " vans")
@@ -372,6 +407,14 @@ def _verify_simulation(scenario, simulation, label):
     delivered = set()
 
     def point(value):
+        if geographic:
+            try:
+                from geographic import geographic_point
+
+                geographic_point(value)
+                return True
+            except ValueError:
+                return False
         return (isinstance(value, list) and len(value) == 2 and all(type(item) is int for item in value)
                 and 0 <= value[0] < scenario["grid"]["width"] and 0 <= value[1] < scenario["grid"]["height"])
 
@@ -406,19 +449,44 @@ def _verify_simulation(scenario, simulation, label):
             event_duration = end - start
             expected_battery = battery
             if kind == "drive":
-                path = event.get("path")
-                _require(isinstance(path, list) and len(path) >= 2 and all(point(item) for item in path)
-                         and path[0] == position
-                         and all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1 for a, b in zip(path, path[1:])),
-                         f"Invalid {label} street path.")
-                blocks = len(path) - 1
-                _require(blocks == abs(path[-1][0] - position[0]) + abs(path[-1][1] - position[1]),
-                         f"{label} drive must use a shortest grid path.")
-                distance = blocks * scenario["grid"]["block_km"]
-                _close(event_duration, distance / scenario["timing"]["speed_kmh"] * 60, label + " drive duration")
+                if geographic:
+                    from_id, to_id = event.get("from_id"), event.get("to_id")
+                    _require(isinstance(from_id, str) and isinstance(to_id, str)
+                             and from_id in node_indexes and to_id in node_indexes,
+                             f"Unknown {label} geographic drive endpoints.")
+                    _require(nodes[from_id]["snapped_position"] == position,
+                             f"Inconsistent {label} geographic drive origin.")
+                    origin, destination = node_indexes[from_id], node_indexes[to_id]
+                    distance_m = routing["distances_m"][origin][destination]
+                    duration_s = routing["durations_s"][origin][destination]
+                    _require(distance_m is not None and duration_s is not None,
+                             f"{label} uses an unreachable road leg {from_id} to {to_id}.")
+                    distance = distance_m / 1000
+                    _close(event.get("distance_km"), distance, label + " road distance")
+                    _close(event_duration, duration_s / 60, label + " road duration")
+                    next_position = nodes[to_id]["snapped_position"]
+                    if "path" in event:
+                        path = event["path"]
+                        _require(isinstance(path, list) and len(path) >= 2 and all(point(item) for item in path),
+                                 f"Invalid {label} geographic path.")
+                        _require(all(math.isclose(a, b, rel_tol=0, abs_tol=1e-5)
+                                     for actual, expected in ((path[0], position), (path[-1], next_position))
+                                     for a, b in zip(actual, expected)), f"Invalid {label} geographic path endpoints.")
+                else:
+                    path = event.get("path")
+                    _require(isinstance(path, list) and len(path) >= 2 and all(point(item) for item in path)
+                             and path[0] == position
+                             and all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1 for a, b in zip(path, path[1:])),
+                             f"Invalid {label} street path.")
+                    blocks = len(path) - 1
+                    _require(blocks == abs(path[-1][0] - position[0]) + abs(path[-1][1] - position[1]),
+                             f"{label} drive must use a shortest grid path.")
+                    distance = blocks * scenario["grid"]["block_km"]
+                    _close(event_duration, distance / scenario["timing"]["speed_kmh"] * 60, label + " drive duration")
+                    next_position = path[-1]
                 expected_battery -= distance * scenario["fleet"]["energy_use_kwh_per_km"]
                 costs["driving_cost"] += distance * scenario["costs"]["driving_per_km"]
-                position = path[-1]
+                position = next_position
             elif kind == "deliver":
                 delivery_id = event.get("delivery_id")
                 _require(isinstance(delivery_id, str) and delivery_id in assigned and delivery_id not in delivered,
@@ -480,13 +548,17 @@ def _verify_costs(actual, expected, label):
     _require(seen == set(expected), f"{label} must report all four cost components.")
 
 
-def validate_scenario_result(scenario, output):
+def validate_scenario_result(scenario, output, routing=None):
     """Reject a native result whose replay, physics, assignments, or USD differ.
 
     The caller supplies the effective scenario for this attempt, rather than the
     original defaults.  All checks are independent of solver verification claims.
     """
     scenario = normalize_scenario(scenario)
+    if scenario["schema_version"] == 2:
+        from geographic import validate_geographic_result
+
+        return validate_geographic_result(scenario, output, routing)
     _require(isinstance(output, dict) and output.get("status") == "ok", "The scenario solver did not succeed.")
     costs = _verify_simulation(scenario, output.get("simulation"), "Quantum")
     objective = output.get("objective")

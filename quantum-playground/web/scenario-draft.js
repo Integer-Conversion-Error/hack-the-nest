@@ -6,6 +6,8 @@
   const clone = value => JSON.parse(JSON.stringify(value));
   const collections = ['depots', 'chargers', 'deliveries', 'vehicles'];
   const limits = { depots: 6, chargers: 6, vehicles: 6, deliveries: 60, stops: 10, slots: 4 };
+  const typeOf = scenario => scenario?.schema_version === 2 && scenario?.map?.kind === 'geographic' ? 'geographic' : 'grid';
+  const roundPosition = position => position.map(number => Math.round(Number(number) * 1e6) / 1e6);
 
   function seed() {
     return {
@@ -27,15 +29,31 @@
     };
   }
 
+  function geographicSeed() {
+    const scenario = seed();
+    scenario.schema_version = 2;
+    scenario.title = 'Toronto delivery routes';
+    scenario.map = { kind: 'geographic', profile: 'driving' };
+    delete scenario.grid; delete scenario.timing.speed_kmh;
+    scenario.depots[0].position = [-79.3832, 43.6532]; scenario.depots[1].position = [-79.395, 43.653];
+    scenario.chargers[0].position = [-79.386, 43.65]; scenario.chargers[1].position = [-79.389, 43.655];
+    scenario.deliveries[0].position = [-79.379, 43.65]; scenario.deliveries[1].position = [-79.392, 43.65];
+    scenario.deliveries[2].position = [-79.398, 43.655];
+    return scenario;
+  }
+
   // Keep incomplete text in the draft; convert only at the submission boundary.
   function normalize(draft) {
     const value = clone(draft);
-    const number = raw => raw === '' || raw === null || typeof raw === 'boolean' ? NaN : Number(raw);
+    const number = raw => raw === null || typeof raw === 'boolean' || String(raw).trim() === '' ? NaN : Number(raw);
     for (const section of ['grid', 'fleet', 'timing', 'costs']) {
       for (const key of Object.keys(value[section] || {})) value[section][key] = number(value[section][key]);
     }
     for (const section of collections) for (const item of value[section] || []) {
-      if (item.position) item.position = item.position.map(number);
+      if (item.position) {
+        item.position = item.position.map(number);
+        if (typeOf(value) === 'geographic') item.position = roundPosition(item.position);
+      }
       for (const key of ['power_kw', 'deadline_min', 'service_min', 'initial_charge_pct']) {
         if (key in item) item[key] = number(item[key]);
       }
@@ -60,19 +78,24 @@
           (max === Infinity ? 'at least ' + min : 'between ' + min + ' and ' + max) + '.');
       }
     };
-    if (value.schema_version !== 1) errors.push('This scenario version is not supported.');
+    const geographic = typeOf(value) === 'geographic';
+    if (value.schema_version !== 1 && !geographic) errors.push('This scenario version is not supported.');
     if (!value.title || value.title.length > 120) errors.push('Enter a scenario title of 1–120 characters.');
     if (/[\u0000-\u001f]/.test(value.title)) errors.push('The title cannot contain control characters.');
-    numeric(value.grid?.width, 'Grid width', 2, 50, true);
-    numeric(value.grid?.height, 'Grid height', 2, 50, true);
-    positive(value.grid?.block_km, 'Distance per block');
+    if (geographic) {
+      if (value.map.profile !== 'driving') errors.push('Real maps currently support driving routes.');
+    } else {
+      numeric(value.grid?.width, 'Grid width', 2, 50, true);
+      numeric(value.grid?.height, 'Grid height', 2, 50, true);
+      positive(value.grid?.block_km, 'Distance per block');
+    }
     positive(value.fleet?.battery_capacity_kwh, 'Battery capacity');
     numeric(value.fleet?.reserve_pct, 'Battery reserve', 0, 100);
     positive(value.fleet?.energy_use_kwh_per_km, 'Energy use');
     numeric(value.timing?.start_hour, 'Shift start hour', 0, 24);
     if (value.timing?.start_hour === 24) errors.push('Shift start must be before 24:00.');
     numeric(value.timing?.duration_min, 'Shift length', 1, 1440);
-    positive(value.timing?.speed_kmh, 'Driving speed');
+    if (!geographic) positive(value.timing?.speed_kmh, 'Driving speed');
     for (const key of ['driving_per_km', 'electricity_per_kwh', 'waiting_per_hour', 'late_per_hour']) {
       numeric(value.costs?.[key], key.replaceAll('_', ' '), 0);
     }
@@ -90,10 +113,10 @@
         }
         seen.add(row.id);
         if (section !== 'vehicles') {
-          if (!Array.isArray(row.position) || row.position.length !== 2) errors.push(row.id + ' needs X and Y coordinates.');
+          if (!Array.isArray(row.position) || row.position.length !== 2) errors.push(row.id + ' needs ' + (geographic ? 'longitude and latitude' : 'X and Y coordinates') + '.');
           else {
-            numeric(row.position[0], row.id + ' X', 0, value.grid.width - 1, true);
-            numeric(row.position[1], row.id + ' Y', 0, value.grid.height - 1, true);
+            numeric(row.position[0], row.id + (geographic ? ' longitude' : ' X'), geographic ? -180 : 0, geographic ? 180 : value.grid.width - 1, !geographic);
+            numeric(row.position[1], row.id + (geographic ? ' latitude' : ' Y'), geographic ? -85 : 0, geographic ? 85 : value.grid.height - 1, !geographic);
           }
         }
       }
@@ -132,23 +155,36 @@
     return [...new Set(errors)];
   }
 
-  function load(storage) {
+  function readable(draft) {
+    return draft && collections.every(key => Array.isArray(draft[key]) &&
+      draft[key].every(row => row && typeof row.id === 'string' &&
+        new RegExp('^' + ({ depots: 'P', vehicles: 'V', deliveries: 'D', chargers: 'C' }[key]) + '[1-9][0-9]{0,5}$').test(row.id) &&
+        (key === 'vehicles' || (Array.isArray(row.position) && row.position.length === 2)) &&
+        (key !== 'chargers' || (Array.isArray(row.slots) && row.slots.every(slot => slot && /^S[1-9][0-9]{0,5}$/.test(slot.id)))))) &&
+      ['fleet', 'timing', 'costs'].every(key => draft[key] && typeof draft[key] === 'object') &&
+      (typeOf(draft) === 'geographic' || (draft.grid && typeof draft.grid === 'object'));
+  }
+  function loadState(storage) {
+    const initial = { version: 2, active: 'grid', drafts: { grid: seed(), geographic: geographicSeed() } };
     try {
       const saved = JSON.parse(storage?.getItem(storageKey) || storage?.getItem(legacyStorageKey));
-      if (saved?.version === 1 && saved.draft && collections.every(key => Array.isArray(saved.draft[key]) &&
-          saved.draft[key].every(row => row && typeof row.id === 'string' &&
-            new RegExp('^' + ({ depots: 'P', vehicles: 'V', deliveries: 'D', chargers: 'C' }[key]) + '[1-9][0-9]{0,5}$').test(row.id) &&
-            (key === 'vehicles' || (Array.isArray(row.position) && row.position.length === 2)) &&
-            (key !== 'chargers' || (Array.isArray(row.slots) && row.slots.every(slot => slot && /^S[1-9][0-9]{0,5}$/.test(slot.id)))))) &&
-          ['grid', 'fleet', 'timing', 'costs'].every(key => saved.draft[key] && typeof saved.draft[key] === 'object')) {
-        return clone(saved.draft);
+      if (saved?.version === 2 && saved.drafts) {
+        for (const kind of ['grid', 'geographic']) if (readable(saved.drafts[kind]) && typeOf(saved.drafts[kind]) === kind) initial.drafts[kind] = clone(saved.drafts[kind]);
+        if (saved.active === 'geographic') initial.active = 'geographic';
+      } else if (saved?.version === 1 && readable(saved.draft)) {
+        initial.active = typeOf(saved.draft); initial.drafts[initial.active] = clone(saved.draft);
       }
     } catch { /* Storage can be disabled or contain an older draft. */ }
-    return seed();
+    return initial;
+  }
+  function load(storage) { const state = loadState(storage); return state.drafts[state.active]; }
+  function saveState(storage, state) {
+    try { storage?.setItem(storageKey, JSON.stringify(state)); return Boolean(storage); }
+    catch { return false; }
   }
   function save(storage, draft) {
-    try { storage?.setItem(storageKey, JSON.stringify({ version: 1, draft })); return Boolean(storage); }
-    catch { return false; }
+    const state = loadState(storage); state.active = typeOf(draft); state.drafts[state.active] = draft;
+    return saveState(storage, state);
   }
   function nextId(rows, prefix) {
     let id = 1;
@@ -188,6 +224,6 @@
     return stable(patched) === stable(scenario) ? { view_id: source.view_id, variables } : null;
   }
   const same = (a, b) => stable(a) === stable(b);
-  const api = { seed, normalize, validate, load, save, nextId, reuse, same, limits, storageKey, clone };
+  const api = { seed, geographicSeed, typeOf, roundPosition, normalize, validate, load, save, loadState, saveState, nextId, reuse, same, limits, storageKey, clone };
   if (typeof module !== 'undefined') module.exports = api; else root.ScenarioDraft = api;
 })(typeof globalThis === 'undefined' ? this : globalThis);

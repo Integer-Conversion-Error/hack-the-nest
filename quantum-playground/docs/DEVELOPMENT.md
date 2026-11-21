@@ -26,6 +26,25 @@ The Python suite uses a local stub backend to exercise the live wire contract an
 
 ## Scenario authoring
 
+Geographic scenarios branch to `geographic.py` without changing the legacy grid
+prompt. `road_network.py` owns provider configuration, request limits, persistent
+caches and immutable matrices; `road_replay.py` captures selected paths in saved
+handoffs. `web/geo-map.js` wraps vendored Leaflet for both editing and replay.
+Library notices are in `web/vendor/leaflet/LICENSE`.
+
+The geographic browser regression uses synthetic road/search responses and local
+test tiles, so it makes no provider or model requests:
+
+```sh
+PYTHON=python3 node tests/browser/geographic-maps.cjs
+```
+
+`tests/browser/geographic-evidence.cjs` displays the checked-in, independently
+verified OSRM road fixture and fetches only currently visible OSM tiles with
+normal browser caching. It labels the replay as a preview with no quantum run.
+Use `EVIDENCE_DIR` to save screenshots. Before/after captures and validation notes
+are in [the geographic evidence directory](evidence/geographic-maps/README.md).
+
 `scenario.py` owns the canonical structured schema, stable numeric bindings,
 source digest, deterministic prompt, and independent schedule verification.
 The editor's pure state helpers are in `web/scenario-draft.js`; its DOM and SVG

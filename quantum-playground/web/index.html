@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuantumLoop</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 </head>
 <body>
 <header>
@@ -184,6 +185,7 @@
             </div>
             <div class="visual-stage">
               <canvas id="fleet-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive fleet map" aria-describedby="map-help" hidden>Fleet map unavailable.</canvas>
+              <div id="geographic-map" class="geo-map replay-geo-map" aria-label="Interactive geographic fleet map" hidden></div>
               <p id="frame-status" role="status">Loading map…</p>
             </div>
           </section>
@@ -194,6 +196,7 @@
             </div>
             <div class="visual-stage">
               <canvas id="classical-map" width="840" height="540" tabindex="0" role="img" aria-label="Interactive classical fleet map" aria-describedby="map-help">Classical fleet map unavailable.</canvas>
+              <div id="classical-geographic-map" class="geo-map replay-geo-map" aria-label="Interactive geographic classical map" hidden></div>
             </div>
           </section>
         </div>
@@ -280,6 +283,8 @@
   </div>
 </dialog>
 <script src="fleet.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="geo-map.js"></script>
 <script src="live-updates.js"></script>
 <script src="pipeline-progress.js"></script>
 <script src="scenario-controls.js"></script>

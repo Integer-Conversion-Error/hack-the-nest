@@ -11,8 +11,10 @@ from uuid import uuid4
 from circuit_images import captured_circuit
 from ev_live import SolverFailed, SolverUnavailable
 from backend.workspace import WorkspaceError
-from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, is_number, is_text, normalize_controls, normalize_handoff, require
+from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, is_geographic_replay, is_number, is_text, normalize_controls, normalize_handoff, require
 from scenario import normalize_scenario, scenario_context, scenario_digest, scenario_prompt, validate_scenario_result
+from road_network import MapServiceError, prepare_routing, validate_routing
+from road_replay import capture_replay
 
 
 def load_scenario(workspace):
@@ -37,6 +39,18 @@ def planner_configured():
     return model_configured()
 
 
+def load_routing(workspace, source):
+    if source is None or source.get("schema_version") != 2:
+        return None
+    try:
+        routing = validate_routing(source, json.loads(workspace.resolve("routing.json").read_text(encoding="utf-8")))
+        require(routing["digest"] == workspace.meta.get("routing_digest"),
+                "The saved road network changed. Start a new geographic run.")
+        return routing
+    except (OSError, WorkspaceError, ValueError) as exc:
+        raise InvalidHandoff("The saved road network is unavailable or changed. Start a new geographic run.") from exc
+
+
 @contextmanager
 def planner_session(workspace=None):
     try:
@@ -52,7 +66,8 @@ def planner_session(workspace=None):
         raise SolverFailed(str(exc)) from None
 
 
-def project_result(artifact, output, prompt, identity, *, workspace=None, saved_image=False, source_scenario=None):
+def project_result(artifact, output, prompt, identity, *, workspace=None, saved_image=False, source_scenario=None,
+                   routing_artifact=None, allow_geometry_fetch=False, on_progress=None):
     """Translate a native solver result using the approved plan and the solver's own replay."""
     require(isinstance(output, dict) and output.get("status") == "ok", "The fleet solver did not succeed.")
     solution = output.get("solution")
@@ -107,14 +122,33 @@ def project_result(artifact, output, prompt, identity, *, workspace=None, saved_
             circuits = [*circuits, captured]
     source = load_scenario(workspace) if workspace is not None else source_scenario
     context = None
+    road_capture = None
     if source is not None:
         try:
             context = scenario_context(source, normalize_controls(artifact["controls"]), output.get("controls", {}))
-            validate_scenario_result(context["effective_scenario"], output)
+            routing = load_routing(workspace, source) if workspace is not None else routing_artifact
+            if source.get("schema_version") == 2:
+                routing = validate_routing(source, routing)
+                validate_scenario_result(context["effective_scenario"], output, routing=routing)
+                if on_progress is not None:
+                    on_progress("Capture selected road routes", status="running")
+                road_capture = capture_replay(output, routing, stored=artifact.get("geographic_replay"),
+                                              fetch=allow_geometry_fetch)
+                if on_progress is not None:
+                    on_progress("Capture selected road routes", status="completed")
+                simulation = road_capture["simulation"]
+                if classical_simulation is not None:
+                    classical_simulation = road_capture.get("classical_simulation")
+                context["routing_digest"] = routing["digest"]
+            else:
+                validate_scenario_result(context["effective_scenario"], output)
+        except MapServiceError as exc:
+            raise SolverUnavailable(str(exc)) from None
         except ValueError as exc:
             raise InvalidHandoff(str(exc)) from None
     return {
-        "schema_version": 2 if "depots" in simulation else 1,
+        "schema_version": 3 if is_geographic_replay(simulation) else 2 if "depots" in simulation else 1,
+        **({"geographic_replay": road_capture} if road_capture is not None else {}),
         **({"scenario_context": context} if context is not None else {}),
         **identity,
         "scene_type": "ev_fleet",
@@ -185,6 +219,18 @@ def pipeline_handoff(
                     metadata = workspace.meta
                     metadata["scenario_digest"] = scenario_digest(source)
                     workspace.resolve("meta.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+                    if source.get("schema_version") == 2:
+                        if on_progress is not None:
+                            on_progress("Prepare road distances and travel times", status="running")
+                        try:
+                            routing = prepare_routing(source)
+                        except MapServiceError as exc:
+                            raise SolverUnavailable(str(exc)) from None
+                        workspace.resolve("routing.json").write_text(json.dumps(routing, indent=2) + "\n", encoding="utf-8")
+                        metadata["routing_digest"] = routing["digest"]
+                        if on_progress is not None:
+                            on_progress("Prepare road distances and travel times", status="completed")
+                    workspace.resolve("meta.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
                 if on_progress is not None:
                     on_progress("Prepare the dispatch workspace", status="completed")
                 identity = {"run_id": str(uuid4()), "plan_id": workspace.id, "attempt_id": attempt_id}
@@ -199,7 +245,10 @@ def pipeline_handoff(
                     controls = normalize_controls(draft["controls"])
                     defaults = {control["id"]: control["default"] for control in controls}
                     expected = applied_values(controls, defaults, overrides)
-                    handoff = project_result(draft, output, prompt, identity, source_scenario=load_scenario(workspace))
+                    source = load_scenario(workspace)
+                    handoff = project_result(draft, output, prompt, identity, source_scenario=source,
+                                             routing_artifact=load_routing(workspace, source), allow_geometry_fetch=True,
+                                             on_progress=on_progress)
                     normalize_handoff(handoff, "live", prompt, expected_values=expected)
 
                 artifact = run_pipeline(
@@ -208,7 +257,13 @@ def pipeline_handoff(
                 )
             if artifact["decision"] != "GO":
                 raise UnverifiedResult("The pipeline did not approve the fleet plan.")
-            return project_result(artifact, artifact["results"], prompt, identity, workspace=workspace, saved_image=True)
+            handoff = project_result(artifact, artifact["results"], prompt, identity, workspace=workspace,
+                                     saved_image=True, allow_geometry_fetch=True)
+            if handoff.get("geographic_replay") is not None:
+                from backend.workspace import write_atomic
+                artifact["geographic_replay"] = handoff["geographic_replay"]
+                write_atomic(workspace.resolve(HANDOFF_JSON), (json.dumps(artifact, indent=2) + "\n").encode())
+            return handoff
 
         workspace = open_workspace(previous["plan_id"])
         load_scenario(workspace)
@@ -229,7 +284,7 @@ def pipeline_handoff(
                 raise TimeoutError("The fleet solver timed out while recalculating the requested settings.")
             if not outcome.passed:
                 raise UnverifiedResult("The fleet solver could not verify the requested settings.")
-            handoff = project_result(artifact, outcome.results, prompt, identity, workspace=attempt)
+            handoff = project_result(artifact, outcome.results, prompt, identity, workspace=attempt, allow_geometry_fetch=True)
             normalize_handoff(handoff, "live", prompt, previous, expected_values=values)
             with planner_session(workspace=workspace) as client:
                 review = evaluate_semantics(attempt, [outcome], client=client)

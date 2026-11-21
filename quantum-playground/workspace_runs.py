@@ -13,6 +13,7 @@ from backend.workspace import META_FILE, PROMPT_FILE, Workspace, WorkspaceError,
 HANDOFF_FILE = "handoff.json"
 ARTIFACTS = {
     "scenario": ("Scenario inputs", "scenario.json"),
+    "routing": ("Road network snapshot", "routing.json"),
     "problem": ("Problem statement", "PROBLEM.md", "problem.json"),
     "plan": ("Plan", "PLAN.md", "plan.json"),
     "build": ("Build report", "build.json"),
