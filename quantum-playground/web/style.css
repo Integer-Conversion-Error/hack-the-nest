@@ -824,6 +824,17 @@ input[type="range"] { accent-color: var(--accent); }
 .van-energy { grid-column: 1 / -1; color: var(--muted); font: 11px var(--mono); }
 .battery-track { grid-column: 1 / -1; height: 4px; background: #e2e8e4; border-radius: 2px; overflow: hidden; }
 .battery-fill { height: 100%; background: var(--van); }
+.van-road-total { grid-column: 1 / -1; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.road-itinerary { padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; }
+.road-itinerary table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.road-itinerary caption { padding-bottom: 6px; text-align: start; font-size: 14px; font-weight: 600; }
+.road-itinerary th, .road-itinerary td { padding: 6px 4px; text-align: end; }
+.road-itinerary th:first-child { text-align: start; }
+.road-itinerary thead th { color: var(--muted); }
+.road-itinerary td { white-space: nowrap; }
+.road-itinerary tbody tr, .road-itinerary tfoot tr { border-top: 1px solid var(--line); }
+.road-itinerary tfoot { font-weight: 600; }
+.road-itinerary .hint { margin: 6px 0 0; }
 .fleet-inspector {
   padding: 8px 10px;
   border-inline-start: 3px solid var(--accent);

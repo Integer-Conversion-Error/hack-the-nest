@@ -5,7 +5,8 @@
   const money = (value) =>
     new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 2 }).format(value);
   const EPS = 1e-8;
-  // Directed driving durations from tests/fixtures/geographic-road-replay.json.
+  const twoDecimals = new Intl.NumberFormat('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Directed road distances and driving durations from tests/fixtures/geographic-road-replay.json.
   // This saved OSRM snapshot is usable without contacting a routing provider.
   const SNAPSHOT = {
     created: '2026-11-20',
@@ -17,6 +18,15 @@
       [-79.379, 43.65],
       [-79.392, 43.65],
       [-79.398, 43.655],
+    ],
+    distances_m: [
+      [0, 1363.7, 911.9, 768.8, 597, 1027.5, 1645.5],
+      [1363.7, 0, 1519.6, 652.8, 1963.4, 684.5, 570.9],
+      [687.4, 1119.6, 0, 827.4, 767.9, 617.6, 1583.9],
+      [1060.1, 1055.2, 1205.7, 0, 1649.5, 1321.4, 1337],
+      [1002.7, 2225.5, 1095, 1771.5, 0, 1723.5, 2648.2],
+      [1096.7, 502, 884.7, 864.1, 1317.8, 0, 966.2],
+      [1631, 452.6, 1787, 920.1, 2230.7, 951.8, 0],
     ],
     durations_s: [
       [0, 197.1, 138, 104.7, 86.1, 123, 246.5],
@@ -49,8 +59,17 @@
         weight: [14, 18, 12][i],
         position: [...SNAPSHOT.positions[i + 4]],
       })),
-      durations: SNAPSHOT.durations_s.map((row) => [...row]),
+      ...snapshotMetrics(),
     };
+  }
+  function snapshotMetrics() {
+    return {
+      distances: SNAPSHOT.distances_m.map(row => [...row]),
+      durations: SNAPSHOT.durations_s.map(row => [...row]),
+    };
+  }
+  function driveMetrics(metres, seconds) {
+    return twoDecimals.format(metres / 1000) + ' km · ' + twoDecimals.format(seconds / 60) + ' min';
   }
   function positions(input) {
     return [...input.sites, ...input.demand].map((node) => node.position.map(number));
@@ -65,9 +84,8 @@
     const source = JSON.parse(JSON.stringify(input));
     const state = Object.fromEntries(['budget', 'maxSites', 'minutes', 'hourlyCost', 'sites', 'demand'].map(key => [key, source[key]]));
     state.requireFullCoverage = source.requireFullCoverage ?? false;
-    state.durations = signature(state) === JSON.stringify(SNAPSHOT.positions)
-      ? SNAPSHOT.durations_s.map(row => [...row]) : null;
-    return state;
+    return Object.assign(state, signature(state) === JSON.stringify(SNAPSHOT.positions)
+      ? snapshotMetrics() : { distances: null, durations: null });
   }
   function validPosition(position) {
     return (
@@ -90,6 +108,10 @@
       }
     }
     return true;
+  }
+  function validRoadMetrics(distances, durations, count) {
+    return validateMatrix(distances, count) && validateMatrix(durations, count) &&
+      distances.every((row, i) => row.every((metres, j) => (metres === null) === (durations[i][j] === null)));
   }
   function validate(input) {
     const errors = [],
@@ -140,14 +162,15 @@
       if (!Number.isInteger(weight) || weight < 0 || weight > 1000)
         errors.push(zone.id + ' demand must be 0–1,000 whole visits/day.');
     });
-    if (!validateMatrix(input.durations, input.sites.length + input.demand.length))
-      errors.push('A complete road-time matrix for the current locations is required. Recalculate road times.');
+    if (!validRoadMetrics(input.distances, input.durations, input.sites.length + input.demand.length))
+      errors.push('Recalculate road times to get matching driving distances and travel times for these locations.');
     return errors;
   }
   function evaluate(input, assignment) {
     const loads = input.sites.map(() => 0),
       opened = new Set();
     let covered = 0,
+      metres = 0,
       seconds = 0;
     for (let d = 0; d < input.demand.length; d++) {
       const s = assignment[d],
@@ -161,6 +184,8 @@
       loads[s] += weight;
       covered += weight;
       seconds += (out + back) * weight;
+      const zone = d + input.sites.length;
+      metres += (input.distances[s][zone] + input.distances[zone][s]) * weight;
     }
     const opening = [...opened].reduce((sum, i) => sum + number(input.sites[i].cost), 0);
     if (
@@ -175,6 +200,7 @@
       loads,
       covered,
       opening,
+      roadKm: metres / 1000,
       roadHours: seconds / 3600,
       cost: opening + (seconds / 3600) * number(input.hourlyCost),
     };
@@ -239,7 +265,7 @@
   function validateResponse(response, requested) {
     if (
       !response ||
-      !validateMatrix(response.durations_s, requested.length) ||
+      !validRoadMetrics(response.distances_m, response.durations_s, requested.length) ||
       !Array.isArray(response.positions) ||
       response.positions.length !== requested.length
     )
@@ -248,7 +274,10 @@
       if (!validPosition(point) || point.some((value, j) => Math.abs(number(value) - requested[i][j]) > 1e-7))
         throw new Error('The road response did not match the requested locations. Retry recalculation.');
     });
-    return response.durations_s.map((row) => [...row]);
+    return {
+      distances: response.distances_m.map(row => [...row]),
+      durations: response.durations_s.map(row => [...row]),
+    };
   }
 
   function mount(container, inputs) {
@@ -262,6 +291,8 @@
       map,
       tileLayer,
       layers,
+      pathRequest,
+      routingDigest,
       request,
       requestId = 0,
       disposed = false,
@@ -312,6 +343,8 @@
       if (request) request.abort();
       request = null;
       requestId++;
+      clearPath();
+      routingDigest = null;
       Object.assign(state, seed());
       matrixSignature = signature(state);
       sourceLabel = 'Saved OSRM road snapshot · ' + SNAPSHOT.created;
@@ -342,14 +375,26 @@
     recalc.id = elementId('facility-recalculate');
     const mapActions = el('div', undefined, 'facility-map-actions');
     mapActions.append(recalc, button('Fit locations', fitMap));
+    const tripControls = el('div', undefined, 'facility-trip-controls');
+    const tripLabel = el('label', undefined, 'problem-field');
+    const tripSelect = el('select');
+    tripSelect.setAttribute('aria-label', 'Road trip to display');
+    tripSelect.onchange = () => { clearPath(); updateTripSummary(); };
+    tripLabel.append(el('span', 'Road trip to display'), tripSelect);
+    const showTrip = button('Show road route', showRoadPath);
+    const tripSummary = el('strong', undefined, 'facility-trip-summary');
+    const tripStatus = el('p', undefined, 'facility-route-status');
+    tripStatus.setAttribute('role', 'status');
+    tripControls.append(tripLabel, showTrip, tripSummary, tripStatus);
     figure.append(
       mapNode,
       legend,
+      tripControls,
       mapActions,
       mapStatus,
       el(
         'figcaption',
-        'Drag a pin or edit coordinates below, then recalculate road times. Dashed links show assignments, not road paths. Coverage uses directed OSRM road times; return journeys are included in operating cost.',
+        'Drag a pin or edit its coordinates, then recalculate road times. Each served visit makes one outbound and one return trip. Driving estimates follow the road network and exclude live traffic.',
       ),
     );
     const editors = el('div', undefined, 'facility-editors');
@@ -365,7 +410,7 @@
         'A local classical search checks every eligible assignment, including leaving a zone unserved: at most 1,331 combinations for ten candidate hubs and three demand zones. The objective first maximizes daily visits covered, then minimizes opening plus roundtrip driving cost. A zone cannot be split between hubs. Locations snap to nearby driving roads; an assignment requires an outbound and a return route. Road times have no live traffic. Moving, adding or removing a pin invalidates the saved matrix until recalculation succeeds. The initial Toronto example embeds the repository’s actual OSRM snapshot, so its calculation works offline.',
       ),
     );
-    container.replaceChildren(status, metrics, figure, controls, editors, assignments, method);
+    container.replaceChildren(status, metrics, figure, assignments, controls, editors, method);
     function heading(table, labels) {
       const head = el('thead'),
         row = el('tr');
@@ -376,6 +421,13 @@
       }
       head.append(row);
       table.append(head);
+    }
+    function serviceCell(label, text) {
+      const cell = el('td');
+      const mobileLabel = el('span', label, 'facility-mobile-label');
+      mobileLabel.setAttribute('aria-hidden', 'true');
+      cell.append(mobileLabel, el('span', text));
+      return cell;
     }
     function renderControls() {
       fields.replaceChildren(
@@ -547,7 +599,7 @@
       const points = [...state.sites, ...state.demand]
         .filter((node) => validPosition(node.position))
         .map((node) => [number(node.position[1]), number(node.position[0])]);
-      if (points.length) map.fitBounds(points, { padding: [35, 35], maxZoom: 15 });
+      if (points.length) map.fitBounds(points, { padding: [35, 35], maxZoom: 15, animate: false });
     }
     function initMap() {
       if (!global.L) {
@@ -620,9 +672,8 @@
       }
     }
     function drawMap(result) {
-      if (!map) return;
+      if (!map) { tripControls.hidden = true; return; }
       syncMarkers();
-      layers.clearLayers();
       const opened = new Set(result?.opened || []),
         served = new Set();
       if (result)
@@ -644,19 +695,80 @@
           }),
         );
       });
-      if (result)
-        result.assignment.forEach((site, d) => {
-          if (site < 0 || number(state.demand[d].weight) === 0) return;
-          const a = state.sites[site].position,
-            b = state.demand[d].position;
-          global.L.polyline(
-            [
-              [number(a[1]), number(a[0])],
-              [number(b[1]), number(b[0])],
-            ],
-            { color: '#39775d', weight: 2, dashArray: '5 6', opacity: 0.7, interactive: false },
-          ).addTo(layers);
+      setTripOptions(result);
+    }
+    function clearPath() {
+      pathRequest?.abort();
+      pathRequest = null;
+      layers?.clearLayers();
+      tripStatus.textContent = '';
+      showTrip.disabled = false;
+    }
+    function setTripOptions(result) {
+      const options = [];
+      result?.assignment.forEach((site, d) => {
+        if (site < 0 || number(state.demand[d].weight) === 0) return;
+        const zone = d + state.sites.length;
+        const hubId = state.sites[site].id, zoneId = state.demand[d].id;
+        for (const [from, to, label] of [
+          [site, zone, hubId + ' → ' + zoneId + ' · Outbound'],
+          [zone, site, zoneId + ' → ' + hubId + ' · Return'],
+        ]) {
+          const option = el('option', label);
+          option.value = from + '-' + to;
+          options.push(option);
+        }
+      });
+      const previous = tripSelect.value;
+      tripSelect.replaceChildren(...options);
+      const preferred = options.find(option => option.value === previous) || options[0];
+      tripSelect.value = preferred?.value || '';
+      tripControls.hidden = !preferred;
+      if (!preferred || previous !== preferred.value) clearPath();
+      updateTripSummary();
+    }
+    function updateTripSummary() {
+      if (!tripSelect.value) { tripSummary.textContent = ''; return; }
+      const [from, to] = tripSelect.value.split('-').map(Number);
+      tripSummary.textContent = driveMetrics(state.distances[from][to], state.durations[from][to]) + ' estimated';
+    }
+    async function showRoadPath() {
+      if (!tripSelect.value || !map || request || matrixSignature !== signature(state)) return;
+      clearPath();
+      const [from, to] = tripSelect.value.split('-').map(Number);
+      const controller = new AbortController();
+      pathRequest = controller;
+      showTrip.disabled = true;
+      tripStatus.textContent = 'Loading the driving route…';
+      try {
+        const response = await global.fetch('/api/maps/road-path', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positions: positions(state), from_index: from, to_index: to,
+            ...(routingDigest ? {routing_digest: routingDigest} : {}) }),
+          signal: controller.signal,
         });
+        const payload = await response.json();
+        if (pathRequest !== controller) return;
+        if (!response.ok) throw new Error(payload.error || 'Road geometry is unavailable. Try again.');
+        if (payload.from_index !== from || payload.to_index !== to ||
+            (routingDigest && payload.routing_digest !== routingDigest) ||
+            !Number.isFinite(payload.distance_m) || !Number.isFinite(payload.duration_s) ||
+            Math.abs(payload.distance_m - state.distances[from][to]) > 1 ||
+            Math.abs(payload.duration_s - state.durations[from][to]) > 1 ||
+            !Array.isArray(payload.coordinates) || payload.coordinates.length < 2 ||
+            !payload.coordinates.every(point => validPosition(point) && point.every(Number.isFinite)))
+          throw new Error('The road path does not match the trip estimates. Recalculate road times and try again.');
+        const points = payload.coordinates.map(([lon, lat]) => [lat, lon]);
+        global.L.polyline(points, { color: '#1a5f88', weight: 5, opacity: 0.9,
+          className: 'facility-road-path', interactive: false }).addTo(layers);
+        map.fitBounds(points, {padding: [45, 45], maxZoom: 16, animate: false});
+        tripStatus.textContent = 'Driving route shown on map.';
+      } catch (error) {
+        if (pathRequest === controller) tripStatus.textContent = error.message || 'Could not load this road route.';
+      } finally {
+        if (pathRequest === controller) { pathRequest = null; showTrip.disabled = false; }
+      }
     }
     async function recalculate() {
       const nodes = [...state.sites, ...state.demand];
@@ -683,7 +795,8 @@
           throw new Error(payload.error || payload.message || 'Road service is unavailable. Try again.');
         const matrix = validateResponse(payload, requested);
         if (disposed || id !== requestId || requestedSignature !== signature(state)) return;
-        state.durations = matrix;
+        Object.assign(state, matrix);
+        routingDigest = payload.routing_digest;
         matrixSignature = requestedSignature;
         sourceLabel =
           'Refreshed OSRM road snapshot · ' +
@@ -752,43 +865,37 @@
         money(result.opening) + ' opening cost/day',
       );
       metric(
-        'Opening budget left',
-        money(number(state.budget) - result.opening),
-        'Budget applies to opening costs',
+        'Daily road travel',
+        result.roadKm.toFixed(2) + ' km',
+        (result.roadHours * 60).toFixed(1) + ' min estimated (' + result.roadHours.toFixed(2) + ' h)',
       );
       metric(
         'Driving + opening',
         money(result.cost) + '/day',
-        result.roadHours.toFixed(2) + ' roundtrip drive-hours/day',
+        money(number(state.budget) - result.opening) + ' opening budget left',
       );
       const table = el('table', undefined, 'problem-table');
-      heading(table, ['Demand zone', 'Visits/day', 'Assigned hub', 'Outbound drive', 'Why unserved']);
+      heading(table, ['Demand zone', 'Visits/day', 'Assigned hub', 'Outbound · road km & est. time', 'Return · road km & est. time', 'Why unserved']);
       const body = el('tbody');
       state.demand.forEach((zone, d) => {
         const s = result.assignment[d],
+          zoneIndex = d + state.sites.length,
           weight = number(zone.weight),
           row = el('tr'),
           th = el('th', zone.id + ' · ' + zone.name);
         th.scope = 'row';
         row.append(
           th,
-          el('td', String(weight)),
-          el('td', s >= 0 && weight > 0 ? state.sites[s].id : '—'),
-          el(
-            'td',
-            s >= 0 && weight > 0 ? (state.durations[s][d + state.sites.length] / 60).toFixed(2) + ' min' : '—',
-          ),
-          el(
-            'td',
-            s >= 0
-              ? '—'
-              : weight === 0
-                ? 'No demand'
-                : result.eligible[d].length === 0
-                  ? 'No eligible hub within road-time limit'
-                  : 'Budget, capacity or site-count tradeoff',
-          ),
+          serviceCell('Visits/day', String(weight)),
+          serviceCell('Assigned hub', s >= 0 ? state.sites[s].id : '—'),
+          serviceCell('Outbound', s >= 0 ? driveMetrics(state.distances[s][zoneIndex], state.durations[s][zoneIndex]) : '—'),
+          serviceCell('Return', s >= 0 ? driveMetrics(state.distances[zoneIndex][s], state.durations[zoneIndex][s]) : '—'),
         );
+        const reason = weight === 0 ? 'No demand' : result.eligible[d].length === 0
+          ? 'No eligible hub within road-time limit' : 'Budget, capacity or site-count tradeoff';
+        const reasonCell = serviceCell('Why unserved', s >= 0 ? '—' : reason);
+        if (s >= 0) reasonCell.className = 'facility-served-reason';
+        row.append(reasonCell);
         if (s < 0 && weight > 0) row.classList.add('facility-unserved-row');
         body.append(row);
       });
@@ -833,6 +940,7 @@
       requestId++;
       request?.abort();
       configRequest?.abort();
+      clearPath();
       if (map) {
         map.remove();
         map = null;

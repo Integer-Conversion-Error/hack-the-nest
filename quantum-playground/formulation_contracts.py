@@ -60,7 +60,7 @@ _CONTRACTS = {
             "(the default), maximize covered visits first, then minimize daily opening and road cost. true requires every positive-demand "
             "zone to be covered, otherwise the solver reports infeasible. Clarify hard full coverage versus best effort if the request is ambiguous. "
             "Never invent coordinates, travel durations, road matrices or route geometry. For named places without supplied coordinates, "
-            "ask for coordinates or clarification. The server obtains authoritative road times after import. Do not include durations, "
+            "ask for coordinates or clarification. The server obtains road distances and estimated driving times after import. Do not include distance or duration matrices, "
             "snapshots, routing URLs or server-derived fields. This editor has no facility construction timing, split demand, delivery time windows, or distance objective."
         ),
         "schema": _object({

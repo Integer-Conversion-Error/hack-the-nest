@@ -391,8 +391,8 @@ def prepare_routing(source):
     return _prepare_table(nodes, digest)
 
 
-def travel_times(positions):
-    """Return a directed driving-time matrix in the caller's pin order."""
+def _pin_table(positions):
+    """Prepare or reopen a driving snapshot bound to the ordered facility pins."""
     _require(isinstance(positions, list) and 2 <= len(positions) <= 24,
              "Provide between 2 and 24 map positions.", 400)
     nodes = []
@@ -401,9 +401,29 @@ def travel_times(positions):
         _require(abs(point[1]) <= 85, "Pin latitude must be between -85 and 85.", 400)
         nodes.append({"id": f"P{index}", "position": point})
     digest = hashlib.sha256(_canonical({"positions": positions})).hexdigest()
-    table = _prepare_table(nodes, digest)
-    return {"positions": positions, "durations_s": table["durations_s"],
-            "snapped_positions": [node["snapped_position"] for node in table["nodes"]]}
+    return _prepare_table(nodes, digest)
+
+
+def travel_times(positions):
+    """Return directed driving distances (metres) and durations (seconds) in pin order."""
+    table = _pin_table(positions)
+    return {"positions": positions, "distances_m": table["distances_m"], "durations_s": table["durations_s"],
+            "snapped_positions": [node["snapped_position"] for node in table["nodes"]], "routing_digest": table["digest"]}
+
+
+def road_path(positions, from_index, to_index, routing_digest=None):
+    """Resolve one directed road line with the same provider and metrics as the pin table."""
+    _require(isinstance(positions, list) and all(type(index) is int and 0 <= index < len(positions)
+                                               for index in (from_index, to_index)),
+             "Choose valid start and end pin indices.", 400)
+    _require(routing_digest is None or isinstance(routing_digest, str) and re.fullmatch(r"[0-9a-f]{64}", routing_digest),
+             "The routing snapshot ID is invalid.", 400)
+    table = _pin_table(positions)
+    _require(routing_digest is None or routing_digest == table["digest"],
+             "The routing snapshot changed. Recalculate road times to load the current routes.", 409)
+    coordinates = road_geometry(table, table["nodes"][from_index]["id"], table["nodes"][to_index]["id"])
+    return {"from_index": from_index, "to_index": to_index, "routing_digest": table["digest"], "coordinates": coordinates,
+            "distance_m": table["distances_m"][from_index][to_index], "duration_s": table["durations_s"][from_index][to_index]}
 
 
 def _prepare_table(nodes, digest):

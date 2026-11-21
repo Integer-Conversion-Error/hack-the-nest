@@ -57,9 +57,11 @@ class MapsHttpTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         self.url = f"http://127.0.0.1:{server.server_port}"
 
-    def get(self, path):
+    def request_json(self, path, payload=None, content_type="application/json"):
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = Request(self.url + path, data=body, headers={"Content-Type": content_type})
         try:
-            response = urlopen(self.url + path, timeout=3)
+            response = urlopen(request, timeout=3)
         except HTTPError as error:
             response = error
         with response:
@@ -69,10 +71,10 @@ class MapsHttpTests(unittest.TestCase):
 
     def test_map_configuration_is_public_safe_metadata_and_matches_boot_configuration(self):
         with patch("server.maps_config", return_value=MAP_SETTINGS):
-            status, settings = self.get("/api/maps/config")
+            status, settings = self.request_json("/api/maps/config")
             self.assertEqual(status, 200)
             self.assertEqual(settings, MAP_SETTINGS)
-            status, boot = self.get("/api/config")
+            status, boot = self.request_json("/api/config")
             self.assertEqual(status, 200)
             self.assertEqual(boot["maps"], settings)
             self.assertFalse(boot["backend_configured"])
@@ -85,10 +87,10 @@ class MapsHttpTests(unittest.TestCase):
             patch("server.maps_config", side_effect=MapServiceError("Tile provider URL is invalid.")),
             patch("server.native_pipeline_configured", return_value=True),
         ):
-            status, failure = self.get("/api/maps/config")
+            status, failure = self.request_json("/api/maps/config")
             self.assertEqual(status, 503)
             self.assertEqual(failure, {"error": "Tile provider URL is invalid."})
-            status, boot = self.get("/api/config")
+            status, boot = self.request_json("/api/config")
             self.assertEqual(status, 200)
             self.assertTrue(boot["pipeline_backend_configured"])
             self.assertIsNone(boot["maps"])
@@ -99,7 +101,7 @@ class MapsHttpTests(unittest.TestCase):
         with patch("server.search_places", return_value=places) as search:
             parameters = {"q": "City hall & deliveries?", "lon": "-79.38", "lat": "43.65",
                           "url": "http://127.0.0.1/private", "provider": "file:///secret"}
-            status, body = self.get("/api/maps/search?" + urlencode(parameters))
+            status, body = self.request_json("/api/maps/search?" + urlencode(parameters))
         self.assertEqual(status, 200)
         self.assertEqual(body, {"results": places})
         search.assert_called_once_with("City hall & deliveries?", lon=-79.38, lat=43.65)
@@ -107,13 +109,13 @@ class MapsHttpTests(unittest.TestCase):
 
     def test_bad_numeric_text_is_rejected_before_geocoder_and_failures_remain_actionable_json(self):
         with patch("server.search_places") as search:
-            status, body = self.get("/api/maps/search?q=Toronto&lon=not-a-number&lat=43")
+            status, body = self.request_json("/api/maps/search?q=Toronto&lon=not-a-number&lat=43")
         self.assertEqual(status, 400)
         self.assertIn("error", body)
         search.assert_not_called()
         for code in (400, 422, 429, 503):
             with self.subTest(code=code), patch("server.search_places", side_effect=MapServiceError("Keep the draft and try again.", code)):
-                status, body = self.get("/api/maps/search?q=Toronto")
+                status, body = self.request_json("/api/maps/search?q=Toronto")
                 self.assertEqual(status, code)
                 self.assertEqual(body, {"error": "Keep the draft and try again."})
 
@@ -122,9 +124,26 @@ class MapsHttpTests(unittest.TestCase):
             for query in ("", "?q=", "?q=" + "x" * 201, "?q=Toronto&lon=nan&lat=43",
                           "?q=Toronto&lon=1&lat=inf", "?q=Toronto&lon=1", "?q=Toronto&lat=43"):
                 with self.subTest(query=query):
-                    status, body = self.get("/api/maps/search" + query)
+                    status, body = self.request_json("/api/maps/search" + query)
                     self.assertIn(status, (400, 422))
                     self.assertIsInstance(body.get("error"), str)
+        self.network.assert_not_called()
+
+    def test_ordered_facility_road_paths_expose_only_validated_metrics_and_geometry(self):
+        pins = [[-79.38, 43.65], [-79.39, 43.65]]
+        payload = {"positions": pins, "from_index": 1, "to_index": 0, "routing_digest": "a" * 64}
+        verified = {"from_index": 1, "to_index": 0, "coordinates": [pins[1], [-79.385, 43.66], pins[0]],
+                    "distance_m": 207, "duration_s": 20.7, "routing_digest": payload["routing_digest"]}
+        with patch("server.road_path", return_value=verified) as route:
+            self.assertEqual(self.request_json("/api/maps/road-path", payload), (200, verified))
+            route.assert_called_once_with(pins, 1, 0, payload["routing_digest"])
+            for extra in ({"url": "https://example.test"}, {"routing": {}}, {"distances_m": [[0, 3], [4, 0]]}):
+                self.assertEqual(self.request_json("/api/maps/road-path", {**payload, **extra})[0], 400)
+            self.assertEqual(self.request_json("/api/maps/road-path", payload, "text/plain")[0], 415)
+            self.assertEqual(self.request_json("/api/maps/road-path", {**payload, "routing_digest": "x" * 17000})[0], 400)
+            self.assertEqual(route.call_count, 1)
+        with patch("server.road_path", side_effect=MapServiceError("The routing snapshot changed.", 409)):
+            self.assertEqual(self.request_json("/api/maps/road-path", payload), (409, {"error": "The routing snapshot changed."}))
         self.network.assert_not_called()
 
     def test_maps_endpoint_post_cannot_start_a_provider_request_or_change_configuration(self):

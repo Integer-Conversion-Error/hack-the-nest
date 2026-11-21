@@ -23,7 +23,8 @@ class FormulationContractTests(unittest.TestCase):
         for(const id of ids) result[id]=require('./quantum-playground/web/problems/'+id+'.js').seed();
         process.stdout.write(JSON.stringify(result));"""
         cls.seeds = json.loads(subprocess.check_output(["node", "-e", script, json.dumps(DOMAINS)], cwd=REPO, text=True))
-        cls.seeds["facility"].pop("durations")
+        for key in ("distances", "durations"):
+            cls.seeds["facility"].pop(key)
 
     def seed(self, domain):
         return copy.deepcopy(self.seeds[domain])
@@ -44,7 +45,11 @@ class FormulationContractTests(unittest.TestCase):
         script = """const inputs=JSON.parse(process.argv[1]), result={};
         for(const [id,input] of Object.entries(inputs)) {
           const api=require('./quantum-playground/web/problems/'+id+'.js');
-          if(id==='facility')input.durations=api.seed().durations;
+          if(id==='facility'){
+            const seed=api.seed();
+            input.durations=seed.durations;
+            input.distances=seed.distances;
+          }
           const solved=api.solve(input);result[id]=solved.status||String(solved.feasible);
         }process.stdout.write(JSON.stringify(result));"""
         result = json.loads(subprocess.check_output(["node", "-e", script, json.dumps(inputs)], cwd=REPO, text=True))
@@ -115,7 +120,7 @@ class FormulationContractTests(unittest.TestCase):
         self.assertFalse(normalize_draft("facility", source)["requireFullCoverage"])
         source["requireFullCoverage"] = True
         self.assertTrue(normalize_draft("facility", source)["requireFullCoverage"])
-        for key in ("durations", "snapshot", "routing", "distances", "base_url"):
+        for key in ("durations", "durations_s", "snapshot", "routing", "distances", "distances_m", "base_url"):
             bad = copy.deepcopy(source)
             bad[key] = []
             with self.assertRaisesRegex(ValueError, "unsupported field"):
