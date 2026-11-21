@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="../vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="problems.css">
+  <link rel="stylesheet" href="describe.css">
   <link rel="stylesheet" href="scheduling.css">
   <link rel="stylesheet" href="facility.css">
   <link rel="stylesheet" href="energy.css">
@@ -25,20 +26,53 @@
   <main class="problem-shell">
     <aside class="problem-picker" aria-label="Problem library">
       <h2>Problem library</h2>
+      <a class="describe-link" id="describe-link" href="#describe">Describe a problem</a>
+      <nav id="scenario-links" aria-label="Your scenarios" hidden><h3>Your scenarios</h3></nav>
       <nav id="problem-links" aria-label="Problem types"></nav>
       <div class="mobile-picker"><label for="problem-select">Problem type</label><select id="problem-select"></select></div>
     </aside>
     <section id="problem-content" tabindex="-1" aria-labelledby="problem-title">
       <div class="problem-heading">
-        <h1 id="problem-title">Optimization problems</h1>
+        <h1 id="problem-title" tabindex="-1">Optimization problems</h1>
         <p id="problem-objective"></p>
         <p class="solver-note">Computed locally with a classical solver</p>
       </div>
+      <section id="describe-panel" class="describe-panel" hidden aria-label="Scenario formulation">
+        <p id="expired-scenario" role="status" hidden>This scenario belonged to a previous page session. Describe it again or choose a problem from the library.</p>
+        <form id="description-form">
+          <label for="description">Your description</label>
+          <textarea id="description" required rows="5" placeholder="What do you need to decide? Include your options, limits, and what a good outcome looks like."></textarea>
+          <p class="hint">Drafting sends this description and your answers to the configured AI provider.</p>
+          <div class="describe-actions">
+            <button class="primary" type="submit" id="draft-button">Draft scenario</button>
+            <button type="button" class="text-button" id="edit-description" hidden>Edit description</button>
+            <button type="button" class="text-button" id="new-description" hidden>Start a new description</button>
+            <button type="button" class="text-button" id="example-description">Use an example</button>
+          </div>
+        </form>
+        <div id="clarification-history"></div>
+        <form id="clarification-form" hidden>
+          <h2>Clarification</h2>
+          <label id="clarification-question" for="clarification-answer"></label>
+          <textarea id="clarification-answer" rows="3" required></textarea>
+          <button type="submit" class="primary">Continue</button>
+        </form>
+        <div class="describe-actions">
+          <p id="formulation-status" role="status" aria-live="polite"></p>
+          <button class="text-button" id="cancel-formulation" type="button" hidden>Cancel</button>
+        </div>
+        <div id="draft-review" hidden aria-label="Review scenario">
+          <h2 id="review-heading" tabindex="-1">Review scenario</h2>
+          <div id="review-body"></div>
+          <button id="open-draft" class="primary" type="button">Use this scenario</button>
+        </div>
+      </section>
       <div id="problem-views"></div>
       <noscript>Enable JavaScript to edit scenarios and calculate results.</noscript>
     </section>
   </main>
   <script src="../vendor/leaflet/leaflet.js"></script>
+  <script src="describe.js"></script>
   <script src="library.js"></script>
 </body>
 </html>

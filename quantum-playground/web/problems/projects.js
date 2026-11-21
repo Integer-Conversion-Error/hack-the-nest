@@ -114,9 +114,12 @@
     };
   }
 
-  function mount(container) {
+  function mount(container, inputs) {
     const doc = container.ownerDocument,
-      state = seed();
+      state = inputs == null ? seed() : JSON.parse(JSON.stringify(inputs));
+    const namespace = container.dataset?.problem && container.dataset.problem !== 'projects' ? container.dataset.problem
+      : container.id?.startsWith('scenario-') ? container.id : '';
+    const elementId = value => namespace ? namespace + '-' + value : value;
     container.classList.add('projects-view');
     const el = (tag, text, cls) => {
       const node = doc.createElement(tag);
@@ -190,12 +193,12 @@
       renderEditors();
       update();
     });
-    add.id = 'projects-add';
+    add.id = elementId('projects-add');
     const details = el('details', undefined, 'projects-editor-details problem-controls'),
       detailsSummary = el('summary');
     details.append(detailsSummary, editors, add);
     const status = el('p', undefined, 'projects-status');
-    status.id = 'projects-status';
+    status.id = elementId('projects-status');
     status.setAttribute('role', 'status');
     const metrics = el('div', undefined, 'problem-metrics');
     const figure = el('section', undefined, 'problem-figure projects-results');

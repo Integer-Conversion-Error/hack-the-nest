@@ -10,3 +10,4 @@ __pycache__/
 !docs/evidence/geographic-maps/*.png
 !web/vendor/leaflet/images/*.png
 !docs/evidence/optimization-views/*.png
+!docs/evidence/describe-problem/*.png

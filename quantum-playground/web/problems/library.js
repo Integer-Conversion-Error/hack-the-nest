@@ -5,7 +5,7 @@
       id: 'facility',
       name: 'Facility placement',
       group: 'Location',
-      objective: 'Choose which sites to open to put the most demand within reach.',
+      objective: 'Choose which hubs to open and which demand zones each hub can serve.',
     },
     {
       id: 'workforce',
@@ -46,6 +46,8 @@
   ];
 
   window.OptimizationViews = Object.create(null);
+  const describe = {id: 'describe', name: 'Describe a problem', objective: 'Describe the decision in your own words. Review the proposed inputs and assumptions before opening the solver.'};
+  const scenarios = new Map();
   const scripts = new Map();
   const panels = new Map();
   const links = new Map();
@@ -56,6 +58,28 @@
   document.querySelector('.skip-link').addEventListener('click', (event) => {
     event.preventDefault();
     document.querySelector('#problem-content').focus();
+  });
+
+  select.add(new Option(describe.name, describe.id));
+  links.set(describe.id, document.querySelector('#describe-link'));
+  const formulation = window.Formulation.create({
+    domainName: id => problems.find(problem => problem.id === id)?.name,
+    accept(draft, description, clarifications) {
+      const domain = problems.find(problem => problem.id === draft.domain);
+      if (!domain) throw new Error('This domain is unavailable.');
+      const id = 'scenario-' + (scenarios.size + 1);
+      const scenario = { ...domain, id, domain: domain.id, inputs: draft.inputs, description, clarifications, assumptions: draft.assumptions };
+      scenarios.set(id, scenario);
+      const nav = document.querySelector('#scenario-links');
+      nav.hidden = false;
+      const link = document.createElement('a');
+      link.href = '#' + id;
+      link.textContent = domain.name + ' (' + scenarios.size + ')';
+      nav.append(link);
+      links.set(id, link);
+      select.add(new Option('Your ' + link.textContent, id));
+      location.hash = id;
+    }
   });
 
   for (const group of new Set(problems.map((problem) => problem.group))) {
@@ -73,25 +97,33 @@
   }
 
   function currentProblem() {
-    return problems.find((problem) => '#' + problem.id === location.hash) || problems[0];
+    const id = location.hash.slice(1);
+    if (/^scenario-\d+$/.test(id) && !scenarios.has(id)) {
+      history.replaceState(null, '', '#describe');
+      document.querySelector('#expired-scenario').hidden = false;
+      return describe;
+    }
+    if (id === describe.id) return describe;
+    return scenarios.get(id) || problems.find(problem => problem.id === id) || problems[0];
   }
 
   function load(problem) {
-    if (!scripts.has(problem.id)) {
+    const moduleId = problem.domain || problem.id;
+    if (!scripts.has(moduleId)) {
       const loaded = new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = problem.id + '.js';
+        script.src = moduleId + '.js';
         script.onload = resolve;
         script.onerror = () => {
-          scripts.delete(problem.id);
+          scripts.delete(moduleId);
           script.remove();
           reject(new Error('Could not load ' + problem.name));
         };
         document.head.append(script);
       });
-      scripts.set(problem.id, loaded);
+      scripts.set(moduleId, loaded);
     }
-    return scripts.get(problem.id);
+    return scripts.get(moduleId);
   }
 
   async function display() {
@@ -100,24 +132,52 @@
     document.title = problem.name + ' · QuantumLoop';
     document.querySelector('#problem-title').textContent = problem.name;
     document.querySelector('#problem-objective').textContent = problem.objective;
+    const describing = problem === describe;
+    document.querySelector('#describe-panel').hidden = !describing;
+    document.querySelector('.solver-note').hidden = describing;
+    if (describing) formulation.show();
     for (const [id, link] of links) {
       if (id === problem.id) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
     for (const [id, panel] of panels) panel.hidden = id !== problem.id;
+    if (describing) return;
     if (panels.has(problem.id)) {
       window.dispatchEvent(new Event('resize'));
       return;
     }
     const panel = document.createElement('div');
-    panel.className = 'domain-view';
+    if (!problem.domain) panel.className = 'domain-view';
     panel.dataset.problem = problem.id;
     panel.setAttribute('aria-busy', 'true');
     panels.set(problem.id, panel);
     container.append(panel);
     try {
       await load(problem);
-      window.OptimizationViews[problem.id].mount(panel);
+      const moduleId = problem.domain || problem.id;
+      let editor = panel;
+      if (problem.domain) {
+        editor = document.createElement('div');
+        editor.id = problem.id + '-editor';
+        editor.className = 'domain-view';
+        panel.append(editor);
+        const source = document.createElement('details');
+        source.className = 'scenario-source';
+        const label = document.createElement('summary');
+        label.textContent = 'Original scenario description';
+        source.append(label);
+        for (const line of [problem.description, ...problem.clarifications.map(pair => pair.question + ' — ' + pair.answer), ...problem.assumptions]) {
+          const paragraph = document.createElement('p');
+          paragraph.textContent = line;
+          source.append(paragraph);
+        }
+        panel.prepend(source);
+      }
+      window.OptimizationViews[moduleId].mount(editor, problem.inputs);
+      if (problem.domain && currentProblem() === problem) {
+        window.scrollTo(0, 0);
+        document.querySelector('#problem-title').focus({preventScroll: true});
+      }
     } catch (error) {
       panels.delete(problem.id);
       panel.remove();

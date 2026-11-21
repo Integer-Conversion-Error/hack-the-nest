@@ -2,6 +2,7 @@
   'use strict';
   const periods = ['09:00–11:00', '11:00–13:00', '14:00–16:00'];
   const teachers = ['Dr. Rao', 'Dr. Chen', 'Prof. Lee'];
+  const mounted = new WeakMap();
   function seed() {
     return {
       slotCount: 3,
@@ -222,8 +223,9 @@
     node.append(el('span', '', label), el('strong', '', value));
     return node;
   }
-  function mount(root) {
-    const state = seed(),
+  function mount(root, inputs) {
+    mounted.get(root)?.();
+    const state = inputs == null ? seed() : JSON.parse(JSON.stringify(inputs)),
       frame = el('div', 'scheduling-workbench');
     const output = el('section', 'problem-card schedule-output');
     output.setAttribute('aria-label', 'Optimized class timetable');
@@ -235,6 +237,8 @@
     output.append(el('h2', '', 'A timetable without clashes'), status, metrics, figure);
     const controls = el('section', 'problem-card schedule-inputs');
     controls.append(el('h2', '', 'Set rooms and classes'));
+    const reset = el('button', 'secondary', 'Reset example');
+    reset.type = 'button'; reset.onclick = () => mount(root); controls.append(reset);
     controls.append(
       el(
         'p',
@@ -246,7 +250,7 @@
     const periodLabel = el('label', 'problem-field', 'Available periods');
     const slotCount = select(
       [1, 2, 3].map((n) => ({ value: n, label: n + (n === 1 ? ' period' : ' periods') })),
-      3,
+      state.slotCount,
       'Number of available class periods',
     );
     periodLabel.append(slotCount);
@@ -262,7 +266,7 @@
           { value: 'true', label: 'Open' },
           { value: 'false', label: 'Closed' },
         ],
-        'true',
+        String(room.open),
         room.name + ' availability',
       );
       openLabel.append(open);
@@ -290,12 +294,12 @@
       studentCell.append(students);
       row.append(studentCell);
       const teacher = select(
-        teachers.map((value) => ({ value, label: value })),
+        [...new Set([...teachers, ...state.courses.map(course => course.teacher)])].map((value) => ({ value, label: value })),
         course.teacher,
         course.name + ' teacher',
       );
       const cohort = select(
-        ['Year 1', 'Year 2'].map((value) => ({ value, label: value })),
+        [...new Set(['Year 1', 'Year 2', ...state.courses.map(course => course.cohort)])].map((value) => ({ value, label: value })),
         course.cohort,
         course.name + ' cohort',
       );
@@ -466,10 +470,11 @@
     frame.addEventListener('input', update);
     frame.addEventListener('change', update);
     update();
-    return () => {
+    mounted.set(root, () => {
       frame.removeEventListener('input', update);
       frame.removeEventListener('change', update);
-    };
+    });
+    return () => { mounted.get(root)?.(); mounted.delete(root); };
   }
   host.OptimizationViews = host.OptimizationViews || {};
   host.OptimizationViews.timetable = { mount };
