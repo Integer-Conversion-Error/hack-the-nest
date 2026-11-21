@@ -156,10 +156,13 @@
     return { status: 'ok', ...best, evaluated, feasible, maximum_score: pairCount * 10 };
   }
 
-  function mount(container) {
+  function mount(container, inputs) {
     const doc = container.ownerDocument,
-      state = seed();
-    let selectedPair = [state.people[4].id, state.people[5].id];
+      state = inputs == null ? seed() : JSON.parse(JSON.stringify(inputs));
+    const namespace = container.dataset?.problem && container.dataset.problem !== 'teams' ? container.dataset.problem
+      : container.id?.startsWith('scenario-') ? container.id : '';
+    const elementId = value => namespace ? namespace + '-' + value : value;
+    let selectedPair = [state.people.at(-2).id, state.people.at(-1).id];
     container.classList.add('teams-view');
     const el = (tag, text, cls) => {
       const node = doc.createElement(tag);
@@ -202,10 +205,10 @@
       renderPairEditor();
       update();
     });
-    add.id = 'teams-add';
+    add.id = elementId('teams-add');
     const pairEditor = el('div', undefined, 'teams-pair-editor');
     const status = el('p', undefined, 'teams-status');
-    status.id = 'teams-status';
+    status.id = elementId('teams-status');
     status.setAttribute('role', 'status');
     const metrics = el('div', undefined, 'problem-metrics');
     const figure = el('section', undefined, 'problem-figure teams-results');
@@ -346,7 +349,7 @@
       rating.step = '1';
       rating.value = state.compatibility[key(...selectedPair)] ?? 5;
       rating.disabled = same;
-      rating.id = 'teams-pair-rating';
+      rating.id = elementId('teams-pair-rating');
       rating.setAttribute('aria-label', 'Pair compatibility rating');
       const output = el('output', String(rating.value) + ' / 10');
       output.htmlFor = rating.id;

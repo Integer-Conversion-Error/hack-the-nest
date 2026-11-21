@@ -19,9 +19,23 @@ timetabling, energy scheduling, project selection, or team formation. Each view
 includes editable example inputs and computes a bounded classical solution in
 the browser. Switching views keeps edits for the current page session.
 
-The facility example starts with recorded Toronto road travel times. After moving
-pins, recalculate travel times to request a fresh directed matrix from the
-configured routing service.
+Choose **Describe a problem** in the dashboard or the problem library to draft
+inputs for any of these seven editors. Describe the decision, available options,
+limits, and objective. The drafting service can ask a follow-up when a choice
+changes the problem. Review the proposed inputs and assumptions, then select
+**Use this scenario** to open an editable copy. Your scenarios and manual edits
+are kept separately until you reload the page.
+
+Drafting sends your text to the server's configured Gemini or OpenRouter
+interpretation model. The server validates the inputs for the chosen editor.
+The browser runs the classical solver and recalculates on edits. You can open a
+manual editor without configuring an AI provider. [Model provider setup](../backend/MODEL_PROVIDERS.md)
+
+In facility placement, **Require full demand coverage** makes every demand
+zone mandatory. If full coverage is infeasible, the editor shows how many visits
+the best partial plan can serve. The Toronto example includes recorded road
+times. For custom locations, select **Recalculate road times** to retrieve
+a directed matrix from the configured routing service.
 
 ## Build a situation on the map
 

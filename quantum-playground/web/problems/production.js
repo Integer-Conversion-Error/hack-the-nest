@@ -4,6 +4,7 @@
     { id: 'M1', name: 'Cutting' },
     { id: 'M2', name: 'Assembly' },
   ];
+  const mounted = new WeakMap();
   function seed() {
     return {
       horizon: 12,
@@ -150,16 +151,19 @@
     node.append(el('span', '', label), el('strong', '', value));
     return node;
   }
-  function mount(root) {
-    const state = seed();
+  function mount(root, inputs) {
+    mounted.get(root)?.();
+    const state = inputs == null ? seed() : JSON.parse(JSON.stringify(inputs));
     const frame = el('div', 'scheduling-workbench');
     const controls = el('section', 'problem-card schedule-inputs');
     controls.append(el('h2', '', 'Set the production plan'));
+    const reset = el('button', 'secondary', 'Reset example');
+    reset.type = 'button'; reset.onclick = () => mount(root); controls.append(reset);
     controls.append(
       el(
         'p',
         'schedule-note',
-        'Each job follows operation 1, then operation 2. A machine can process one operation at a time; operations run without interruption.',
+        'Each job follows its operations in the listed order. A machine can process one operation at a time; operations run without interruption.',
       ),
     );
     const fields = el('div', 'problem-controls schedule-fields');
@@ -204,6 +208,7 @@
         row.append(machineCell, durationCell);
         return { machine, duration };
       });
+      for (let index = job.operations.length; index < 2; index++) row.append(el('td', '', '—'), el('td', '', '—'));
       tbody.append(row);
       return { release, operations };
     });
@@ -383,10 +388,11 @@
     frame.addEventListener('input', update);
     frame.addEventListener('change', update);
     update();
-    return () => {
+    mounted.set(root, () => {
       frame.removeEventListener('input', update);
       frame.removeEventListener('change', update);
-    };
+    });
+    return () => { mounted.get(root)?.(); mounted.delete(root); };
   }
   host.OptimizationViews = host.OptimizationViews || {};
   host.OptimizationViews.production = { mount };

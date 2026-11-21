@@ -34,6 +34,7 @@
       maxSites: 2,
       minutes: 3,
       hourlyCost: 24,
+      requireFullCoverage: false,
       sites: ['Central', 'West', 'South', 'North'].map((name, i) => ({
         id: 'H' + (i + 1),
         name,
@@ -56,6 +57,17 @@
   }
   function signature(input) {
     return JSON.stringify(positions(input));
+  }
+  function prepareInputs(input) {
+    if (input == null) return seed();
+    // Only authored fields cross this boundary. Provider matrices and routing
+    // metadata must come from a matching saved snapshot or the road endpoint.
+    const source = JSON.parse(JSON.stringify(input));
+    const state = Object.fromEntries(['budget', 'maxSites', 'minutes', 'hourlyCost', 'sites', 'demand'].map(key => [key, source[key]]));
+    state.requireFullCoverage = source.requireFullCoverage ?? false;
+    state.durations = signature(state) === JSON.stringify(SNAPSHOT.positions)
+      ? SNAPSHOT.durations_s.map(row => [...row]) : null;
+    return state;
   }
   function validPosition(position) {
     return (
@@ -91,6 +103,8 @@
     limit('budget', 0, 10000);
     limit('minutes', 0.1, 120);
     limit('hourlyCost', 0, 200);
+    if (input?.requireFullCoverage !== undefined && typeof input.requireFullCoverage !== 'boolean')
+      errors.push('Full coverage must be selected or cleared.');
     if (
       !Array.isArray(input?.sites) ||
       input.sites.length < 1 ||
@@ -207,7 +221,7 @@
             (a, b) => input.durations[a][d + input.sites.length] - input.durations[b][d + input.sites.length],
           )[0] ?? -1,
     );
-    return {
+    const result = {
       status: 'ok',
       ...best,
       totalDemand: input.demand.reduce((sum, zone) => sum + number(zone.weight), 0),
@@ -215,6 +229,12 @@
       baseline: evaluate(input, nearest),
       eligible: choices.map((row) => row.filter((i) => i >= 0)),
     };
+    if (input.requireFullCoverage && result.covered < result.totalDemand) return {
+      ...result, status: 'infeasible',
+      message: 'Full coverage is infeasible under these limits. Best achievable coverage is ' + result.covered +
+        ' of ' + result.totalDemand + ' visits/day. Increase the budget, capacities, hub limit or drive-time limit.',
+    };
+    return result;
   }
   function validateResponse(response, requested) {
     if (
@@ -231,11 +251,14 @@
     return response.durations_s.map((row) => [...row]);
   }
 
-  function mount(container) {
+  function mount(container, inputs) {
     const doc = container.ownerDocument,
-      state = seed();
-    let matrixSignature = signature(state),
-      sourceLabel = 'Saved OSRM road snapshot · ' + SNAPSHOT.created,
+      state = prepareInputs(inputs);
+    const namespace = container.dataset?.problem && container.dataset.problem !== 'facility' ? container.dataset.problem
+      : container.id?.startsWith('scenario-') ? container.id : '';
+    const elementId = value => namespace ? namespace + '-' + value : value;
+    let matrixSignature = state.durations ? signature(state) : null,
+      sourceLabel = state.durations ? 'Saved OSRM road snapshot · ' + SNAPSHOT.created : 'Road times have not been calculated for these locations.',
       map,
       tileLayer,
       layers,
@@ -304,7 +327,7 @@
     const figure = el('figure', undefined, 'problem-figure');
     figure.append(el('h2', 'Candidate hubs and demand'));
     const mapNode = el('div', undefined, 'facility-map');
-    mapNode.setAttribute('aria-label', 'Toronto candidate hubs and demand locations');
+    mapNode.setAttribute('aria-label', 'Candidate hubs and demand locations');
     const mapStatus = el('p', undefined, 'hint');
     mapStatus.setAttribute('role', 'status');
     const legend = el('div', undefined, 'facility-legend');
@@ -316,7 +339,7 @@
     ])
       legend.append(el('span', text, cls));
     const recalc = button('Recalculate road times', recalculate);
-    recalc.id = 'facility-recalculate';
+    recalc.id = elementId('facility-recalculate');
     const mapActions = el('div', undefined, 'facility-map-actions');
     mapActions.append(recalc, button('Fit locations', fitMap));
     figure.append(
@@ -331,7 +354,7 @@
     );
     const editors = el('div', undefined, 'facility-editors');
     const assignments = el('section', undefined, 'problem-card');
-    assignments.append(el('h2', 'Service plan'));
+    const assignmentHeading = el('h2', 'Service plan'); assignments.append(assignmentHeading);
     const assignmentContent = el('div', undefined, 'facility-table-wrap');
     assignments.append(assignmentContent);
     const method = el('details', undefined, 'problem-card');
@@ -384,6 +407,13 @@
           { max: 200, step: 1 },
         ),
       );
+      const fullCoverageLabel = el('label', undefined, 'facility-availability');
+      const fullCoverage = el('input'); fullCoverage.type = 'checkbox';
+      fullCoverage.checked = Boolean(state.requireFullCoverage);
+      fullCoverage.setAttribute('aria-label', 'Require full demand coverage');
+      fullCoverage.onchange = () => { state.requireFullCoverage = fullCoverage.checked; update(); };
+      fullCoverageLabel.append(fullCoverage, el('span', 'Require every demand zone to be served'));
+      fields.append(fullCoverageLabel);
     }
     function topologyChanged() {
       if (request) {
@@ -684,21 +714,24 @@
       if (stale || pending) {
         status.textContent = pending
           ? 'Road times are being recalculated. Coverage results will appear when the matching matrix is ready.'
-          : 'Locations changed. Recalculate road times to solve this scenario.';
+          : matrixSignature === null ? 'Recalculate road times to solve these locations.' : 'Locations changed. Recalculate road times to solve this scenario.';
         mapStatus.textContent = stale ? 'Road matrix is out of date. Previous results are hidden.' : sourceLabel;
         drawMap(null);
         return;
       }
       const result = solve(state);
-      if (result.status !== 'ok') {
+      if (result.status !== 'ok' && result.status !== 'infeasible') {
         status.classList.add('request-error');
         status.textContent = result.errors.join(' ');
         mapStatus.textContent = sourceLabel;
         drawMap(null);
         return;
       }
+      const diagnostic = result.status === 'infeasible';
+      assignmentHeading.textContent = diagnostic ? 'Best achievable partial plan · full coverage infeasible' : 'Service plan';
       const percent = result.totalDemand === 0 ? 100 : (result.covered / result.totalDemand) * 100;
-      status.textContent =
+      if (diagnostic) status.classList.add('request-error');
+      status.textContent = diagnostic ? result.message :
         'Exact classical search · ' +
         result.evaluated +
         ' assignments checked · ' +
@@ -707,9 +740,9 @@
           : result.covered < result.totalDemand
             ? result.totalDemand - result.covered + ' visits/day remain unserved under these limits.'
             : 'All requested visits are covered.');
-      mapStatus.textContent = sourceLabel + ' · Driving profile, without live traffic.';
+      mapStatus.textContent = sourceLabel + (diagnostic ? ' · Diagnostic partial plan; the full-coverage requirement is not satisfied.' : ' · Driving profile, without live traffic.');
       metric(
-        'Daily visits covered',
+        diagnostic ? 'Best achievable visits covered' : 'Daily visits covered',
         result.covered + ' / ' + result.totalDemand,
         percent.toFixed(0) + '% coverage',
       );
@@ -811,5 +844,5 @@
   global.OptimizationViews ||= {};
   global.OptimizationViews.facility = { mount };
   if (typeof module !== 'undefined')
-    module.exports = { seed, validate, validateMatrix, validateResponse, solve, evaluate, SNAPSHOT };
+    module.exports = { seed, prepareInputs, validate, validateMatrix, validateResponse, solve, evaluate, SNAPSHOT };
 })(typeof window === 'undefined' ? globalThis : window);

@@ -5,6 +5,7 @@
     { id: 'day', label: 'Day', time: '10:00–18:00', start: 10, end: 18 },
     { id: 'late', label: 'Late', time: '14:00–22:00', start: 14, end: 22 },
   ];
+  const mounted = new WeakMap();
   function seed() {
     return {
       coverage: [2, 2, 1],
@@ -122,11 +123,14 @@
     node.append(el('span', '', label), el('strong', '', value));
     return node;
   }
-  function mount(root) {
-    const state = seed();
+  function mount(root, inputs) {
+    mounted.get(root)?.();
+    const state = inputs == null ? seed() : JSON.parse(JSON.stringify(inputs));
     const frame = el('div', 'scheduling-workbench');
     const controls = el('section', 'problem-card schedule-inputs');
     controls.append(el('h2', '', 'Staff the day'));
+    const reset = el('button', 'secondary', 'Reset example');
+    reset.type = 'button'; reset.onclick = () => mount(root); controls.append(reset);
     controls.append(
       el(
         'p',
@@ -150,6 +154,7 @@
       option.value = value;
       hours.append(option);
     }
+    hours.value = String(state.maxHours);
     hoursLabel.append(hours);
     fields.append(hoursLabel);
     controls.append(fields);
@@ -305,10 +310,11 @@
     frame.addEventListener('input', update);
     frame.addEventListener('change', update);
     update();
-    return () => {
+    mounted.set(root, () => {
       frame.removeEventListener('input', update);
       frame.removeEventListener('change', update);
-    };
+    });
+    return () => { mounted.get(root)?.(); mounted.delete(root); };
   }
   host.OptimizationViews = host.OptimizationViews || {};
   host.OptimizationViews.workforce = { mount };

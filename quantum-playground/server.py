@@ -21,6 +21,7 @@ from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, is_g
 from pipeline_live import pipeline_handoff, planner_configured
 from scenario import normalize_scenario, scenario_prompt
 from road_network import MapServiceError, maps_config, search_places, travel_times
+from formulation import FormulationError, MAX_REQUEST_BYTES as MAX_FORMULATION_BYTES, formulate_problem, formulation_configured
 from workspace_runs import (
     SavedResultUnavailable, SavedRunNotFound, SavedRunUnavailable, list_saved_runs, open_saved_run,
     saved_artifact, saved_run,
@@ -524,6 +525,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "scenario_backend_configured": pipeline,
                 "local_backend_configured": local,
                 "saved_run_recalculation_configured": planner_configured(),
+                "formulation_configured": formulation_configured(),
                 "maps": map_settings,
                 **({"maps_error": map_error} if map_error else {}),
             })
@@ -619,10 +621,11 @@ class Handler(SimpleHTTPRequestHandler):
                 workspace_id = workspace_segments[0]
             else:
                 workspace_id = None
-            if self.path in ("/api/pipeline-runs", "/api/maps/travel-times") and self.headers.get_content_type() != "application/json":
+            if self.path in ("/api/pipeline-runs", "/api/maps/travel-times", "/api/problems/formulate") and self.headers.get_content_type() != "application/json":
                 raise RequestError(415, "Send the problem as application/json.")
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 5_000_000:
+            maximum_size = MAX_FORMULATION_BYTES if self.path == "/api/problems/formulate" else 5_000_000
+            if not 0 < size <= maximum_size:
                 raise ValueError("Invalid request size.")
             raw = self.rfile.read(size)
             if self.path == "/api/frame":
@@ -636,6 +639,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("Expected a JSON object.")
             if self.path == "/api/run":
                 result = run_plan(data)
+            elif self.path == "/api/problems/formulate":
+                result = formulate_problem(data)
             elif self.path == "/api/maps/travel-times":
                 try:
                     result = travel_times(data.get("positions"))
@@ -659,6 +664,8 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 return self.send_json(404, {"error": "Unknown endpoint."})
         except RequestError as exc:
+            return self.send_json(exc.status, {"error": str(exc)})
+        except FormulationError as exc:
             return self.send_json(exc.status, {"error": str(exc)})
         except SolverUnavailable as exc:
             return self.send_json(503, {"error": str(exc)})

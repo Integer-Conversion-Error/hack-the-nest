@@ -170,9 +170,9 @@
     };
   }
 
-  function mount(container) {
+  function mount(container, inputs) {
     const doc = container.ownerDocument,
-      state = seed(),
+      state = inputs == null ? seed() : JSON.parse(JSON.stringify(inputs)),
       ns = 'http://www.w3.org/2000/svg';
     container.classList.add('energy-view', 'domain-view');
     const el = (tag, text, cls) => {
@@ -232,11 +232,11 @@
     status.setAttribute('role', 'status');
     const metrics = el('div', undefined, 'problem-metrics energy-metrics');
     const figure = el('figure', undefined, 'problem-figure');
-    figure.append(el('h2', 'Daily power balance'));
+    figure.append(el('h2', 'Power balance'));
     const chart = el('div', undefined, 'energy-chart'),
       caption = el(
         'figcaption',
-        'Time labels mark the start of each three-hour interval. Bars show solar, grid imports and battery flow; the demand line uses the same kWh scale. Positive battery flow serves demand; negative flow charges storage.',
+        'Each interval is three hours. Short labels or interval numbers follow the table order. Bars show solar, grid imports and battery flow; the demand line uses the same kWh scale. Positive battery flow serves demand; negative flow charges storage.',
       );
     figure.append(chart, caption);
     const detail = el('section', undefined, 'problem-card');
@@ -388,7 +388,7 @@
           svgEl(
             'text',
             { x: center, y: H - 16, 'text-anchor': 'middle' },
-            compact ? state.intervals[i].label.slice(0, 2) : state.intervals[i].label,
+            compact || state.intervals[i].label.length > 10 ? String(i + 1) : state.intervals[i].label,
           ),
         );
       });
@@ -444,7 +444,7 @@
           svgEl(
             'text',
             { x, y: 140, 'text-anchor': 'middle' },
-            String(i * 3).padStart(2, '0') + (compact ? '' : ':00'),
+            i === state.intervals.length ? 'End' : compact || state.intervals[i].label.length > 10 ? String(i + 1) : state.intervals[i].label,
           ),
           svgEl('text', { x, y: sy(v) - 7, 'text-anchor': 'middle' }, v),
         );
@@ -467,7 +467,7 @@
         'Exact classical dynamic program · ' +
         result.evaluated.toLocaleString() +
         ' state transitions checked · 1 kWh storage steps.';
-      metric('Daily energy cost', money(result.cost), 'Includes exports and cycling');
+      metric('Energy cost', money(result.cost), 'Includes exports and cycling');
       metric(
         'Without storage',
         result.baseline.feasible ? money(result.baseline.cost) : 'Grid limit exceeded',

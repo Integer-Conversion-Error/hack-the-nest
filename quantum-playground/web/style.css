@@ -954,3 +954,5 @@ footer { display: flex; flex-wrap: wrap; gap: 4px 8px; }
   .cost-comparison { flex-basis: 100%; }
   .mode-control label { display: none; }
 }
+
+.problem-entry-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; }
