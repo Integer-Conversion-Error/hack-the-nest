@@ -102,6 +102,21 @@ class RoadNetworkTests(unittest.TestCase):
         roads._LAST_REQUEST.update(routing=float("-inf"), geocoding=float("-inf"))
         self.source = geo_seed()
 
+    def test_facility_pin_order_driving_direction_and_cache(self):
+        pins = [[-79.38, 43.65], [-79.39, 43.65], [-79.40, 43.65]]
+        self.state.unreachable = True
+        result = roads.travel_times(pins)
+        self.assertEqual(pins, result["positions"])
+        self.assertEqual(pins, result["snapped_positions"])
+        self.assertIsNone(result["durations_s"][0][1])
+        self.assertGreater(result["durations_s"][1][0], 0)
+        self.assertEqual(roads.travel_times(pins), result)
+        self.assertEqual(len(self.state.calls), 1)
+        for invalid in ([], pins * 9, [[0, 86], pins[1]], [False, pins[1]]):
+            with self.assertRaises(roads.MapServiceError):
+                roads.travel_times(invalid)
+        self.assertEqual(len(self.state.calls), 1)
+
     def test_one_directed_table_binds_canonical_nodes_and_source(self):
         self.source["depots"].reverse()
         artifact = roads.prepare_routing(self.source)

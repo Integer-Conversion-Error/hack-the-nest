@@ -60,6 +60,9 @@ header {
   gap: 12px;
 }
 
+.problem-nav-link { color: var(--accent); padding: 6px; font-size: 13px; font-weight: 600; text-decoration: none; }
+.problem-nav-link:hover { text-decoration: underline; }
+
 .brand {
   color: var(--text);
   font-size: 16px;

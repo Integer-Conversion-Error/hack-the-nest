@@ -1,0 +1,148 @@
+.energy-view .problem-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.energy-view input {
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: white;
+  color: var(--text);
+  font: inherit;
+}
+.energy-view input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.energy-view .hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.energy-table-wrap {
+  overflow-x: auto;
+}
+.energy-inputs {
+  min-width: 350px;
+}
+.energy-inputs input {
+  max-width: 130px;
+}
+.energy-status {
+  font-size: 13px;
+  color: var(--accent);
+  min-height: 20px;
+}
+.energy-status.request-error {
+  color: var(--danger);
+}
+.energy-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.energy-metrics .problem-card {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 15px;
+}
+.energy-metrics span,
+.energy-metrics small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.energy-metrics strong {
+  font-size: clamp(18px, 2.4vw, 27px);
+  color: var(--accent);
+}
+.energy-chart svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+.energy-chart svg text {
+  fill: var(--muted);
+  font: 11px var(--mono);
+}
+.energy-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.energy-axis {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.energy-solar {
+  fill: #c29330;
+}
+.energy-import {
+  fill: #4c76a2;
+}
+.energy-battery {
+  fill: #3a7b60;
+}
+.energy-demand {
+  fill: none;
+  stroke: #293e46;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+.energy-soc {
+  fill: none;
+  stroke: #3a7b60;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+.energy-soc-dot {
+  fill: #3a7b60;
+}
+.energy-reserve {
+  stroke: #9b6d2f;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+.energy-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0 0 16px 6%;
+  font-size: 12px;
+  color: var(--muted);
+}
+.energy-key::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 8px;
+  margin-right: 6px;
+  background: #c29330;
+}
+.energy-key.import::before {
+  background: #4c76a2;
+}
+.energy-key.battery::before {
+  background: #3a7b60;
+}
+.energy-key.demand::before {
+  height: 3px;
+  background: #293e46;
+  vertical-align: middle;
+}
+.energy-view summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.energy-view details p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+@media (max-width: 650px) {
+  .energy-view .problem-controls,
+  .energy-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

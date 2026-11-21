@@ -9,3 +9,4 @@ __pycache__/
 !docs/evidence/scenario-builder/*.png
 !docs/evidence/geographic-maps/*.png
 !web/vendor/leaflet/images/*.png
+!docs/evidence/optimization-views/*.png
