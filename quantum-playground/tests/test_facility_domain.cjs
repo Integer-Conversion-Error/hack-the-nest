@@ -5,9 +5,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 const F = require('../web/problems/facility.js');
 
-test('facility seed uses actual recorded Toronto positions and directed OSRM times', () => {
+test('facility seed uses recorded Toronto positions, directed OSRM distances and travel times', () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/geographic-road-replay.json')));
   assert.deepEqual(F.SNAPSHOT.durations_s, fixture.routing.durations_s);
+  assert.deepEqual(F.SNAPSHOT.distances_m, fixture.routing.distances_m);
   assert.deepEqual(
     F.SNAPSHOT.positions,
     fixture.routing.nodes.map((node) => node.position),
@@ -16,6 +17,11 @@ test('facility seed uses actual recorded Toronto positions and directed OSRM tim
   assert.equal(result.status, 'ok');
   assert.equal(result.covered, 44);
   assert.equal(result.opening, 100);
+  // 14 South–East, 18 West–South-west and 12 West–North-west round trips.
+  const km = (14 * (767.9 + 1095) + 18 * (684.5 + 502) + 12 * (570.9 + 452.6)) / 1000;
+  assert.ok(Math.abs(result.roadKm - km) < 1e-9);
+  const sec = 14 * (117.9 + 137.6) + 18 * (113.9 + 98.7) + 12 * (112.9 + 106);
+  assert.ok(Math.abs(result.roadHours - sec / 3600) < 1e-9);
   assert.deepEqual(result.assignment, [2, 1, 1]);
   assert.equal(result.baseline, null); // Nearest hubs violate opening budget.
 });
@@ -64,6 +70,7 @@ test('opening budget, hub count, directed threshold and return reachability are 
   input.sites[0].enabled = true;
   input.durations[0][4] = 61; // A fast return cannot substitute for the outbound journey.
   input.durations[4][0] = 1;
+  input.distances[5][0] = null;
   input.durations[5][0] = null; // Outbound route alone is insufficient for roundtrip service.
   const result = F.solve(input);
   assert.equal(result.covered, 12);
@@ -105,6 +112,8 @@ test('facility handles no enabled hubs or no demand without inventing coverage',
   });
   const none = F.solve(input);
   assert.equal(none.covered, 0);
+  assert.equal(none.roadKm, 0);
+  assert.equal(none.roadHours, 0);
   assert.equal(none.cost, 0);
   assert.deepEqual(none.opened, []);
   input.demand.forEach((zone) => {
@@ -122,6 +131,7 @@ test('facility solves all 1,331 bounded assignments for ten sites with dynamic d
     input.sites.push({ ...input.sites[0], id: 'H' + (i + 1), position: [-79.38, 43.65] });
   input.maxSites = 3;
   input.durations = Array.from({ length: 13 }, (_, i) => Array.from({ length: 13 }, (_, j) => (i === j ? 0 : 20)));
+  input.distances = input.durations.map(row => row.map(seconds => seconds * 5));
   // Only site 10 is free, so the result proves the demand offset follows site count.
   input.sites[9].cost = 0;
   const result = F.solve(input);
@@ -136,6 +146,9 @@ test('facility solves all 1,331 bounded assignments for ten sites with dynamic d
 
 test('facility rejects malformed matrices, coordinates and incomplete road responses', () => {
   for (const modify of [
+    input => { input.distances[0][1] = null; },
+    input => { input.distances[0][1] = -1; },
+    input => { input.distances = []; },
     (input) => {
       input.durations[0][1] = NaN;
     },
@@ -160,8 +173,11 @@ test('facility rejects malformed matrices, coordinates and incomplete road respo
     assert.equal(F.solve(input).status, 'invalid');
   }
   const requested = F.SNAPSHOT.positions.map((p) => [...p]),
-    response = { positions: requested, durations_s: F.SNAPSHOT.durations_s };
-  assert.deepEqual(F.validateResponse(response, requested), F.SNAPSHOT.durations_s);
+    response = { positions: requested, durations_s: F.SNAPSHOT.durations_s, distances_m: F.SNAPSHOT.distances_m };
+  assert.deepEqual(F.validateResponse(response, requested), {
+    durations: F.SNAPSHOT.durations_s, distances: F.SNAPSHOT.distances_m,
+  });
+  assert.throws(() => F.validateResponse({ ...response, distances_m: undefined }, requested), /incomplete/);
   assert.throws(
     () => F.validateResponse({ ...response, positions: [...requested].reverse() }, requested),
     /match/,
@@ -171,7 +187,8 @@ test('facility rejects malformed matrices, coordinates and incomplete road respo
 
 function ui() {
   const markers = [],
-    requests = [];
+    requests = [],
+    lines = [];
   class Element {
     constructor(tag) {
       this.tagName = tag;
@@ -200,7 +217,7 @@ function ui() {
       addTo() {
         return this;
       },
-      clearLayers() {},
+      clearLayers() { lines.length = 0; },
     }),
     marker: (point, options) => {
       const marker = {
@@ -228,7 +245,7 @@ function ui() {
       markers.push(marker);
       return marker;
     },
-    polyline: () => ({ addTo() {} }),
+    polyline: (points) => ({ addTo() { lines.push(points); } }),
     divIcon: (options) => options,
     tileLayer: () => ({ addTo() {} }),
   };
@@ -241,7 +258,7 @@ function ui() {
         const promise = new Promise((done) => {
           resolve = done;
         });
-        requests.push({ options, resolve });
+        requests.push({ url, options, resolve });
         return promise;
       },
     },
@@ -263,6 +280,7 @@ function ui() {
     container,
     markers,
     requests,
+    lines,
     cleanup,
     find,
     status: () => find((node) => node.className === 'facility-status').textContent,
@@ -289,7 +307,7 @@ test('moving a facility pin invalidates results and a late road response cannot 
   const oldPositions = JSON.parse(first.options.body).positions;
   first.resolve({
     ok: true,
-    json: async () => ({ positions: oldPositions, durations_s: F.SNAPSHOT.durations_s }),
+    json: async () => ({ positions: oldPositions, durations_s: F.SNAPSHOT.durations_s, distances_m: F.SNAPSHOT.distances_m }),
   });
   await flush();
   assert.match(view.status(), /Locations changed/);
@@ -298,7 +316,7 @@ test('moving a facility pin invalidates results and a late road response cannot 
     freshPositions = JSON.parse(second.options.body).positions;
   second.resolve({
     ok: true,
-    json: async () => ({ positions: freshPositions, durations_s: F.SNAPSHOT.durations_s }),
+    json: async () => ({ positions: freshPositions, durations_s: F.SNAPSHOT.durations_s, distances_m: F.SNAPSHOT.distances_m }),
   });
   await flush();
   assert.match(view.status(), /Exact classical search/);
@@ -321,7 +339,7 @@ test('reset aborts pending routing, restores original pins, and dragging afterwa
   assert.match(view.status(), /Locations changed/);
   pending.resolve({
     ok: true,
-    json: async () => ({ positions: F.SNAPSHOT.positions, durations_s: F.SNAPSHOT.durations_s }),
+    json: async () => ({ positions: F.SNAPSHOT.positions, durations_s: F.SNAPSHOT.durations_s, distances_m: F.SNAPSHOT.distances_m }),
   });
   await flush();
   assert.match(view.status(), /Locations changed/);
@@ -339,7 +357,7 @@ test('candidate topology requires refreshed matrix, permits ten sites, and reset
     requested = JSON.parse(request.options.body).positions;
   assert.equal(requested.length, 13);
   const durations = requested.map((_, i) => requested.map((_, j) => (i === j ? 0 : 20)));
-  request.resolve({ ok: true, json: async () => ({ positions: requested, durations_s: durations }) });
+  request.resolve({ ok: true, json: async () => ({ positions: requested, durations_s: durations, distances_m: durations.map(row => row.map(seconds => seconds * 5)) }) });
   await flush();
   assert.match(view.status(), /Exact classical search/);
   view.button('Remove H10').onclick();
@@ -353,5 +371,58 @@ test('candidate topology requires refreshed matrix, permits ten sites, and reset
   view.markers[0].events.dragend();
   assert.equal(view.input('H1 longitude').value, -79.385);
   assert.match(view.status(), /Locations changed/);
+  view.cleanup();
+});
+
+
+test('facility draws a selected road trip with directed metrics and rejects stale or unavailable geometry', async () => {
+  const view = ui(), trip = view.input('Road trip to display');
+  const show = () => view.button('Show road route').onclick();
+  const summary = () => view.find(node => node.className === 'facility-trip-summary').textContent;
+  const message = () => view.find(node => node.className === 'facility-route-status').textContent;
+  const points = [[-79.386, 43.65], [-79.386, 43.651], [-79.379, 43.65]];
+  assert.equal(trip.value, '2-4');
+  assert.equal(view.lines.length, 0);
+  assert.match(summary(), /0.77 km · 1.97 min/);
+  show();
+  assert.equal(view.requests[0].url, '/api/maps/road-path');
+  assert.deepEqual(JSON.parse(view.requests[0].options.body), {
+    positions: F.SNAPSHOT.positions, from_index: 2, to_index: 4,
+  });
+  view.requests[0].resolve({ ok: true, json: async () => ({
+    from_index: 2, to_index: 4, distance_m: 767.9, duration_s: 117.9, coordinates: points,
+  }) });
+  await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(view.lines)), [points.map(([lon, lat]) => [lat, lon])]);
+  trip.value = '4-2'; trip.onchange();
+  assert.equal(view.lines.length, 0);
+  assert.match(summary(), /1\.10 km/);
+  assert.match(summary(), /2.29 min/);
+  show();
+  const stale = view.requests[1];
+  assert.equal(JSON.parse(stale.options.body).from_index, 4);
+  trip.value = '2-4'; trip.onchange();
+  assert.equal(stale.options.signal.aborted, true);
+  stale.resolve({ok: true, json: async () => ({ from_index: 4, to_index: 2, coordinates: points,
+    distance_m: 1095, duration_s: 137.6 })});
+  await flush();
+  assert.equal(view.lines.length, 0);
+  show();
+  view.requests[2].resolve({ok: false, json: async () => ({error: 'Route unavailable'})});
+  await flush();
+  assert.match(message(), /Route unavailable/);
+  assert.match(summary(), /0.77 km/);
+  show();
+  view.requests[3].resolve({ok: true, json: async () => ({ from_index: 2, to_index: 4, coordinates: points,
+    distance_m: 2000, duration_s: 117.9 })});
+  await flush();
+  assert.match(message(), /does not match/);
+  assert.equal(view.lines.length, 0);
+  // Changing coverage invalidates a pending route when its zone is no longer assigned.
+  show();
+  const previous = view.requests[4];
+  const budget = view.input('Opening budget ($/day)'); budget.value = 0; budget.oninput();
+  assert.equal(previous.options.signal.aborted, true);
+  assert.equal(view.find(node => node.className === 'facility-trip-controls').hidden, true);
   view.cleanup();
 });

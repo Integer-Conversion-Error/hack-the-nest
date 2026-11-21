@@ -34,8 +34,10 @@ manual editor without configuring an AI provider. [Model provider setup](../back
 In facility placement, **Require full demand coverage** makes every demand
 zone mandatory. If full coverage is infeasible, the editor shows how many visits
 the best partial plan can serve. The Toronto example includes recorded road
-times. For custom locations, select **Recalculate road times** to retrieve
-a directed matrix from the configured routing service.
+distances and driving times. For custom locations, select **Recalculate road
+times**. The service plan shows kilometres and estimated minutes for each
+direction. Daily driving totals count each served visit as a round trip.
+Select an assigned trip on the map to display its driving route.
 
 ## Build a situation on the map
 
@@ -80,8 +82,11 @@ including one-way roads and unreachable pairs, rather than grid distance or a
 shared driving-speed assumption. Locations must be within 100 metres of a
 driveable road and are snapped to that road for the schedule. The original
 selected coordinates remain available in **Edit scenario**. Battery use and
-costs use the saved road distances; both solver schedules use the same saved
-travel-time matrix. Road times do not include live traffic.
+driving costs use the saved road distances. Both solver schedules use the same
+saved travel-time matrix. Select a vehicle in the results to see kilometres
+and estimated driving minutes per leg and for its route. Driving estimates
+exclude time spent charging, waiting or making deliveries. They use the
+routing provider’s driving profile and exclude live traffic.
 
 The host saves the routing snapshot and selected route geometry with the run.
 Reopening saved results needs no routing request. Numeric settings can reuse

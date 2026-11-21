@@ -106,11 +106,13 @@ test('reviewed energy uses the imported interval count and labels with an honest
 });
 
 test('facility imports ignore untrusted road matrices and only attach a matching recorded snapshot', () => {
-  const source = modules.facility.seed(); source.durations = source.durations.map(row => row.map(() => 0)); source.routing = { forged: true };
+  const source = modules.facility.seed(); source.durations = source.durations.map(row => row.map(() => 0)); source.distances = []; source.routing = { forged: true };
   const prepared = modules.facility.prepareInputs(source);
+  assert.deepEqual(prepared.distances, modules.facility.SNAPSHOT.distances_m);
   assert.deepEqual(prepared.durations, modules.facility.SNAPSHOT.durations_s); assert.equal(Object.hasOwn(prepared, 'routing'), false);
   source.sites[0].position[0] += 0.001;
   assert.equal(modules.facility.prepareInputs(source).durations, null);
+  assert.equal(modules.facility.prepareInputs(source).distances, null);
   const ui = fixture('facility', source);
   assert.match(ui.text(), /Recalculate road times to solve these locations/);
   assert.equal(ui.nodes().filter(node => node.className === 'problem-card' && node.children.some(child => child.textContent === 'Daily visits covered')).length, 0);

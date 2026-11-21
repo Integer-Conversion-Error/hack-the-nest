@@ -845,6 +845,11 @@ function renderChanges(current, previous) {
   }
 }
 
+const roadKmFormat = new Intl.NumberFormat('en', {maximumFractionDigits: 3});
+const driveMinutesFormat = new Intl.NumberFormat('en', {maximumFractionDigits: 1});
+const roadDistance = km => (km > 0 && km < 0.001 ? '<0.001' : roadKmFormat.format(km)) + ' km';
+const drivingTime = minutes => (minutes > 0 && minutes < 0.1 ? '<0.1' : driveMinutesFormat.format(minutes)) + ' min';
+
 function buildFleet() {
   $('fleet').replaceChildren();
   vanCards = sim.vans.map((van, index) => {
@@ -858,6 +863,9 @@ function buildFleet() {
     card.style.setProperty('--van', color);
     card.append(node('strong', van.name || van.id), status, energy, track);
     track.append(fill);
+    const itinerary = FleetReplay.roadItinerary(sim, van);
+    if (itinerary) card.append(node('span', roadDistance(itinerary.kilometers) + ' by road · ' +
+      drivingTime(itinerary.minutes) + ' est. driving', 'van-road-total'));
     card.onclick = () => inspect({kind: 'van', id: van.id});
     $('fleet').append(card);
     return {card, status, energy, fill, color};
@@ -986,6 +994,40 @@ function applyVanSelection() {
     card.classList.toggle('selected', active);
     card.setAttribute('aria-pressed', String(active));
   });
+  renderRoadItinerary();
+}
+
+function renderRoadItinerary() {
+  const section = $('road-itinerary');
+  const replay = inspected && replayFor(inspected.source);
+  const van = inspected?.kind === 'van' && replay?.vans.find(item => item.id === inspected.id);
+  const itinerary = van && FleetReplay.roadItinerary(replay, van);
+  section.hidden = !itinerary;
+  section.replaceChildren();
+  if (!itinerary) return;
+
+  const solver = classicalSim ? (inspected.source === 'classical' ? 'Classical · ' : 'Quantum · ') : '';
+  const table = node('table');
+  table.append(node('caption', solver + (van.name || van.id) + ' road itinerary'));
+  const head = table.createTHead().insertRow();
+  for (const title of ['Leg', 'Road distance', 'Est. drive', 'Est. arrival']) {
+    const cell = node('th', title);
+    cell.scope = 'col';
+    head.append(cell);
+  }
+  const body = table.createTBody();
+  for (const leg of itinerary.legs) {
+    const row = body.insertRow();
+    const heading = node('th', leg.from_id + ' → ' + leg.to_id);
+    heading.scope = 'row';
+    row.append(heading, node('td', roadDistance(leg.distance_km)),
+      node('td', drivingTime(leg.end_min - leg.start_min)), node('td', clock(leg.end_min)));
+  }
+  const total = table.createTFoot().insertRow();
+  const title = node('th', 'Total');
+  title.scope = 'row';
+  total.append(title, node('td', roadDistance(itinerary.kilometers)), node('td', drivingTime(itinerary.minutes)), node('td'));
+  section.append(table, node('p', 'Driving estimates exclude stops and use road speeds without live traffic.', 'hint'));
 }
 
 function setInspection(target, source = 'primary') {

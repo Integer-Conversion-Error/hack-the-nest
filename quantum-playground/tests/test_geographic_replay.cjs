@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { geographicPointAt, stateAt, validate } = require('../web/fleet.js');
+const { geographicPointAt, stateAt, validate, roadItinerary } = require('../web/fleet.js');
 
 test('geographic replay follows traveled distance rather than counting geometry vertices', () => {
   const path = [[-79, 43], [-78.999, 43], [-78.99, 43]];
@@ -24,4 +24,17 @@ test('geographic replay validates road paths and rejects malformed geographic me
   for (const mutate of [s=>s.map.routing_digest='bad',s=>s.depots[0].position=[-79,91],s=>s.grid={width:2,height:2}]) {
     const broken=structuredClone(sim); mutate(broken); assert.equal(validate(broken),false);
   }
+});
+
+test('road totals use recorded drive metrics and exclude service, waiting and charging', () => {
+  const sim = require('./fixtures/geographic-road-replay.json').view.simulation;
+  const van = sim.vans[0];
+  const total = roadItinerary(sim, van);
+  assert.deepEqual(total.legs.map(leg => [leg.from_id, leg.to_id]), [['P1','D1'], ['D1','D2'], ['D2','P1']]);
+  assert.ok(Math.abs(total.kilometers - 3.4172) < 1e-8);
+  assert.ok(Math.abs(total.minutes - (86.1 + 218.7 + 143.3) / 60) < 1e-8);
+  const stops = ['deliver','wait','charge'].map(type => ({type, start_min: 20, end_min: 23}));
+  assert.deepEqual(roadItinerary(sim, {events: stops}), {legs: [], kilometers: 0, minutes: 0});
+  assert.equal(roadItinerary({grid: {width: 5, height: 5}}, van), null);
+  assert.equal(roadItinerary(sim, {events: [{type: 'drive', start_min: 0, end_min: 4}]}), null);
 });

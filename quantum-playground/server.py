@@ -20,7 +20,7 @@ from ev_reference import PROMPT, reference_handoff
 from fleet_handoff import InvalidHandoff, UnverifiedResult, applied_values, is_geographic_replay, normalize_handoff
 from pipeline_live import pipeline_handoff, planner_configured
 from scenario import normalize_scenario, scenario_prompt
-from road_network import MapServiceError, maps_config, search_places, travel_times
+from road_network import MapServiceError, maps_config, road_path, search_places, travel_times
 from formulation import FormulationError, MAX_REQUEST_BYTES as MAX_FORMULATION_BYTES, formulate_problem, formulation_configured
 from workspace_runs import (
     SavedResultUnavailable, SavedRunNotFound, SavedRunUnavailable, list_saved_runs, open_saved_run,
@@ -621,10 +621,12 @@ class Handler(SimpleHTTPRequestHandler):
                 workspace_id = workspace_segments[0]
             else:
                 workspace_id = None
-            if self.path in ("/api/pipeline-runs", "/api/maps/travel-times", "/api/problems/formulate") and self.headers.get_content_type() != "application/json":
+            if self.path in ("/api/pipeline-runs", "/api/maps/travel-times", "/api/maps/road-path", "/api/problems/formulate") and self.headers.get_content_type() != "application/json":
                 raise RequestError(415, "Send the problem as application/json.")
             size = int(self.headers.get("Content-Length", "0"))
             maximum_size = MAX_FORMULATION_BYTES if self.path == "/api/problems/formulate" else 5_000_000
+            if self.path == "/api/maps/road-path":
+                maximum_size = 16_384
             if not 0 < size <= maximum_size:
                 raise ValueError("Invalid request size.")
             raw = self.rfile.read(size)
@@ -642,10 +644,11 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path == "/api/problems/formulate":
                 result = formulate_problem(data)
             elif self.path == "/api/maps/travel-times":
-                try:
-                    result = travel_times(data.get("positions"))
-                except MapServiceError as exc:
-                    return self.send_json(exc.status, {"error": str(exc)})
+                result = travel_times(data.get("positions"))
+            elif self.path == "/api/maps/road-path":
+                if set(data) - {"positions", "from_index", "to_index", "routing_digest"}:
+                    raise RequestError(400, "Send pin positions, start and end indices, and an optional routing snapshot ID.")
+                result = road_path(data.get("positions"), data.get("from_index"), data.get("to_index"), data.get("routing_digest"))
             elif self.path == "/api/pipeline-runs":
                 if "scenario" in data:
                     if "prompt" in data:
@@ -665,7 +668,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(404, {"error": "Unknown endpoint."})
         except RequestError as exc:
             return self.send_json(exc.status, {"error": str(exc)})
-        except FormulationError as exc:
+        except (FormulationError, MapServiceError) as exc:
             return self.send_json(exc.status, {"error": str(exc)})
         except SolverUnavailable as exc:
             return self.send_json(503, {"error": str(exc)})

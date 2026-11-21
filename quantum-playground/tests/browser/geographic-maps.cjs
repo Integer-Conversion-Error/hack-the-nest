@@ -54,6 +54,18 @@ async function check(browser,url,label,width,height) {
     assert.equal(await page.locator('#classical-geographic-map').isVisible(),true);
     assert.equal(await page.locator('#fleet-map').isVisible(),false);
     assert.ok(await page.locator('#geographic-map .leaflet-overlay-pane path').count()>0);
+    const firstVan = page.locator('#fleet .van-card').first();
+    assert.equal(await firstVan.locator('.van-road-total').innerText(), '2.91 km by road · 7.2 min est. driving');
+    await firstVan.click();
+    const itinerary = page.locator('#road-itinerary');
+    assert.match(await itinerary.locator('caption').innerText(), /Quantum.*V1/);
+    assert.equal(await itinerary.locator('tbody tr').count(), 3);
+    assert.deepEqual(await itinerary.locator('tbody tr').first().locator('th,td').allTextContents(),
+      ['P1 → D1', '0.84 km', '1.9 min', '08:02']);
+    assert.deepEqual(await itinerary.locator('tfoot td').allTextContents(), ['2.91 km', '7.2 min', '']);
+    await page.locator('#classical-geographic-map .geo-marker.van').last().click();
+    assert.match(await itinerary.locator('caption').innerText(), /Classical.*V2/);
+    assert.equal(await itinerary.locator('tbody tr').count(), 2);
     const before=await page.locator('#geographic-map .geo-marker.van').first().evaluate(e=>e.closest('.leaflet-marker-icon').style.transform);
     await page.locator('#scrub').fill('1'); await page.locator('#scrub').dispatchEvent('input');
     const after=await page.locator('#geographic-map .geo-marker.van').first().evaluate(e=>e.closest('.leaflet-marker-icon').style.transform);

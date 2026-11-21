@@ -109,12 +109,48 @@ class RoadNetworkTests(unittest.TestCase):
         self.assertEqual(pins, result["positions"])
         self.assertEqual(pins, result["snapped_positions"])
         self.assertIsNone(result["durations_s"][0][1])
-        self.assertGreater(result["durations_s"][1][0], 0)
+        self.assertIsNone(result["distances_m"][0][1])
+        self.assertEqual(result["durations_s"][1][0], 20.7)
+        self.assertEqual(result["distances_m"][1][0], 207)
+        self.assertRegex(result["routing_digest"], r"^[0-9a-f]{64}$")
         self.assertEqual(roads.travel_times(pins), result)
         self.assertEqual(len(self.state.calls), 1)
         for invalid in ([], pins * 9, [[0, 86], pins[1]], [False, pins[1]]):
             with self.assertRaises(roads.MapServiceError):
                 roads.travel_times(invalid)
+        self.assertEqual(len(self.state.calls), 1)
+
+    def test_facility_path_is_bound_to_order_direction_and_snapshot(self):
+        pins = [[-79.38, 43.65], [-79.39, 43.65], [-79.40, 43.65]]
+        table = roads.travel_times(pins)
+        bend = [-79.385, 43.653]
+        self.state.route_mutation = lambda reply: reply["routes"][0]["geometry"]["coordinates"].insert(1, bend)
+        for first, second in ((0, 1), (1, 0)):
+            with self.subTest(first=first, second=second):
+                path = roads.road_path(pins, first, second, table["routing_digest"])
+                self.assertEqual(path, {"from_index": first, "to_index": second, "routing_digest": table["routing_digest"],
+                                        "coordinates": [pins[first], bend, pins[second]], "distance_m": table["distances_m"][first][second],
+                                        "duration_s": table["durations_s"][first][second]})
+                self.assertEqual(roads.road_path(pins, first, second), path)
+        self.assertNotEqual(table["distances_m"][0][1], table["distances_m"][1][0])
+        self.assertNotEqual(table["durations_s"][0][1], table["durations_s"][1][0])
+        self.assertEqual(len(self.state.calls), 3, "one road matrix plus one geometry request per direction")
+        with self.assertRaises(roads.MapServiceError) as changed:
+            roads.road_path(pins, 0, 1, "f" * 64)
+        self.assertEqual(changed.exception.status, 409)
+        self.assertEqual(len(self.state.calls), 3)
+
+    def test_invalid_or_unreachable_facility_legs_never_request_a_road_line(self):
+        pins = [[-79.38, 43.65], [-79.39, 43.65]]
+        for first, second, digest in ((-1, 0, None), (0, 2, None), (True, 1, None),
+                                      (0, 1.5, None), (0, "1", None), (0, 1, "invalid")):
+            with self.subTest(first=first, second=second, digest=digest), self.assertRaises(roads.MapServiceError) as error:
+                roads.road_path(pins, first, second, digest)
+            self.assertEqual(error.exception.status, 400)
+        self.assertEqual(len(self.state.calls), 0)
+        self.state.unreachable = True
+        with self.assertRaisesRegex(roads.MapServiceError, "No drivable route"):
+            roads.road_path(pins, 0, 1)
         self.assertEqual(len(self.state.calls), 1)
 
     def test_one_directed_table_binds_canonical_nodes_and_source(self):

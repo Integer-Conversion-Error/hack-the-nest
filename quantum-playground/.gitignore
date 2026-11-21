@@ -11,3 +11,4 @@ __pycache__/
 !web/vendor/leaflet/images/*.png
 !docs/evidence/optimization-views/*.png
 !docs/evidence/describe-problem/*.png
+!docs/evidence/road-metrics/*.png

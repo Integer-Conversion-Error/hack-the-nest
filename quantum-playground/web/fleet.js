@@ -52,6 +52,18 @@
   function deliveredAt(sim,minute) {
     return new Set(sim.vans.flatMap(v=>v.events.filter(e=>e.type==='deliver'&&e.end_min<=minute&&e.end_min<=sim.duration_min).map(e=>e.delivery_id)));
   }
+  function roadItinerary(sim, van) {
+    if (sim?.map?.kind !== 'geographic') return null;
+    const legs = van.events.filter(event => event.type === 'drive');
+    let kilometers = 0, minutes = 0;
+    for (const leg of legs) {
+      const duration = leg.end_min - leg.start_min;
+      if (!Number.isFinite(leg.distance_km) || leg.distance_km < 0 || !Number.isFinite(duration) || duration < 0) return null;
+      kilometers += leg.distance_km;
+      minutes += duration;
+    }
+    return {legs, kilometers, minutes};
+  }
   function validate(sim) {
     if(!sim||sim.kind!=='ev_fleet'||!Array.isArray(sim.vans)||!sim.vans.length||sim.vans.length>6||!Array.isArray(sim.chargers)||!Array.isArray(sim.deliveries)) return false;
     const finite=x=>typeof x==='number'&&Number.isFinite(x);
@@ -74,6 +86,6 @@
         : e.path.every((p,i)=>i===0||Math.abs(p[0]-e.path[i-1][0])+Math.abs(p[1]-e.path[i-1][1])===1)));
     }));
   }
-  const api={stateAt,deliveredAt,validate,depotsFor,depotFor,geographicPointAt};
+  const api={stateAt,deliveredAt,validate,depotsFor,depotFor,geographicPointAt,roadItinerary};
   if(typeof module!=='undefined')module.exports=api;else root.FleetReplay=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
